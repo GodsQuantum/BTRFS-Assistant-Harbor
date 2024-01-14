@@ -1,4 +1,5 @@
 #include "CsvParser.h"
+#include <QMap>
 #include <QString>
 #include <QStringList>
 #include <QTextStream>

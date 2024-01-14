@@ -65,7 +65,7 @@ void DiffViewer::LoadSnapshots(const QString &rootPath, const QString &filePath)
     m_twSnapshot->setHorizontalHeaderItem(DiffColumn::filePath, new QTableWidgetItem(tr("File Path")));
     m_twSnapshot->setColumnHidden(DiffColumn::rootPath, true);
     m_twSnapshot->setColumnHidden(DiffColumn::filePath, true);
-    m_twSnapshot->setRowCount(resultList.count());
+    m_twSnapshot->setRowCount(static_cast<int>(resultList.count()));
 
     // We need to the locale for displaying the date/time
     QLocale locale = QLocale::system();

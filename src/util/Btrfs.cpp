@@ -1,5 +1,4 @@
 #include "util/Btrfs.h"
-#include "util/Settings.h"
 #include "util/System.h"
 #include <sys/mount.h>
 
@@ -232,7 +231,7 @@ void Btrfs::loadQgroups(const QString &uuid)
 
     // Load the data
 
-    for (const QString &line : qAsConst(outputList)) {
+    for (const QString &line : std::as_const(outputList)) {
         const QStringList qgroupList = line.split(" ", Qt::SkipEmptyParts);
         uint64_t subvolId;
         if (!qgroupList.at(0).contains("/")) {
@@ -290,14 +289,16 @@ void Btrfs::loadVolumes()
 {
     QStringList uuidList = listFilesystems();
 
+    static QRegularExpression qReg("\\s+");
+
     // Loop through btrfs devices and retrieve filesystem usage
-    for (const QString &uuid : qAsConst(uuidList)) {
+    for (const QString &uuid : std::as_const(uuidList)) {
         QString mountpoint = findAnyMountpoint(uuid);
         if (!mountpoint.isEmpty()) {
             BtrfsFilesystem btrfs;
             btrfs.isPopulated = true;
             QStringList usageLines = System::runCmd("LANG=C ; btrfs fi usage -b \"" + mountpoint + "\"", false).output.split('\n');
-            for (const QString &line : qAsConst(usageLines)) {
+            for (const QString &line : std::as_const(usageLines)) {
                 const QStringList &cols = line.split(':');
                 QString type = cols.at(0).trimmed();
                 if (type == "Device size") {
@@ -307,7 +308,7 @@ void Btrfs::loadVolumes()
                 } else if (type == "Used") {
                     btrfs.usedSize = cols.at(1).trimmed().toULong();
                 } else if (type == "Free (estimated)") {
-                    btrfs.freeSize = cols.at(1).split(QRegExp("\\s+"), Qt::SkipEmptyParts).at(0).trimmed().toULong();
+                    btrfs.freeSize = cols.at(1).split(qReg, Qt::SkipEmptyParts).at(0).trimmed().toULong();
                 } else if (type.startsWith("Data,")) {
                     btrfs.dataSize = cols.at(2).split(',').at(0).trimmed().toULong();
                     btrfs.dataUsed = cols.at(3).split(' ').at(0).trimmed().toULong();
@@ -331,7 +332,7 @@ QString Btrfs::mountRoot(const QString &uuid)
     QStringList findmntOutput =
         System::runCmd("findmnt", {"-nO", "subvolid=" + QString::number(BTRFS_ROOT_ID), "-o", "uuid,target"}, false).output.split('\n');
     QString mountpoint;
-    for (const QString &line : qAsConst(findmntOutput)) {
+    for (const QString &line : std::as_const(findmntOutput)) {
         if (!line.isEmpty() && line.split(' ').at(0).trimmed() == uuid)
             mountpoint = line.section(' ', 1).trimmed();
     }
@@ -607,7 +608,7 @@ void Btrfs::stopScrubRoot(const QString &uuid)
 
 void Btrfs::unmountFilesystems()
 {
-    for (const QString &mountpoint : qAsConst(m_tempMountpoints)) {
+    for (const QString &mountpoint : std::as_const(m_tempMountpoints)) {
         umount2(mountpoint.toLocal8Bit(), MNT_DETACH);
     }
 }

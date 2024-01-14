@@ -24,7 +24,7 @@ Snapper::Config Snapper::config(const QString &name) { return m_configs.value(na
 
 void Snapper::createSubvolMap()
 {
-    for (const QVector<SnapperSubvolume> &subvol : qAsConst(m_subvols)) {
+    for (const QVector<SnapperSubvolume> &subvol : std::as_const(m_subvols)) {
         const SubvolResult sr = findSnapshotSubvolume(subvol.at(0).subvol);
         const QString snapshotSubvol = sr.name;
         const QString uuid = subvol.at(0).uuid;
@@ -111,7 +111,7 @@ void Snapper::load()
         return;
     }
 
-    for (const QString &line : qAsConst(result.outputList)) {
+    for (const QString &line : std::as_const(result.outputList)) {
         // for each config, add to the map and add it's snapshots to the vector
         SnapperResult listResult;
         QString name = line.trimmed();
@@ -166,7 +166,7 @@ void Snapper::load()
             }
         }
 
-        for (const QString &snap : qAsConst(listResult.outputList)) {
+        for (const QString &snap : std::as_const(listResult.outputList)) {
             // Parse `complex` CSV where ',' and '"' in the description are possible
             QStringList cols = parseCsvLine(snap);
 
@@ -317,21 +317,21 @@ SnapperSnapshot Snapper::readSnapperMeta(const QString &filename)
         QXmlStreamReader xml(&metaFile);
 
         // Read until we find snapshot
-        while (!xml.atEnd() && xml.name() != "snapshot") {
+        while (!xml.atEnd() && xml.name() != QStringLiteral("snapshot")) {
             xml.readNextStartElement();
         }
 
         while (xml.readNextStartElement()) {
-            if (xml.name() == "num") {
+            if (xml.name().compare("num")) {
                 snap.number = xml.readElementText().toUInt();
-            } else if (xml.name() == "date") {
+            } else if (xml.name().compare("date")) {
                 snap.time = QDateTime::fromString(xml.readElementText(), Qt::ISODate);
                 snap.time = snap.time.addSecs(snap.time.offsetFromUtc());
-            } else if (xml.name() == "description") {
+            } else if (xml.name().compare("description")) {
                 snap.desc = xml.readElementText();
-            } else if (xml.name() == "type") {
+            } else if (xml.name().compare("type")) {
                 snap.type = xml.readElementText();
-            } else if (xml.name() == "cleanup") {
+            } else if (xml.name().compare("cleanup")) {
                 snap.cleanup = xml.readElementText();
             } else {
                 xml.readElementText();

@@ -1,7 +1,6 @@
 #ifndef CLI_H
 #define CLI_H
 
-#include "util/System.h"
 #include "util/Snapper.h"
 #include "util/Btrfs.h"
 
