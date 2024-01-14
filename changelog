@@ -1,5 +1,11 @@
 ### Btrfs Assistant
 
+1.9 - 2024-01-14
+* Improve CSV parsing(Contributed by HoroTW)
+* Added the ability to modify Snapper snapshot descriptions(Contributed by HoroTW)
+* Added support for QT_STYLE_OVERRIDE(Contributed by BluishHumility)
+
+
 1.8 - 2023-02-11
 * Add support for handling snapshots of the root of the btrfs partition
 * Add the ability to autodetect the subvolume mounted at /.snapshots
