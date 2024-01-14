@@ -1,4 +1,5 @@
 #include "Cli.h"
+#include "util/System.h"
 
 static void displayError(const QString &error) { QTextStream(stderr) << "Error: " << error << Qt::endl; }
 

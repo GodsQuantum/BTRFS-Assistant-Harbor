@@ -46,7 +46,7 @@ int SubvolumeModel::rowCount(const QModelIndex &parent) const
     if (parent.isValid())
         return 0;
 
-    return m_data.count();
+    return static_cast<int>(m_data.count());
 }
 
 int SubvolumeModel::columnCount(const QModelIndex &parent) const
@@ -155,7 +155,7 @@ void SubvolumeModel::load(const QMap<QString, BtrfsFilesystem> &filesystems)
 
 void SubvolumeModel::addSubvolume(const Subvolume &subvol)
 {
-    beginInsertRows(QModelIndex(), m_data.size(), m_data.size());
+    beginInsertRows(QModelIndex(), static_cast<int>(m_data.size()), static_cast<int>(m_data.size()));
     m_data.append(subvol);
     endInsertRows();
 }
