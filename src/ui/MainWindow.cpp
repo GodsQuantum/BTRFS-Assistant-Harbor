@@ -1029,7 +1029,7 @@ void MainWindow::on_tableWidget_snapperNew_customContextMenuRequested(const QPoi
     connect(action, &QAction::triggered, this, &MainWindow::on_toolButton_snapperDelete_clicked);
 
     action = menu.addAction(tr("&Change description"));
-    connect(action, &QAction::triggered, this, &MainWindow::on_toolButton_snapperChangeDescription_clicked);
+    connect(action, &QAction::triggered, this, &MainWindow::snapperChangeDescription);
 
     menu.exec(m_ui->tableView_subvols->mapToGlobal(pos));
 }
@@ -1363,7 +1363,7 @@ void MainWindow::on_toolButton_snapperDelete_clicked()
     m_ui->toolButton_snapperDelete->clearFocus();
 }
 
-void MainWindow::on_toolButton_snapperChangeDescription_clicked()
+void MainWindow::snapperChangeDescription()
 {
     // Get all the rows that were selected
     const QList<QTableWidgetItem *> list = m_ui->tableWidget_snapperNew->selectedItems();

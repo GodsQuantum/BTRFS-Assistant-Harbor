@@ -321,7 +321,7 @@ class MainWindow : public QMainWindow {
     /**
      * @brief Snapper Change Description button handler
      */
-    void on_toolButton_snapperChangeDescription_clicked();
+    void snapperChangeDescription();
 
     /**
      * @brief Snapper Browse/Restore Refresh button handler.
