@@ -295,10 +295,12 @@ void MainWindow::populateBtrfsUi(const QString &uuid)
     m_ui->progressBar_btrfssys->setValue(static_cast<int>((double)filesystem.sysUsed / (double)filesystem.sysSize * 100));
 
     // The information section
-    m_ui->label_btrfsAllocatedValue->setText(System::toHumanReadable(filesystem.allocatedSize));
-    m_ui->label_btrfsUsedValue->setText(System::toHumanReadable(filesystem.usedSize));
+    const auto allocatedPercent = static_cast<double>(filesystem.allocatedSize) / static_cast<double>(filesystem.totalSize) * 100.0;
+    m_ui->label_btrfsAllocatedValue->setText(
+        QString("%1 (%2%)").arg(System::toHumanReadable(filesystem.allocatedSize)).arg(allocatedPercent, 0, 'f', 2));
+    const auto usagePercent = static_cast<double>(filesystem.usedSize) / static_cast<double>(filesystem.totalSize) * 100.0;
+    m_ui->label_btrfsUsedValue->setText(QString("%1 (%2%)").arg(System::toHumanReadable(filesystem.usedSize)).arg(usagePercent, 0, 'f', 2));
     m_ui->label_btrfsSizeValue->setText(System::toHumanReadable(filesystem.totalSize));
-    m_ui->label_btrfsFreeValue->setText(System::toHumanReadable(filesystem.freeSize));
     double freePercent = (double)filesystem.allocatedSize / (double)filesystem.totalSize;
     if (freePercent < 0.70) {
         m_ui->label_btrfsMessage->setText(tr("You have lots of free space, did you overbuy?"));
@@ -307,6 +309,8 @@ void MainWindow::populateBtrfsUi(const QString &uuid)
     } else {
         m_ui->label_btrfsMessage->setText(tr("Your disk space is well utilized"));
     }
+    m_ui->label_btrfsFreeValue->setText(
+        QString("%1 (%2%)").arg(System::toHumanReadable(filesystem.freeSize)).arg((1.0 - freePercent) * 100.0, 0, 'f', 2));
 
     // filesystems operation section
     btrfsBalanceStatusUpdateUI();
