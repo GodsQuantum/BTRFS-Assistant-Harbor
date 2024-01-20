@@ -3,6 +3,23 @@
 
 static void displayError(const QString &error) { QTextStream(stderr) << "Error: " << error << Qt::endl; }
 
+static QStringList getSnapperSnapshotList(Snapper *snapper)
+{
+    QStringList targets = snapper->subvolKeys();
+    QStringList output;
+    targets.sort();
+    for (const QString &target : std::as_const(targets)) {
+        QList<SnapperSubvolume> subvols = snapper->subvols(target);
+        std::sort(subvols.begin(), subvols.end(),
+                  [](const SnapperSubvolume &a, const SnapperSubvolume &b) { return a.snapshotNum < b.snapshotNum; });
+        for (const SnapperSubvolume &subvol : std::as_const(subvols)) {
+            output.append(target + "\t" + QString::number(subvol.snapshotNum) + "\t" + subvol.time.toString() + "\t" + subvol.type + "\t" +
+                          subvol.subvol + "\t" + subvol.uuid);
+        }
+    }
+    return output;
+}
+
 Cli::Cli(QObject *parent) : QObject{parent} {}
 
 int Cli::listSnapshots(Snapper *snapper)
@@ -13,19 +30,17 @@ int Cli::listSnapshots(Snapper *snapper)
         return 1;
     }
 
-    const QStringList targets = snapper->subvolKeys();
-    for (const QString &target : targets) {
-        const QVector<SnapperSubvolume> subvols = snapper->subvols(target);
-        for (const SnapperSubvolume &subvol : subvols) {
-            QTextStream(stdout) << target << "\t" << subvol.snapshotNum << "\t" << subvol.time.toString() << "\t" << subvol.type << "\t"
-                                << subvol.subvol << "," << subvol.uuid << Qt::endl;
-        }
+    const QStringList snapshotInfoList = getSnapperSnapshotList(snapper);
+
+    int index = 0;
+    for (const QString &snapshotInfo : snapshotInfoList) {
+        QTextStream(stdout) << ++index << "\t" << snapshotInfo << Qt::endl;
     }
 
     return 0;
 }
 
-int Cli::restore(Btrfs *btrfs, Snapper *snapper, const QString &restoreTarget)
+int Cli::restore(Btrfs *btrfs, Snapper *snapper, const int index)
 {
     // Ensure the application is running as root
     if (!System::checkRootUid()) {
@@ -33,14 +48,17 @@ int Cli::restore(Btrfs *btrfs, Snapper *snapper, const QString &restoreTarget)
         return 1;
     }
 
-    const QStringList restoreList = restoreTarget.split(',');
-    if (restoreList.count() != 2) {
-        displayError(tr("Incorrect format of restore parameter: ") + restoreTarget);
+    const QStringList snapshotInfoList = getSnapperSnapshotList(snapper);
+
+    const QStringList selectedSnapshot = snapshotInfoList[index - 1].split("\t");
+
+    if (selectedSnapshot.count() != 6) {
+        displayError(tr("Failed to parse snapshot list"));
         return 1;
     }
 
-    const QString subvolume = restoreList.at(0);
-    const QString uuid = restoreList.at(1);
+    const QString subvolume = selectedSnapshot.at(4);
+    const QString uuid = selectedSnapshot.at(5);
 
     if (!Btrfs::isSnapper(subvolume)) {
         displayError(tr("This is not a snapshot that can be restored by this application"));
@@ -70,6 +88,8 @@ int Cli::restore(Btrfs *btrfs, Snapper *snapper, const QString &restoreTarget)
         return 1;
     }
 
+    QTextStream(stdout) << tr(QString("Restoring snapshot %1").arg(subvolume).toUtf8()) << Qt::endl;
+
     // Everything checks out, time to do the restore
     RestoreResult restoreResult = btrfs->restoreSubvol(uuid, subvolId, targetId);
 
@@ -77,7 +97,7 @@ int Cli::restore(Btrfs *btrfs, Snapper *snapper, const QString &restoreTarget)
     if (restoreResult.isSuccess) {
         QTextStream(stdout) << tr("Snapshot restoration complete.") << Qt::endl
                             << tr("A copy of the original subvolume has been saved as ") << restoreResult.backupSubvolName << Qt::endl
-                            << tr("Please reboot immediately");
+                            << tr("Please reboot immediately\n");
         return 0;
     } else {
         displayError(restoreResult.failureMessage);

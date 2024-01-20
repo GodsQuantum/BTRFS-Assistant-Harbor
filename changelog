@@ -3,6 +3,7 @@
 2.0 - TBD
 * Ported to Qt 6
 * Added percentage value display for filesystem utilization(Contributed by Nikolas Koesling)
+* CLI snapshots are now restored via an index to make the process more user friendly
 * Changed timestamp on subvol backups to UTC and ISO format
 
 

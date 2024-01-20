@@ -20,7 +20,7 @@ public:
      * @return
      */
     static int listSnapshots(Snapper *snapper);
-    static int restore(Btrfs *btrfs, Snapper *snapper, const QString &restoreTarget);
+    static int restore(Btrfs *btrfs, Snapper *snapper, const int index);
 
 private:
     explicit Cli(QObject *parent = nullptr);
