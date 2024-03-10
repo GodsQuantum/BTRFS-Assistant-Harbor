@@ -23,7 +23,7 @@ int main(int argc, char *argv[])
     app.installTranslator(&translator);
 
     QCoreApplication::setApplicationName(QCoreApplication::translate("main", "Btrfs Assistant"));
-    QCoreApplication::setApplicationVersion("1.9");
+    QCoreApplication::setApplicationVersion("2.0");
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QCoreApplication::translate("main", "An application for managing Btrfs and Snapper"));

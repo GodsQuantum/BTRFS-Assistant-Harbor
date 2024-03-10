@@ -1,6 +1,6 @@
 ### Btrfs Assistant
 
-2.0 - TBD
+2.0 - 2024-03-10
 * Ported to Qt 6
 * Added percentage value display for filesystem utilization(Contributed by Nikolas Koesling)
 * CLI snapshots are now restored via an index to make the process more user friendly
