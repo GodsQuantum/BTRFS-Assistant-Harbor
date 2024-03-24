@@ -3,6 +3,11 @@
 # Define the base command with common options
 command="pkexec btrfs-assistant --xdg-runtime=\"${XDG_RUNTIME_DIR}\""
 
+# Add xdg-desktop option if XDG_CURRENT_DESKTOP is set
+if [[ -n ${XDG_CURRENT_DESKTOP} ]]; then
+    command="${command} --xdg-desktop=\"${XDG_CURRENT_DESKTOP}\""
+fi
+
 # Add platform and display options when using Wayland
 if [[ -n "${WAYLAND_DISPLAY}" ]]; then
     command="${command} --display=\"${WAYLAND_DISPLAY}\""
