@@ -65,6 +65,9 @@ int main(int argc, char *argv[])
     } else if (parser.isSet(restoreOption) && snapper != nullptr) {
         return Cli::restore(&btrfs, snapper, parser.value(restoreOption).toInt());
     } else {
+        // Set the desktop name for Wayland
+        QGuiApplication::setDesktopFileName("btrfs-assistant");
+
         // If Btrfs Maintenance is installed, instantiate the btrfsMaintenance object
         std::unique_ptr<BtrfsMaintenance> btrfsMaintenance;
         if (QFile::exists(btrfsMaintenanceConfig)) {
