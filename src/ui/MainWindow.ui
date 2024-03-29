@@ -311,6 +311,9 @@
                </item>
                <item row="3" column="1">
                 <widget class="QLabel" name="label_btrfsFreeValue">
+                 <property name="toolTip">
+                  <string>Estimate of the amount of data that can still be written to this FS, based on the current usage profile.</string>
+                 </property>
                  <property name="text">
                   <string/>
                  </property>
@@ -318,6 +321,9 @@
                </item>
                <item row="4" column="1">
                 <widget class="QLabel" name="label_btrfsFreeMinValue">
+                 <property name="toolTip">
+                  <string>Minimum amount of data that you can expect to be able to get onto the filesystem. </string>
+                 </property>
                  <property name="text">
                   <string/>
                  </property>
@@ -382,6 +388,9 @@
                </item>
                <item row="3" column="0" alignment="Qt::AlignLeft">
                 <widget class="QLabel" name="label_btrfsFree">
+                 <property name="toolTip">
+                  <string>Estimate of the amount of data that can still be written to this FS, based on the current usage profile.</string>
+                 </property>
                  <property name="text">
                   <string>Free (Estimated): </string>
                  </property>
@@ -389,6 +398,9 @@
                </item>
                <item row="4" column="0" alignment="Qt::AlignLeft">
                 <widget class="QLabel" name="label_btrfsFreeMin">
+                 <property name="toolTip">
+                  <string>Minimum amount of data that you can expect to be able to get onto the filesystem. </string>
+                 </property>
                  <property name="text">
                   <string>Free (Minimum): </string>
                  </property>
