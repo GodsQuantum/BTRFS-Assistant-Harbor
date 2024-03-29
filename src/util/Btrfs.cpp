@@ -309,6 +309,7 @@ void Btrfs::loadVolumes()
                     btrfs.usedSize = cols.at(1).trimmed().toULong();
                 } else if (type == "Free (estimated)") {
                     btrfs.freeSize = cols.at(1).split(qReg, Qt::SkipEmptyParts).at(0).trimmed().toULong();
+                    btrfs.freeSizeMin = cols.at(2).trimmed().remove(QChar(')')).toULong();
                 } else if (type.startsWith("Data,")) {
                     btrfs.dataSize = cols.at(2).split(',').at(0).trimmed().toULong();
                     btrfs.dataUsed = cols.at(3).split(' ').at(0).trimmed().toULong();

@@ -316,6 +316,13 @@
                  </property>
                 </widget>
                </item>
+               <item row="4" column="1">
+                <widget class="QLabel" name="label_btrfsFreeMinValue">
+                 <property name="text">
+                  <string/>
+                 </property>
+                </widget>
+               </item>
                <item row="2" column="1">
                 <widget class="QLabel" name="label_btrfsUsedValue"/>
                </item>
@@ -347,7 +354,7 @@
                  </property>
                 </widget>
                </item>
-               <item row="4" column="1">
+               <item row="5" column="1">
                 <widget class="QLabel" name="label_btrfsMessage">
                  <property name="sizePolicy">
                   <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
@@ -377,6 +384,13 @@
                 <widget class="QLabel" name="label_btrfsFree">
                  <property name="text">
                   <string>Free (Estimated): </string>
+                 </property>
+                </widget>
+               </item>
+               <item row="4" column="0" alignment="Qt::AlignLeft">
+                <widget class="QLabel" name="label_btrfsFreeMin">
+                 <property name="text">
+                  <string>Free (Minimum): </string>
                  </property>
                 </widget>
                </item>
