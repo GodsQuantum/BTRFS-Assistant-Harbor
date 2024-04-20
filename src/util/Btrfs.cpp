@@ -6,7 +6,6 @@
 #include <QDir>
 #include <QRegularExpression>
 #include <QTemporaryDir>
-#include <btrfsutil.h>
 
 namespace {
 
@@ -87,29 +86,33 @@ QStringList Btrfs::children(const uint64_t subvolId, const QString &uuid) const
     return children;
 }
 
-bool Btrfs::createSnapshot(const QString &source, const QString &dest, bool readOnly)
+btrfs_util_error Btrfs::createSnapshot(const QString &source, const QString &dest, bool readOnly)
 {
     return btrfs_util_create_snapshot(source.toLocal8Bit(), dest.toLocal8Bit(), (readOnly ? BTRFS_UTIL_CREATE_SNAPSHOT_READ_ONLY : 0),
-                                      nullptr, nullptr) == BTRFS_UTIL_OK;
+                                      nullptr, nullptr);
 }
 
-std::optional<Subvolume> Btrfs::createSnapshot(const QString &uuid, uint64_t subvolId, const QString &dest, bool readOnly)
+std::pair<QString, std::optional<Subvolume>> Btrfs::createSnapshot(const QString &uuid, uint64_t subvolId, const QString &dest,
+                                                                   bool readOnly)
 {
     std::optional<Subvolume> ret;
     if (m_filesystems.contains(uuid) && m_filesystems.value(uuid).subvolumes.contains(subvolId)) {
         const QString mountpoint = mountRoot(uuid);
         const QString subvolPath = QDir::cleanPath(mountpoint + QDir::separator() + subvolumeName(uuid, subvolId).name);
 
-        if (createSnapshot(subvolPath, dest, readOnly)) {
+        btrfs_util_error returnCode = createSnapshot(subvolPath, dest, readOnly);
+        if (returnCode == BTRFS_UTIL_OK) {
             struct btrfs_util_subvolume_info subvolInfo;
-            btrfs_util_error returnCode = btrfs_util_subvolume_info(dest.toLocal8Bit(), 0, &subvolInfo);
+            returnCode = btrfs_util_subvolume_info(dest.toLocal8Bit(), 0, &subvolInfo);
             if (returnCode == BTRFS_UTIL_OK) {
                 ret = infoToSubvolume(uuid, subvolumeName(dest).name, subvolInfo);
                 m_filesystems[uuid].subvolumes[ret->id] = *ret;
+                return std::make_pair(QString(), ret);
             }
         }
+        return std::make_pair(QString(btrfs_util_strerror(returnCode)), ret);
     }
-    return ret;
+    return std::make_pair(tr("Failed to create the snapshot"), ret);
 }
 
 bool Btrfs::deleteSubvol(const QString &uuid, const uint64_t subvolid)
@@ -412,8 +415,9 @@ RestoreResult Btrfs::restoreSubvol(const QString &uuid, const uint64_t sourceId,
     }
 
     // Place a snapshot of the source where the target was
-    bool snapshotSuccess = Btrfs::createSnapshot(QDir::cleanPath(mountpoint + QDir::separator() + newSubvolume).toUtf8(),
-                                                 QDir::cleanPath(mountpoint + QDir::separator() + targetName).toUtf8(), false);
+    bool snapshotSuccess =
+        Btrfs::createSnapshot(QDir::cleanPath(mountpoint + QDir::separator() + newSubvolume).toUtf8(),
+                              QDir::cleanPath(mountpoint + QDir::separator() + targetName).toUtf8(), false) == BTRFS_UTIL_OK;
 
     if (!snapshotSuccess) {
         // That failed, try to put the old one back

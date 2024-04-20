@@ -5,6 +5,7 @@
 #include <QMap>
 #include <QObject>
 
+#include <btrfsutil.h>
 #include <optional>
 
 constexpr uint64_t BTRFS_ROOT_ID = 5;
@@ -107,7 +108,7 @@ class Btrfs : public QObject {
      * @param readOnly - Whether the snapshot should be read-only
      * @return True on success, false otherwise
      */
-    static bool createSnapshot(const QString &source, const QString &dest, bool readOnly);
+    static btrfs_util_error createSnapshot(const QString &source, const QString &dest, bool readOnly);
 
     /**
      * @brief Creates a btrfs snapshot
@@ -117,7 +118,8 @@ class Btrfs : public QObject {
      * @param readOnly - Whether the snapshot should be read-only
      * @return Subvolume on success, or empty instance on failure.
      */
-    std::optional<Subvolume> createSnapshot(const QString &fileSystemUuid, uint64_t sourceSubvolId, const QString &dest, bool readOnly);
+    std::pair<QString, std::optional<Subvolume>> createSnapshot(const QString &fileSystemUuid, uint64_t sourceSubvolId, const QString &dest,
+                                                                bool readOnly);
 
     /** @brief Deletes a given subvolume
      *

@@ -978,13 +978,14 @@ void MainWindow::on_tableView_subvols_customContextMenuRequested(const QPoint &p
             dialog.selectAllTextAndSetFocus();
 
             if (dialog.exec() == QDialog::Accepted) {
-                std::optional<Subvolume> snapshot =
+                std::pair<QString, std::optional<Subvolume>> returnInfo =
                     m_btrfs->createSnapshot(subvol.filesystemUuid, subvol.id, dialog.destination(), dialog.isReadOnly());
-                if (snapshot) {
+                if (returnInfo.first.isEmpty()) {
+                    std::optional<Subvolume> snapshot = returnInfo.second;
                     m_subvolumeModel->addSubvolume(*snapshot);
                     QMessageBox::information(0, tr("Btrfs Assistant"), tr("Snapshot created"));
                 } else {
-                    QMessageBox::critical(0, tr("Btrfs Assistant"), tr("Failed to create the snapshot"));
+                    QMessageBox::critical(0, tr("Btrfs Assistant"), returnInfo.first);
                 }
             }
         });
