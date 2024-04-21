@@ -56,6 +56,7 @@ struct BtrfsFilesystem {
     uint64_t allocatedSize = 0;
     uint64_t usedSize = 0;
     uint64_t freeSize = 0;
+    uint64_t freeSizeMin = 0;
     uint64_t dataSize = 0;
     uint64_t dataUsed = 0;
     uint64_t metaSize = 0;

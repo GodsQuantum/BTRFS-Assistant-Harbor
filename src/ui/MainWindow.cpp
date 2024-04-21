@@ -311,6 +311,9 @@ void MainWindow::populateBtrfsUi(const QString &uuid)
     }
     m_ui->label_btrfsFreeValue->setText(
         QString("%1 (%2%)").arg(System::toHumanReadable(filesystem.freeSize)).arg((1.0 - freePercent) * 100.0, 0, 'f', 2));
+    double freeMinPercent = static_cast<double>(filesystem.freeSizeMin) / static_cast<double>(filesystem.totalSize);
+    m_ui->label_btrfsFreeMinValue->setText(
+        QString("%1 (%2%)").arg(System::toHumanReadable(filesystem.freeSizeMin)).arg((freeMinPercent) * 100.0, 0, 'f', 2));
 
     // filesystems operation section
     btrfsBalanceStatusUpdateUI();
