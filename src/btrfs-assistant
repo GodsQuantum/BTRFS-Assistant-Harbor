@@ -13,27 +13,27 @@ fi
 for i in "$@"; do
     case $i in
         -x=*|--xdg-desktop=*)
-            export XDG_CURRENT_DESKTOP="${i#*=}"
+            XDG_CURRENT_DESKTOP="${i#*=}"
             shift
         ;;
         -r=*|--xdg-runtime=*)
-            export XDG_RUNTIME_DIR="${i#*=}"
+            XDG_RUNTIME_DIR="${i#*=}"
             shift
         ;;
         -t=*|--platformtheme=*)
-            export QT_QPA_PLATFORMTHEME="${i#*=}"
+            QT_QPA_PLATFORMTHEME="${i#*=}"
             shift
         ;;
         -p=*|--platform=*)
-            export QT_QPA_PLATFORM="${i#*=}"
+            QT_QPA_PLATFORM="${i#*=}"
             shift
         ;;
         -d=*|--display=*)
-            export WAYLAND_DISPLAY="${i#*=}"
+            WAYLAND_DISPLAY="${i#*=}"
             shift
         ;;
         -s=*|--style-override=*)
-            export QT_STYLE_OVERRIDE="${i#*=}"
+            QT_STYLE_OVERRIDE="${i#*=}"
             shift
         ;;        
         *)
