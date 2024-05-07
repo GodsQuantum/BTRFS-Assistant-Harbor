@@ -322,16 +322,16 @@ SnapperSnapshot Snapper::readSnapperMeta(const QString &filename)
         }
 
         while (xml.readNextStartElement()) {
-            if (xml.name().compare("num") == 0) {
+            if (xml.name().compare(QStringLiteral("num")) == 0) {
                 snap.number = xml.readElementText().toUInt();
-            } else if (xml.name().compare("date") == 0) {
+            } else if (xml.name().compare(QStringLiteral("date")) == 0) {
                 snap.time = QDateTime::fromString(xml.readElementText(), Qt::ISODate);
                 snap.time = snap.time.addSecs(snap.time.offsetFromUtc());
-            } else if (xml.name().compare("description") == 0) {
+            } else if (xml.name().compare(QStringLiteral("description")) == 0) {
                 snap.desc = xml.readElementText();
-            } else if (xml.name().compare("type") == 0) {
+            } else if (xml.name().compare(QStringLiteral("type")) == 0) {
                 snap.type = xml.readElementText();
-            } else if (xml.name().compare("cleanup") == 0) {
+            } else if (xml.name().compare(QStringLiteral("cleanup")) == 0) {
                 snap.cleanup = xml.readElementText();
             } else {
                 xml.readElementText();
