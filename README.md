@@ -42,7 +42,7 @@ Btrfs Assistant can be installed from the AUR as `btrfs-assistant`
 There are unofficial Debian packages [here](https://software.opensuse.org/download/package?package=btrfs-assistant&project=home:iDesmI:more) coutesy of @idesmi or you can follow the instructions for Ubuntu to build it yourself.
 
 #### Ubuntu
-1. Install the prerequisites: `sudo apt install git cmake fonts-noto qt6-base-dev qt6-base-dev-tools g++ libbtrfs-dev libbtrfsutil-dev qt6-svg-dev qt6-tools-dev`
+1. Install the prerequisites: `sudo apt install git cmake fonts-noto qt6-base-dev qt6-base-dev-tools g++ libbtrfs-dev libbtrfsutil-dev pkexec qt6-svg-dev qt6-tools-dev`
 1. Download the tar.gz from the latest version [here](https://gitlab.com/btrfs-assistant/btrfs-assistant/-/tags)
 1. Untar the archive and cd into the directory
 1. `cmake -B build -S . -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE='Release'`
