@@ -10,6 +10,12 @@
 #include <QFile>
 #include <QTranslator>
 
+void setApplicationInfo()
+{
+    QCoreApplication::setApplicationName(QCoreApplication::translate("main", "Btrfs Assistant"));
+    QCoreApplication::setApplicationVersion("2.0");
+}
+
 int main(int argc, char *argv[])
 {
     QCommandLineParser parser;
@@ -47,27 +53,27 @@ int main(int argc, char *argv[])
     }
 
     // If $DISPLAY is not empty, launch in GUI mode; else launch in CLI mode
-    if (!qgetenv("DISPLAY").isEmpty()) {
+    if (!qEnvironmentVariableIsEmpty("DISPLAY")) {
         QApplication app(argc, argv);
-        parser.process(app);
-
-        if (parser.isSet(listOption) && snapper != nullptr) {
-            return Cli::listSnapshots(snapper);
-        } else if (parser.isSet(restoreOption) && snapper != nullptr) {
-            return Cli::restore(&btrfs, snapper, parser.value(restoreOption).toInt());
-        }
 
         app.setWindowIcon(QIcon(":/icons/btrfs-assistant.svg"));
 
         QTranslator translator;
         if (!translator.load("btrfsassistant_" + QLocale::system().name(), "/usr/share/btrfs-assistant/translations")) {
-            QTextStream(stdout) << QCoreApplication::translate("main", "Warning: Failed to load translations") << Qt::endl;
+            QTextStream(stdout) << QCoreApplication::translate("main", "Warning: No translations available") << Qt::endl;
             ;
         }
         app.installTranslator(&translator);
 
-        QCoreApplication::setApplicationName(QCoreApplication::translate("main", "Btrfs Assistant"));
-        QCoreApplication::setApplicationVersion("2.0");
+        setApplicationInfo();
+
+        // Process CLI options
+        parser.process(app);
+        if (parser.isSet(listOption) && snapper != nullptr) {
+            return Cli::listSnapshots(snapper);
+        } else if (parser.isSet(restoreOption) && snapper != nullptr) {
+            return Cli::restore(&btrfs, snapper, parser.value(restoreOption).toInt());
+        }
 
         // Set the desktop name for Wayland
         QGuiApplication::setDesktopFileName("btrfs-assistant");
@@ -83,8 +89,10 @@ int main(int argc, char *argv[])
         return app.exec();
     } else {
         QCoreApplication app(argc, argv);
-        parser.process(app);
 
+        setApplicationInfo();
+
+        parser.process(app);
         if (parser.isSet(listOption) && snapper != nullptr) {
             return Cli::listSnapshots(snapper);
         } else if (parser.isSet(restoreOption) && snapper != nullptr) {
