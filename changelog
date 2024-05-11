@@ -1,5 +1,14 @@
 ### Btrfs Assistant
 
+2.1 - 2024-05-11
+* Improve Wayland support(Contributed by Integral)
+* Set proper icon when running under Wayland
+* Add support for CLI to run in TTY(Contributed by Integral)
+* Add minimum free size to the information section(Contributed by Nikolas Koesling)
+* When creating snapshots, use errors from btrfs library
+* Add support for Qt 6.4 on Debian
+* Fix an issue where Btrfs Assistant was breaking flatpaks on Fedora
+
 2.0 - 2024-03-10
 * Ported to Qt 6
 * Added percentage value display for filesystem utilization(Contributed by Nikolas Koesling)
