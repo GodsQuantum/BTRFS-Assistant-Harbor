@@ -1,5 +1,8 @@
 ### Btrfs Assistant
 
+2.1.1 - 2024-05-11
+* Fix btrfs-assistant script regression impacting wlroots
+
 2.1 - 2024-05-11
 * Improve Wayland support(Contributed by Integral)
 * Set proper icon when running under Wayland
