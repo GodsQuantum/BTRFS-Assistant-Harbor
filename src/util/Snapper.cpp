@@ -107,7 +107,7 @@ void Snapper::load()
     m_snapshots.clear();
     const SnapperResult result = runSnapper("list-configs --columns config");
 
-    if (result.exitCode != 0 || result.outputList.isEmpty()) {
+    if (result.exitCode != 0) {
         return;
     }
 
