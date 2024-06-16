@@ -52,8 +52,9 @@ int main(int argc, char *argv[])
         snapper = new Snapper(&btrfs, snapperPath);
     }
 
-    // If $DISPLAY is not empty, launch in GUI mode; else launch in CLI mode
-    if (!qEnvironmentVariableIsEmpty("DISPLAY")) {
+    // If $DISPLAY or $WAYLAND_DISPLAY is not empty, launch in GUI mode; else launch in CLI mode
+    if (!qEnvironmentVariableIsEmpty("DISPLAY") || !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {
+        qDebug() << "DISPLAY / WAYLAND_DISPLAY variable is set, launching in GUI mode";
         QApplication app(argc, argv);
 
         app.setWindowIcon(QIcon(":/icons/btrfs-assistant.svg"));

@@ -70,7 +70,10 @@ bool System::isSubvolidInFstab()
 
 Result System::runCmd(const QString &cmd, bool includeStderr, milliseconds timeout)
 {
-    return runCmd("/bin/bash", QStringList() << "-c" << cmd, includeStderr, timeout);
+    return runCmd("/usr/bin/env",
+                  QStringList() << "bash"
+                                << "-c" << cmd,
+                  includeStderr, timeout);
 }
 
 Result System::runCmd(const QString &cmd, const QStringList &args, bool includeStderr, milliseconds timeout)
