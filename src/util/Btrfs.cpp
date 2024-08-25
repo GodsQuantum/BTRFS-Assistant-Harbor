@@ -1,6 +1,5 @@
 #include "util/Btrfs.h"
 #include "util/System.h"
-#include <sys/mount.h>
 
 #include <QDebug>
 #include <QDir>
@@ -353,7 +352,7 @@ QString Btrfs::mountRoot(const QString &uuid)
         const QString device = QDir::cleanPath(QStringLiteral("/dev/disk/by-uuid/") + uuid);
         const QString options = "subvolid=" + QString::number(BTRFS_ROOT_ID);
         if (!(tempMount.mkpath(mountpoint) &&
-              mount(device.toLocal8Bit(), mountpoint.toLocal8Bit(), "btrfs", 0, options.toLocal8Bit()) == 0)) {
+              System::runCmd("mount", {"-t", "btrfs", "-o", options, device, mountpoint}, true).exitCode == 0)) {
             return QString();
         }
     }
@@ -614,7 +613,10 @@ void Btrfs::stopScrubRoot(const QString &uuid)
 void Btrfs::unmountFilesystems()
 {
     for (const QString &mountpoint : std::as_const(m_tempMountpoints)) {
-        umount2(mountpoint.toLocal8Bit(), MNT_DETACH);
+        auto retCode = System::runCmd("umount", {mountpoint}, true).exitCode;
+        if (retCode != 0) {
+            qWarning() << "Failed to unmount" << mountpoint;
+        }
     }
 }
 
