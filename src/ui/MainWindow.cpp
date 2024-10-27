@@ -297,9 +297,10 @@ void MainWindow::populateBtrfsUi(const QString &uuid)
     // The information section
     const auto allocatedPercent = static_cast<double>(filesystem.allocatedSize) / static_cast<double>(filesystem.totalSize) * 100.0;
     m_ui->label_btrfsAllocatedValue->setText(
-        QString("%1 (%2%)").arg(System::toHumanReadable(filesystem.allocatedSize)).arg(allocatedPercent, 0, 'f', 2));
+        QStringLiteral("%1 (%2%)").arg(System::toHumanReadable(filesystem.allocatedSize)).arg(allocatedPercent, 0, 'f', 2));
     const auto usagePercent = static_cast<double>(filesystem.usedSize) / static_cast<double>(filesystem.totalSize) * 100.0;
-    m_ui->label_btrfsUsedValue->setText(QString("%1 (%2%)").arg(System::toHumanReadable(filesystem.usedSize)).arg(usagePercent, 0, 'f', 2));
+    m_ui->label_btrfsUsedValue->setText(
+        QStringLiteral("%1 (%2%)").arg(System::toHumanReadable(filesystem.usedSize)).arg(usagePercent, 0, 'f', 2));
     m_ui->label_btrfsSizeValue->setText(System::toHumanReadable(filesystem.totalSize));
     double freePercent = (double)filesystem.allocatedSize / (double)filesystem.totalSize;
     if (freePercent < 0.70) {
@@ -310,10 +311,10 @@ void MainWindow::populateBtrfsUi(const QString &uuid)
         m_ui->label_btrfsMessage->setText(tr("Your disk space is well utilized"));
     }
     m_ui->label_btrfsFreeValue->setText(
-        QString("%1 (%2%)").arg(System::toHumanReadable(filesystem.freeSize)).arg((1.0 - freePercent) * 100.0, 0, 'f', 2));
+        QStringLiteral("%1 (%2%)").arg(System::toHumanReadable(filesystem.freeSize)).arg((1.0 - freePercent) * 100.0, 0, 'f', 2));
     double freeMinPercent = static_cast<double>(filesystem.freeSizeMin) / static_cast<double>(filesystem.totalSize);
     m_ui->label_btrfsFreeMinValue->setText(
-        QString("%1 (%2%)").arg(System::toHumanReadable(filesystem.freeSizeMin)).arg((freeMinPercent) * 100.0, 0, 'f', 2));
+        QStringLiteral("%1 (%2%)").arg(System::toHumanReadable(filesystem.freeSizeMin)).arg((freeMinPercent) * 100.0, 0, 'f', 2));
 
     // filesystems operation section
     btrfsBalanceStatusUpdateUI();
@@ -1120,7 +1121,7 @@ void MainWindow::on_toolButton_subvolumeBrowse_clicked()
 
     auto fb = new FileBrowser(QDir::cleanPath(mountpoint + QDir::separator() + subvolPath), uuid, this);
     // Prefix the window title with target and snapshot number, so user can make sense of multiple windows
-    fb->setWindowTitle(QString("%1 - %2").arg(subvolPath, fb->windowTitle()));
+    fb->setWindowTitle(QStringLiteral("%1 - %2").arg(subvolPath, fb->windowTitle()));
     fb->setAttribute(Qt::WA_DeleteOnClose, true);
     fb->show();
 }
@@ -1277,7 +1278,7 @@ void MainWindow::on_toolButton_snapperBrowse_clicked()
 
     auto fb = new FileBrowser(m_snapper, QDir::cleanPath(mountpoint + QDir::separator() + subvolPath), uuid, this);
     // Prefix the window title with target and snapshot number, so user can make sense of multiple windows
-    fb->setWindowTitle(QString("%1:%2 - %3").arg(target, QString::number(snapshotNumber), fb->windowTitle()));
+    fb->setWindowTitle(QStringLiteral("%1:%2 - %3").arg(target, QString::number(snapshotNumber), fb->windowTitle()));
     fb->setAttribute(Qt::WA_DeleteOnClose, true);
     fb->show();
 }

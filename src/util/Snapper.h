@@ -100,14 +100,20 @@ class Snapper : public QObject {
      * @param name - The name of the new config
      * @param path - The absolute path to the mountpoint of the subvolume that will be snapshotted by the config
      */
-    SnapperResult createConfig(const QString &name, const QString &path) const { return runSnapper("create-config " + path, name); }
+    SnapperResult createConfig(const QString &name, const QString &path) const
+    {
+        return runSnapper(QStringLiteral("create-config %1").arg(path), name);
+    }
 
     /**
      * @brief Creates a new manual snapshot with the given description
      * @param name - The name of the Snapper config
      * @param description - A string holding the description to be saved
      */
-    SnapperResult createSnapshot(const QString &name, const QString &desc) const { return runSnapper("create -d '" + desc + "'", name); }
+    SnapperResult createSnapshot(const QString &name, const QString &desc) const
+    {
+        return runSnapper(QStringLiteral("create -d '%1'").arg(desc), name);
+    }
 
     /**
      * @brief Reads the list of subvols to create mapping between the snapshot subvolume and the source subvolume
@@ -125,7 +131,10 @@ class Snapper : public QObject {
      * @param name - The name of the config that contains the snapshot to delete
      * @param num - The number of the snapshot to delete
      */
-    SnapperResult deleteSnapshot(const QString &name, const int num) const { return runSnapper("delete " + QString::number(num), name); }
+    SnapperResult deleteSnapshot(const QString &name, const int num) const
+    {
+        return runSnapper(QStringLiteral("delete %1").arg(num), name);
+    }
 
     /**
      * @brief Changes the description of a given Snapper snapshot
@@ -141,7 +150,7 @@ class Snapper : public QObject {
         // Escape Single quotes since they are used to delimit the description
         asciiDesc.replace("'", "'\\''");
 
-        return runSnapper("modify --description '" + asciiDesc + "' " + QString::number(num), name);
+        return runSnapper(QStringLiteral("modify --description '%1' %2").arg(asciiDesc).arg(num), name);
     }
 
     /**
