@@ -99,5 +99,5 @@ QString System::toHumanReadable(const uint64_t number)
         result /= 1024;
         i++;
     }
-    return QString::number(result, 'f', 2) + " " + units[i];
+    return QStringLiteral("%1 %2").arg(result, 0, 'f', 2).arg(units[i]);
 }

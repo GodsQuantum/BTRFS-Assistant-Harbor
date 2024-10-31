@@ -13,8 +13,13 @@ static QStringList getSnapperSnapshotList(Snapper *snapper)
         std::sort(subvols.begin(), subvols.end(),
                   [](const SnapperSubvolume &a, const SnapperSubvolume &b) { return a.snapshotNum < b.snapshotNum; });
         for (const SnapperSubvolume &subvol : std::as_const(subvols)) {
-            output.append(target + "\t" + QString::number(subvol.snapshotNum) + "\t" + subvol.time.toString() + "\t" + subvol.type + "\t" +
-                          subvol.subvol + "\t" + subvol.uuid);
+            output.append(QStringLiteral("%1\t%2\t%3\t%4\t%5\t%6")
+                              .arg(target)
+                              .arg(subvol.snapshotNum)
+                              .arg(subvol.time.toString())
+                              .arg(subvol.type)
+                              .arg(subvol.subvol)
+                              .arg(subvol.uuid));
         }
     }
     return output;
@@ -88,7 +93,7 @@ int Cli::restore(Btrfs *btrfs, Snapper *snapper, const int index)
         return 1;
     }
 
-    QTextStream(stdout) << tr(QString("Restoring snapshot %1").arg(subvolume).toUtf8()) << Qt::endl;
+    QTextStream(stdout) << tr("Restoring snapshot %1").arg(subvolume) << Qt::endl;
 
     // Everything checks out, time to do the restore
     RestoreResult restoreResult = btrfs->restoreSubvol(uuid, subvolId, targetId);

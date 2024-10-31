@@ -365,7 +365,7 @@ bool Snapper::restoreFile(const QString &sourcePath, const QString &destPath) co
 
 SnapperResult Snapper::setCleanupAlgorithm(const QString &config, const uint number, const QString &cleanupAlg) const
 {
-    return runSnapper("modify -c \"" + cleanupAlg + "\" " + QString::number(number), config);
+    return runSnapper(QStringLiteral("modify -c \"%1\" %2").arg(cleanupAlg).arg(number), config);
 }
 
 SnapperResult Snapper::setConfig(const QString &name, const Config &configMap)

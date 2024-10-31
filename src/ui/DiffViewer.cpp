@@ -52,9 +52,10 @@ void DiffViewer::LoadSnapshots(const QString &rootPath, const QString &filePath)
     static QRegularExpression re("\\/[0-9]*\\/snapshot$");
     const QStringList subvolSplit = rootPath.split(re);
     const QDir stemPath(subvolSplit.at(0));
-    const QString wildcardPath = QDir::cleanPath(stemPath.canonicalPath() + "/*/snapshot/" + relPath).replace(" ", "\\ ");
+    const QString wildcardPath =
+        QDir::cleanPath(QStringLiteral("%1/*/snapshot/%2").arg(stemPath.canonicalPath(), relPath)).replace(" ", "\\ ");
 
-    const QStringList resultList = System::runCmd("ls " + wildcardPath, false).output.split("\n");
+    const QStringList resultList = System::runCmd(QStringLiteral("ls %1").arg(wildcardPath), false).output.split("\n");
 
     // Clear the table and set the headers
     m_twSnapshot->clear();
@@ -79,7 +80,8 @@ void DiffViewer::LoadSnapshots(const QString &rootPath, const QString &filePath)
         const QString snapshotNum = endPath.split("/").at(0);
 
         // Find the rootPath
-        const QString thisRootPath = QDir::cleanPath(stemPath.canonicalPath() + QDir::separator() + endPath.split(relPath).at(0));
+        const QString thisRootPath =
+            QDir::cleanPath(QStringLiteral("%1%2%3").arg(stemPath.canonicalPath(), QDir::separator(), endPath.split(relPath).at(0)));
 
         // Get the date
         const QString metaFileName =

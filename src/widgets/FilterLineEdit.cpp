@@ -16,7 +16,7 @@ FilterLineEdit::FilterLineEdit(QWidget *parent) : QLineEdit(parent)
     connect(this, &FilterLineEdit::textChanged, this, &FilterLineEdit::updateButton);
 
     int frameWidth = style()->pixelMetric(QStyle::PM_DefaultFrameWidth);
-    setStyleSheet(QString("QLineEdit { padding-right: %1px; } ").arg(m_clearButton->sizeHint().width() + frameWidth + 1));
+    setStyleSheet(QStringLiteral("QLineEdit { padding-right: %1px; } ").arg(m_clearButton->sizeHint().width() + frameWidth + 1));
     QSize msz = minimumSizeHint();
     setMinimumSize(qMax(msz.width(), m_clearButton->sizeHint().height() + frameWidth * 2 + 2),
                    qMax(msz.height(), m_clearButton->sizeHint().height() + frameWidth * 2 + 2));
