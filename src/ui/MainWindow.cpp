@@ -302,16 +302,17 @@ void MainWindow::populateBtrfsUi(const QString &uuid)
     m_ui->label_btrfsUsedValue->setText(
         QStringLiteral("%1 (%2%)").arg(System::toHumanReadable(filesystem.usedSize)).arg(usagePercent, 0, 'f', 2));
     m_ui->label_btrfsSizeValue->setText(System::toHumanReadable(filesystem.totalSize));
-    double freePercent = (double)filesystem.allocatedSize / (double)filesystem.totalSize;
-    if (freePercent < 0.70) {
+    double usedPercent = (double)filesystem.usedSize / (double)filesystem.totalSize;
+    if (usedPercent < 0.70) {
         m_ui->label_btrfsMessage->setText(tr("You have lots of free space, did you overbuy?"));
-    } else if (freePercent > 0.95) {
+    } else if (usedPercent > 0.95) {
         m_ui->label_btrfsMessage->setText(tr("Situation critical!  Time to delete some data or buy more disk"));
     } else {
         m_ui->label_btrfsMessage->setText(tr("Your disk space is well utilized"));
     }
+    double freePercent = static_cast<double>(filesystem.freeSize) / static_cast<double>(filesystem.totalSize);
     m_ui->label_btrfsFreeValue->setText(
-        QStringLiteral("%1 (%2%)").arg(System::toHumanReadable(filesystem.freeSize)).arg((1.0 - freePercent) * 100.0, 0, 'f', 2));
+        QStringLiteral("%1 (%2%)").arg(System::toHumanReadable(filesystem.freeSize)).arg((freePercent) * 100.0, 0, 'f', 2));
     double freeMinPercent = static_cast<double>(filesystem.freeSizeMin) / static_cast<double>(filesystem.totalSize);
     m_ui->label_btrfsFreeMinValue->setText(
         QStringLiteral("%1 (%2%)").arg(System::toHumanReadable(filesystem.freeSizeMin)).arg((freeMinPercent) * 100.0, 0, 'f', 2));
