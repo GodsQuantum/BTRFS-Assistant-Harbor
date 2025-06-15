@@ -53,6 +53,9 @@ There are unofficial Debian packages [here](https://software.opensuse.org/downlo
 #### Fedora
 Btrfs Assistant is available in the Fedora repos as `btrfs-assistant`
 
+## Packaging Status
+[![Packaging status](https://repology.org/badge/vertical-allrepos/btrfs-assistant.svg)](https://repology.org/project/btrfs-assistant/versions)
+
 ## Contributing
 Contributions are welcome!
 
