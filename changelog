@@ -1,5 +1,13 @@
 ### Btrfs Assistant
 
+2.2 - 2025-06-15
+* Fix overwriting permissions on xdg-runtime-dir(Contributed by Luan Vitor Simião Oliveira)
+* Fix free space percentage calculations
+* Fix a regression that blocked restoring when booted from an ISO
+* Replace the mount library call with the mount command to avoid corrupting lsblk output
+* Fix issues when DISPLAY is not set(Contributed by Austin Horstman)
+
+
 2.1.1 - 2024-05-11
 * Fix btrfs-assistant script regression impacting wlroots
 
