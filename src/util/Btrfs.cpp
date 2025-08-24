@@ -157,7 +157,7 @@ bool Btrfs::isSnapper(const QString &subvolume)
 
 bool Btrfs::isSubvolumeBackup(QString subvolPath)
 {
-    static QRegularExpression re("_backup_[0-9]{17}");
+    static QRegularExpression re("_backup_[0-9]{4}");
     const QStringList nameParts = subvolPath.split(re);
 
     return nameParts.count() == 2;

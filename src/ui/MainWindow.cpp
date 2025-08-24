@@ -521,6 +521,8 @@ void MainWindow::refreshSubvolListUi()
     if (m_ui->comboBox_btrfsDevice->count() == 1) {
         m_ui->tableView_subvols->hideColumn(SubvolumeModel::Column::FilesystemUuid);
     }
+
+    m_ui->toolButton_subvolRestoreBackup->setEnabled(false);
 }
 
 void MainWindow::restoreSnapshot(const QString &uuid, const QString &subvolume)
@@ -1494,7 +1496,7 @@ void MainWindow::on_toolButton_subvolRestoreBackup_clicked()
     const QString name = nameIndexes.at(0).data().toString();
 
     // Ensure it is a backup we created
-    static QRegularExpression re("_backup_[0-9]{17}");
+    static QRegularExpression re("_backup_[0-9]{4}");
     const QStringList nameParts = name.split(re);
 
     if (nameParts.count() != 2) {
