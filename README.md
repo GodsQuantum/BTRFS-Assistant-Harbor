@@ -36,7 +36,7 @@ Btrfs Assistant is a GUI management tool to make managing a Btrfs filesystem eas
 ## Installing
 
 #### Arch
-Btrfs Assistant can be installed from the AUR as `btrfs-assistant`
+Btrfs Assistant can be installed from the official repository as `btrfs-assistant`
 
 #### Debian
 There are unofficial Debian packages [here](https://software.opensuse.org/download/package?package=btrfs-assistant&project=home:iDesmI:more) coutesy of @idesmi or you can follow the instructions for Ubuntu to build it yourself.
