@@ -35,23 +35,7 @@ Btrfs Assistant is a GUI management tool to make managing a Btrfs filesystem eas
 
 ## Installing
 
-#### Arch
-Btrfs Assistant can be installed from the official repository as `btrfs-assistant`
-
-#### Debian
-There are unofficial Debian packages [here](https://software.opensuse.org/download/package?package=btrfs-assistant&project=home:iDesmI:more) coutesy of @idesmi or you can follow the instructions for Ubuntu to build it yourself.
-
-#### Ubuntu
-1. Install the prerequisites: `sudo apt install git cmake fonts-noto qt6-base-dev qt6-base-dev-tools g++ libbtrfs-dev libbtrfsutil-dev pkexec qt6-svg-dev qt6-tools-dev`
-1. Download the tar.gz from the latest version [here](https://gitlab.com/btrfs-assistant/btrfs-assistant/-/tags)
-1. Untar the archive and cd into the directory
-1. `cmake -B build -S . -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE='Release'`
-1. `make -C build`
-1. `sudo make -C build install`
-1. Optionally install Snapper - `sudo apt install snapper`
-
-#### Fedora
-Btrfs Assistant is available in the Fedora repos as `btrfs-assistant`
+It is packaged as `btrfs-assistant` in Arch, Debian, Fedora, Ubuntu and many other distros.  You can see the packaging status below.
 
 ## Packaging Status
 [![Packaging status](https://repology.org/badge/vertical-allrepos/btrfs-assistant.svg)](https://repology.org/project/btrfs-assistant/versions)
@@ -60,7 +44,6 @@ Btrfs Assistant is available in the Fedora repos as `btrfs-assistant`
 Contributions are welcome!
 
 Please see [CONTRIBUTING.md](docs/CONTRIBUTING.md) for more details.
-
 
 ### Development Requirements
 * Qt6 / Qt Design UI
