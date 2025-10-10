@@ -34,4 +34,8 @@ install(TARGETS btrfs-assistant-bin RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 find_library(BTRFSUTIL_LIB btrfsutil)
 target_link_libraries(btrfs-assistant-bin PRIVATE Qt${QT_VERSION_MAJOR}::Widgets ${BTRFSUTIL_LIB})
-target_compile_options(btrfs-assistant-bin PRIVATE -Werror -Wall -Wextra -Wconversion)
+target_compile_options(btrfs-assistant-bin PRIVATE -Wall -Wextra -Wconversion)
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_options(btrfs-assistant-bin PRIVATE -Werror)
+endif()
