@@ -614,7 +614,7 @@
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="690"/>
-        <location filename="../src/ui/MainWindow.cpp" line="861"/>
+        <location filename="../src/ui/MainWindow.cpp" line="871"/>
         <source>Snapper</source>
         <translation>Snapper</translation>
     </message>
@@ -820,209 +820,209 @@
         <translation>错误</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="308"/>
+        <location filename="../src/ui/MainWindow.cpp" line="318"/>
         <source>You have lots of free space, did you overbuy?</source>
         <translation>可用空间很多，是不是买大了？</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="310"/>
+        <location filename="../src/ui/MainWindow.cpp" line="320"/>
         <source>Situation critical!  Time to delete some data or buy more disk</source>
         <translation>情况危急！该删除一些数据或购买更大的磁盘了</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="312"/>
+        <location filename="../src/ui/MainWindow.cpp" line="322"/>
         <source>Your disk space is well utilized</source>
         <translation>磁盘空间利用率良好</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="364"/>
-        <location filename="../src/ui/MainWindow.cpp" line="414"/>
+        <location filename="../src/ui/MainWindow.cpp" line="374"/>
+        <location filename="../src/ui/MainWindow.cpp" line="424"/>
         <source>Number</source>
         <comment>The number associated with a snapshot</comment>
         <translation>编号</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="365"/>
-        <location filename="../src/ui/MainWindow.cpp" line="418"/>
+        <location filename="../src/ui/MainWindow.cpp" line="375"/>
+        <location filename="../src/ui/MainWindow.cpp" line="428"/>
         <source>Date/Time</source>
         <translation>日期/时间</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="366"/>
-        <location filename="../src/ui/MainWindow.cpp" line="419"/>
+        <location filename="../src/ui/MainWindow.cpp" line="376"/>
+        <location filename="../src/ui/MainWindow.cpp" line="429"/>
         <source>Type</source>
         <translation>类型</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="367"/>
+        <location filename="../src/ui/MainWindow.cpp" line="377"/>
         <source>Cleanup</source>
         <translation>清理策略</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="368"/>
-        <location filename="../src/ui/MainWindow.cpp" line="421"/>
+        <location filename="../src/ui/MainWindow.cpp" line="378"/>
+        <location filename="../src/ui/MainWindow.cpp" line="431"/>
         <source>Description</source>
         <translation>描述</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="416"/>
+        <location filename="../src/ui/MainWindow.cpp" line="426"/>
         <source>Subvolume</source>
         <translation>子卷</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="532"/>
+        <location filename="../src/ui/MainWindow.cpp" line="542"/>
         <source>This is not a snapshot that can be restored by this application</source>
         <translation>此快照无法由本应用程序恢复</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="542"/>
+        <location filename="../src/ui/MainWindow.cpp" line="552"/>
         <source>Snapshot subvolume not found</source>
         <translation>未找到快照子卷</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="552"/>
+        <location filename="../src/ui/MainWindow.cpp" line="562"/>
         <source>Target not found</source>
         <translation>未找到目标</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="558"/>
+        <location filename="../src/ui/MainWindow.cpp" line="568"/>
         <source>Warning subvolid mount detected!</source>
         <translation>警告：检测到按 subvolid 挂载！</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="559"/>
+        <location filename="../src/ui/MainWindow.cpp" line="569"/>
         <source>It appears you are currently mounting by subvolid.  Doing a restore in this case may not produce the expected outcome.  It is highly recommended you switch to mounting by subvolume path before proceeding!</source>
         <translation>当前似乎正在按 subvolid 挂载。在这种情况下执行恢复可能无法得到预期结果。强烈建议在继续前改为按子卷路径挂载！</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="564"/>
+        <location filename="../src/ui/MainWindow.cpp" line="574"/>
         <source>Are you sure you want to restore </source>
         <translation>确定要恢复 </translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="564"/>
+        <location filename="../src/ui/MainWindow.cpp" line="574"/>
         <source> to </source>
         <comment>as in from/to</comment>
         <translation> 到 </translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="578"/>
+        <location filename="../src/ui/MainWindow.cpp" line="588"/>
         <source>Snapshot Restore</source>
         <translation>快照恢复</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="579"/>
+        <location filename="../src/ui/MainWindow.cpp" line="589"/>
         <source>Snapshot restoration complete.</source>
         <translation>快照恢复完成。</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="579"/>
-        <location filename="../src/ui/MainWindow.cpp" line="1534"/>
+        <location filename="../src/ui/MainWindow.cpp" line="589"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1544"/>
         <source>A copy of the original subvolume has been saved as </source>
         <translation>原始子卷的副本已保存为：</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="580"/>
-        <location filename="../src/ui/MainWindow.cpp" line="1535"/>
+        <location filename="../src/ui/MainWindow.cpp" line="590"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1545"/>
         <source>Please reboot immediately</source>
         <translation>请立即重启</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="778"/>
+        <location filename="../src/ui/MainWindow.cpp" line="788"/>
         <source>No config selected</source>
         <translation>未选择配置</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="784"/>
+        <location filename="../src/ui/MainWindow.cpp" line="794"/>
         <source>Please Confirm</source>
         <translation>请确认</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="785"/>
+        <location filename="../src/ui/MainWindow.cpp" line="795"/>
         <source>Are you sure you want to delete </source>
         <translation>确定要删除 </translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="785"/>
+        <location filename="../src/ui/MainWindow.cpp" line="795"/>
         <source>This action cannot be undone</source>
         <translation>此操作无法撤销</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="816"/>
+        <location filename="../src/ui/MainWindow.cpp" line="826"/>
         <source>No btrfs subvolumes found</source>
         <translation>未找到 Btrfs 子卷</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="842"/>
+        <location filename="../src/ui/MainWindow.cpp" line="852"/>
         <source>Failed to save changes</source>
         <translation>保存更改失败</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="861"/>
+        <location filename="../src/ui/MainWindow.cpp" line="871"/>
         <source>Changes saved</source>
         <translation>更改已保存</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="874"/>
+        <location filename="../src/ui/MainWindow.cpp" line="884"/>
         <source>Please enter a valid name</source>
         <translation>请输入有效名称</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="880"/>
+        <location filename="../src/ui/MainWindow.cpp" line="890"/>
         <source>That name is already in use!</source>
         <translation>该名称已被使用！</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="911"/>
-        <location filename="../src/ui/MainWindow.cpp" line="969"/>
-        <location filename="../src/ui/MainWindow.cpp" line="973"/>
-        <location filename="../src/ui/MainWindow.cpp" line="994"/>
-        <location filename="../src/ui/MainWindow.cpp" line="996"/>
-        <location filename="../src/ui/MainWindow.cpp" line="1096"/>
+        <location filename="../src/ui/MainWindow.cpp" line="921"/>
+        <location filename="../src/ui/MainWindow.cpp" line="979"/>
+        <location filename="../src/ui/MainWindow.cpp" line="983"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1004"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1006"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1106"/>
         <source>Btrfs Assistant</source>
         <translation>Btrfs 助手</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="911"/>
-        <location filename="../src/ui/MainWindow.cpp" line="969"/>
-        <location filename="../src/ui/MainWindow.cpp" line="1096"/>
+        <location filename="../src/ui/MainWindow.cpp" line="921"/>
+        <location filename="../src/ui/MainWindow.cpp" line="979"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1106"/>
         <source>Changes applied</source>
         <translation>更改已应用</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="946"/>
+        <location filename="../src/ui/MainWindow.cpp" line="956"/>
         <source>Are you sure you want to set read-only flag for %1?</source>
         <translation>确定要为 %1 设置只读标志吗？</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="948"/>
+        <location filename="../src/ui/MainWindow.cpp" line="958"/>
         <source>Are you sure you want to clear read-only flag for %1?</source>
         <translation>确定要清除 %1 的只读标志吗？</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="952"/>
+        <location filename="../src/ui/MainWindow.cpp" line="962"/>
         <source>Are you sure you want to set read-only flag for %1 subvolumes?</source>
         <translation>确定要为 %1 个子卷设置只读标志吗？</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="954"/>
+        <location filename="../src/ui/MainWindow.cpp" line="964"/>
         <source>Are you sure you want to clear read-only flag for %1 subvolumes?</source>
         <translation>确定要清除 %1 个子卷的只读标志吗？</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="564"/>
-        <location filename="../src/ui/MainWindow.cpp" line="957"/>
-        <location filename="../src/ui/MainWindow.cpp" line="1143"/>
-        <location filename="../src/ui/MainWindow.cpp" line="1348"/>
-        <location filename="../src/ui/MainWindow.cpp" line="1520"/>
+        <location filename="../src/ui/MainWindow.cpp" line="574"/>
+        <location filename="../src/ui/MainWindow.cpp" line="967"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1153"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1358"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1530"/>
         <source>Confirm</source>
         <translation>确认</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="149"/>
         <location filename="../src/ui/MainWindow.cpp" line="173"/>
-        <location filename="../src/ui/MainWindow.cpp" line="725"/>
-        <location filename="../src/ui/MainWindow.cpp" line="748"/>
+        <location filename="../src/ui/MainWindow.cpp" line="735"/>
+        <location filename="../src/ui/MainWindow.cpp" line="758"/>
         <source>Stop</source>
         <translation>停止</translation>
     </message>
@@ -1032,226 +1032,246 @@
         <translation>当前没有正在运行的均衡（Balance）操作。</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="646"/>
+        <location filename="../src/ui/MainWindow.cpp" line="220"/>
+        <source>none</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/ui/MainWindow.cpp" line="220"/>
+        <source>daily</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/ui/MainWindow.cpp" line="220"/>
+        <source>weekly</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/ui/MainWindow.cpp" line="220"/>
+        <source>monthly</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/ui/MainWindow.cpp" line="656"/>
         <source>New Config</source>
         <translation>新建配置</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="646"/>
+        <location filename="../src/ui/MainWindow.cpp" line="656"/>
         <source>Cancel New Config</source>
         <translation>取消新建配置</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="974"/>
+        <location filename="../src/ui/MainWindow.cpp" line="984"/>
         <source>Failed to apply changes to the following subvolumes:</source>
         <translation>无法将更改应用到以下子卷：</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="983"/>
+        <location filename="../src/ui/MainWindow.cpp" line="993"/>
         <source>Create &amp;snapshot...</source>
         <translation>创建快照(&amp;S)...</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="994"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1004"/>
         <source>Snapshot created</source>
         <translation>快照已创建</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1001"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1011"/>
         <source>Browse subvolume...</source>
         <translation>浏览子卷...</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1005"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1015"/>
         <source>Restore backup...</source>
         <translation>恢复备份...</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1010"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1020"/>
         <source>Set &amp;read-only flag</source>
         <translation>设置只读标志(&amp;R)</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1016"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1026"/>
         <source>&amp;Clear read-only flag</source>
         <translation>清除只读标志(&amp;C)</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1021"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1031"/>
         <source>&amp;Delete</source>
         <translation>删除(&amp;D)</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1032"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1042"/>
         <source>Set cleanup algorithm to &amp;timeline</source>
         <translation>将清理算法设为时间线(&amp;T)</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1035"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1045"/>
         <source>Set cleanup algorithm to &amp;number</source>
         <translation>将清理算法设为数量(&amp;N)</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1038"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1048"/>
         <source>&amp;Remove cleanup algorithm</source>
         <translation>移除清理算法(&amp;R)</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1041"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1051"/>
         <source>&amp;Delete snapshot</source>
         <translation>删除快照(&amp;D)</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1044"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1054"/>
         <source>&amp;Change description</source>
         <translation>更改描述(&amp;C)</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1138"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1148"/>
         <source>Please select a subvolume to delete first!</source>
         <translation>请先选择要删除的子卷！</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1143"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1153"/>
         <source>Are you sure you want to delete the selected subvolume(s)?</source>
         <translation>确定要删除所选子卷吗？</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1161"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1171"/>
         <source>Snapper Snapshots Found</source>
         <translation>发现 Snapper 快照</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1162"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1172"/>
         <source>One or more of the selected subvolumes is a Snapper snapshot, would you like to remove the Snapper Metadata?(Recommended)</source>
         <translation>所选子卷中有一个或多个是 Snapper 快照，是否同时移除 Snapper 元数据？（推荐）</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1184"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1194"/>
         <source>Failed to delete subvolume!</source>
         <translation>删除子卷失败！</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1184"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1194"/>
         <source>Invalid subvolume ID</source>
         <translation>无效的子卷 ID</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1190"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1200"/>
         <source>You cannot delete mounted subvolume: </source>
         <translation>无法删除已挂载的子卷：</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1191"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1201"/>
         <source>Please unmount the subvolume before deleting</source>
         <translation>请先卸载该子卷再删除</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1196"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1206"/>
         <source>Failed to delete subvolume </source>
         <translation>删除子卷失败：</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1232"/>
-        <location filename="../src/ui/MainWindow.cpp" line="1336"/>
-        <location filename="../src/ui/MainWindow.cpp" line="1385"/>
-        <location filename="../src/ui/MainWindow.cpp" line="1484"/>
-        <location filename="../src/ui/MainWindow.cpp" line="1546"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1242"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1346"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1395"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1494"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1556"/>
         <source>Nothing selected!</source>
         <translation>未选择任何项目！</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1245"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1255"/>
         <source>Failed to restore snapshot</source>
         <translation>恢复快照失败</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1274"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1284"/>
         <source>Failed to find snapshot to browse</source>
         <translation>找不到要浏览的快照</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1300"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1310"/>
         <source>No config selected for snapshot</source>
         <translation>未为快照选择配置</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1306"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1316"/>
         <source>Enter a description for the snapshot</source>
         <translation>输入快照描述</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1306"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1316"/>
         <source>Description:</source>
         <translation>描述：</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1348"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1358"/>
         <source>Are you sure you want to delete the selected snapshot(s)?</source>
         <translation>确定要删除所选快照吗？</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1357"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1367"/>
         <source>Cannot delete snapshot</source>
         <translation>无法删除快照</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1409"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1419"/>
         <source>Change description</source>
         <translation>更改描述</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1410"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1420"/>
         <source>Changing &lt;u&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/u&gt; snapshot(s) &lt;br&gt;&lt;br&gt;Enter a new description for the snapshot(s):</source>
         <translation>正在更改 &lt;u&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/u&gt; 个快照&lt;br&gt;&lt;br&gt;请输入新的快照描述：</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1421"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1431"/>
         <source>Cannot change description of snapshot</source>
         <translation>无法更改快照描述</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1493"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1503"/>
         <source>Please select a single backup subvolume to restore!</source>
         <translation>请选择一个要恢复的备份子卷！</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1504"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1514"/>
         <source>The subvolume you selected is not a Btrfs Assistant backup</source>
         <translation>所选子卷不是 Btrfs 助手备份</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1515"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1525"/>
         <source>The subvolume is missing!</source>
         <translation>子卷不存在！</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1520"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1530"/>
         <source>Are you sure you want to restore the selected backup?</source>
         <translation>确定要恢复所选备份吗？</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1533"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1543"/>
         <source>Backup Restore</source>
         <translation>备份恢复</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1534"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1544"/>
         <source>Backup restoration complete.</source>
         <translation>备份恢复完成。</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1562"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1572"/>
         <source>Failed to set cleanup algorithm for snapshot %1</source>
         <translation>为快照%1 设置清理算法失败</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1581"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1591"/>
         <source>Disable Btrfs Quotas</source>
         <translation>禁用 Btrfs 配额</translation>
     </message>
     <message>
-        <location filename="../src/ui/MainWindow.cpp" line="1583"/>
+        <location filename="../src/ui/MainWindow.cpp" line="1593"/>
         <source>Enable Btrfs Quotas</source>
         <translation>启用 Btrfs 配额</translation>
     </message>
