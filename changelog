@@ -1,5 +1,12 @@
 ### Btrfs Assistant
 
+2.3 - 2026-08-16
+* Add Simplified Chinese translations(Contributed by Aromatic)
+* Make frequency items translatable(Contributed by sgakerru)
+* Fix restore subvolume button
+* Only treat warnings as errors when building the Debug config(Contributed by Integral)
+* Remove deprecated invalidateFilter()
+
 2.2 - 2025-06-15
 * Fix overwriting permissions on xdg-runtime-dir(Contributed by Luan Vitor Simião Oliveira)
 * Fix free space percentage calculations
