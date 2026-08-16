@@ -188,16 +188,18 @@ bool SubvolumeFilterModel::includeContainer() const { return m_includeContainer;
 void SubvolumeFilterModel::setIncludeSnapshots(bool includeSnapshots)
 {
     if (m_includeSnapshots != includeSnapshots) {
+        beginFilterChange();
         m_includeSnapshots = includeSnapshots;
-        invalidateFilter();
+        endFilterChange();
     }
 }
 
 void SubvolumeFilterModel::setIncludeContainer(bool includeContainer)
 {
     if (m_includeContainer != includeContainer) {
+        beginFilterChange();
         m_includeContainer = includeContainer;
-        invalidateFilter();
+        endFilterChange();
     }
 }
 
