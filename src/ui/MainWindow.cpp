@@ -217,17 +217,27 @@ void MainWindow::loadSnapperUI()
 void MainWindow::populateBmTab()
 {
     const QStringList frequencyValues = {"none", "daily", "weekly", "monthly"};
+    const QStringList frequencyValuesTr = {tr("none"), tr("daily"), tr("weekly"), tr("monthly")};
+
+    auto insertFrequencyItems = [&](QComboBox *cb) {
+        for (int i = 0; i < frequencyValues.length(); ++i) {
+            cb->insertItem(i, frequencyValuesTr[i], frequencyValues[i]);
+        }
+    };
 
     // Populate the frequency values from maintenance configuration
     m_ui->comboBox_bmBalanceFreq->clear();
-    m_ui->comboBox_bmBalanceFreq->insertItems(0, frequencyValues);
-    m_ui->comboBox_bmBalanceFreq->setCurrentText(m_btrfsMaint->value("BTRFS_BALANCE_PERIOD"));
+    insertFrequencyItems(m_ui->comboBox_bmBalanceFreq);
+    const int cbBalanceIndex = m_ui->comboBox_bmBalanceFreq->findData(m_btrfsMaint->value("BTRFS_BALANCE_PERIOD"));
+    m_ui->comboBox_bmBalanceFreq->setCurrentIndex(cbBalanceIndex);
     m_ui->comboBox_bmScrubFreq->clear();
-    m_ui->comboBox_bmScrubFreq->insertItems(0, frequencyValues);
-    m_ui->comboBox_bmScrubFreq->setCurrentText(m_btrfsMaint->value("BTRFS_SCRUB_PERIOD"));
+    insertFrequencyItems(m_ui->comboBox_bmScrubFreq);
+    const int cbScrubIndex = m_ui->comboBox_bmScrubFreq->findData(m_btrfsMaint->value("BTRFS_SCRUB_PERIOD"));
+    m_ui->comboBox_bmScrubFreq->setCurrentIndex(cbScrubIndex);
     m_ui->comboBox_bmDefragFreq->clear();
-    m_ui->comboBox_bmDefragFreq->insertItems(0, frequencyValues);
-    m_ui->comboBox_bmDefragFreq->setCurrentText(m_btrfsMaint->value("BTRFS_DEFRAG_PERIOD"));
+    insertFrequencyItems(m_ui->comboBox_bmDefragFreq);
+    const int cbDefragIndex = m_ui->comboBox_bmDefragFreq->findData(m_btrfsMaint->value("BTRFS_DEFRAG_PERIOD"));
+    m_ui->comboBox_bmDefragFreq->setCurrentIndex(cbDefragIndex);
 
     // Populate the balance section
     const QStringList balanceMounts = m_btrfsMaint->value("BTRFS_BALANCE_MOUNTPOINTS").trimmed().split(":");
@@ -1050,9 +1060,9 @@ void MainWindow::on_tableWidget_snapperNew_customContextMenuRequested(const QPoi
 void MainWindow::on_toolButton_bmApply_clicked()
 {
     // Read and set the Btrfs maintenance settings
-    m_btrfsMaint->setValue("BTRFS_BALANCE_PERIOD", m_ui->comboBox_bmBalanceFreq->currentText());
-    m_btrfsMaint->setValue("BTRFS_SCRUB_PERIOD", m_ui->comboBox_bmScrubFreq->currentText());
-    m_btrfsMaint->setValue("BTRFS_DEFRAG_PERIOD", m_ui->comboBox_bmDefragFreq->currentText());
+    m_btrfsMaint->setValue("BTRFS_BALANCE_PERIOD", m_ui->comboBox_bmBalanceFreq->currentData().toString());
+    m_btrfsMaint->setValue("BTRFS_SCRUB_PERIOD", m_ui->comboBox_bmScrubFreq->currentData().toString());
+    m_btrfsMaint->setValue("BTRFS_DEFRAG_PERIOD", m_ui->comboBox_bmDefragFreq->currentData().toString());
 
     // Update balance settings
     if (m_ui->checkBox_bmBalance->isChecked()) {
