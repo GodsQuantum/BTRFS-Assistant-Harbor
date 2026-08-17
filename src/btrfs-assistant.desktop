@@ -2,6 +2,7 @@
 Name=Btrfs Assistant
 Name[zh_CN]=Btrfs 助手
 Comment=Change system settings
+Comment[ru]=Изменение системных настроек
 Comment[zh_CN]=更改系统设置
 Exec=btrfs-assistant-launcher
 Terminal=false
