@@ -115,27 +115,27 @@
     <message>
         <location filename="../src/util/BtrfsStatus.cpp" line="70"/>
         <source>ETA:</source>
-        <translation>Voraussichtliche Fertigstellungszeit:</translation>
+        <translation>Voraussichtliche Fertigstellungszeit: </translation>
     </message>
     <message>
         <location filename="../src/util/BtrfsStatus.cpp" line="71"/>
         <source>Total to scrub:</source>
-        <translation>Insgesamt zu reinigen:</translation>
+        <translation>Insgesamt zu bereinigen: </translation>
     </message>
     <message>
         <location filename="../src/util/BtrfsStatus.cpp" line="72"/>
         <source>Bytes scrubbed:</source>
-        <translation>Bytes bereinigt;</translation>
+        <translation>Bytes bereinigt: </translation>
     </message>
     <message>
         <location filename="../src/util/BtrfsStatus.cpp" line="73"/>
         <source>Rate:</source>
-        <translation>Bewertung: </translation>
+        <translation>Geschwindigkeit: </translation>
     </message>
     <message>
         <location filename="../src/util/BtrfsStatus.cpp" line="74"/>
         <source>Error summary:</source>
-        <translation>Fehlerzusammenfassung:</translation>
+        <translation>Fehlerzusammenfassung: </translation>
     </message>
     <message>
         <location filename="../src/util/BtrfsStatus.cpp" line="75"/>
@@ -145,7 +145,7 @@
     <message>
         <location filename="../src/util/BtrfsStatus.cpp" line="76"/>
         <source>csum_errors:</source>
-        <translation>校验和错误：</translation>
+        <translation>Prüfsummenfehler: </translation>
     </message>
     <message>
         <location filename="../src/util/BtrfsStatus.cpp" line="77"/>
@@ -476,17 +476,17 @@
     <message>
         <location filename="../src/ui/MainWindow.ui" line="252"/>
         <source>Data:</source>
-        <translation>Daten: </translation>
+        <translation>Daten</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="259"/>
         <source>Metadata:</source>
-        <translation>Metadaten: </translation>
+        <translation>Metadaten</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="266"/>
         <source>System:</source>
-        <translation>System: </translation>
+        <translation>System</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="273"/>
@@ -506,7 +506,7 @@
     <message>
         <location filename="../src/ui/MainWindow.ui" line="308"/>
         <source>Used:</source>
-        <translation>Verwendet: </translation>
+        <translation>Verwendet:</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="315"/>
@@ -523,22 +523,22 @@
     <message>
         <location filename="../src/ui/MainWindow.ui" line="345"/>
         <source>Allocated:  </source>
-        <translation>Zugewiesen: </translation>
+        <translation>Zugewiesen:</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="359"/>
         <source>Filesystem Size: </source>
-        <translation>Dateisystemgröße: </translation>
+        <translation>Dateisystemgröße:</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="395"/>
         <source>Free (Estimated): </source>
-        <translation>Frei (geschätzt): </translation>
+        <translation>Frei (geschätzt):</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="405"/>
         <source>Free (Minimum): </source>
-        <translation>Frei (Minimum): </translation>
+        <translation>Frei (Minimum):</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="421"/>
@@ -548,7 +548,7 @@
     <message>
         <location filename="../src/ui/MainWindow.ui" line="427"/>
         <source>Filesystem:</source>
-        <translation>Dateisystem: </translation>
+        <translation>Dateisystem</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="463"/>
@@ -625,7 +625,7 @@
         <location filename="../src/ui/MainWindow.ui" line="733"/>
         <location filename="../src/ui/MainWindow.ui" line="1040"/>
         <source>Select config: </source>
-        <translation>Konfiguration auswählen: </translation>
+        <translation>Konfiguration auswählen</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="766"/>
@@ -641,7 +641,7 @@
     <message>
         <location filename="../src/ui/MainWindow.ui" line="870"/>
         <source>Select target: </source>
-        <translation>Ziel auswählen: </translation>
+        <translation>Ziel auswählen</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="925"/>
@@ -656,7 +656,7 @@
     <message>
         <location filename="../src/ui/MainWindow.ui" line="1090"/>
         <source>Save</source>
-        <translation>保存</translation>
+        <translation>Speichern</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="1100"/>
@@ -688,7 +688,7 @@
         <location filename="../src/ui/MainWindow.ui" line="1282"/>
         <location filename="../src/ui/MainWindow.ui" line="1353"/>
         <source>Save: </source>
-        <translation>Speichern: </translation>
+        <translation>speichern</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="1251"/>
@@ -699,7 +699,7 @@
     <message>
         <location filename="../src/ui/MainWindow.ui" line="1254"/>
         <source>Enable timeline snapshots</source>
-        <translation>Zeitachsen-Snapshots aktivieren</translation>
+        <translation>Zeitplan für Snapshots aktivieren</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="1268"/>
@@ -729,7 +729,7 @@
     <message>
         <location filename="../src/ui/MainWindow.ui" line="1339"/>
         <source>Save:</source>
-        <translation>Speichern:</translation>
+        <translation>speichern</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="1346"/>
@@ -744,7 +744,7 @@
     <message>
         <location filename="../src/ui/MainWindow.ui" line="1388"/>
         <source>Snapper timeline enabled</source>
-        <translation>Snapper-Zeitachse aktiviert</translation>
+        <translation>Snapper-Zeitplan aktiviert</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="1401"/>
@@ -771,7 +771,7 @@
         <location filename="../src/ui/MainWindow.ui" line="1621"/>
         <location filename="../src/ui/MainWindow.ui" line="1695"/>
         <source>Frequency: </source>
-        <translation>Häuffigkeit: </translation>
+        <translation>Häuffigkeit</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="1541"/>
@@ -785,7 +785,7 @@
         <location filename="../src/ui/MainWindow.ui" line="1635"/>
         <location filename="../src/ui/MainWindow.ui" line="1709"/>
         <source>Mountpoints: </source>
-        <translation>Einhängepunkte: </translation>
+        <translation>Einhängepunkte</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.ui" line="1651"/>
@@ -1027,27 +1027,27 @@
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="158"/>
         <source>No balance running.</source>
-        <translation>Es wird kein Ausgleich geführt.</translation>
+        <translation>Es wird kein Ausgleich ausgeführt</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="220"/>
         <source>none</source>
-        <translation type="unfinished"></translation>
+        <translation>niemals</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="220"/>
         <source>daily</source>
-        <translation type="unfinished"></translation>
+        <translation>täglich</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="220"/>
         <source>weekly</source>
-        <translation type="unfinished"></translation>
+        <translation>wöchentlich</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="220"/>
         <source>monthly</source>
-        <translation type="unfinished"></translation>
+        <translation>monatlich</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="656"/>
@@ -1167,7 +1167,7 @@
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="1206"/>
         <source>Failed to delete subvolume </source>
-        <translation>删除子卷失败：</translation>
+        <translation>Teilvolumen löschen fehlgeschlagen:</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="1242"/>
@@ -1210,8 +1210,8 @@
     </message>
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="1367"/>
-        <source>Snapshot löschen nicht möglich</source>
-        <translation>无法删除快照</translation>
+        <source>Cannot delete snapshot</source>
+        <translation>Snapshot löschen nicht möglich</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="1419"/>
