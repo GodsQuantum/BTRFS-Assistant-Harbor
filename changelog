@@ -1,5 +1,9 @@
 ### Btrfs Assistant
 
+2.3.1 - 2026-08-21
+* Add German translations(Contributed by Hen Ry)
+* Add Russian translations(Contributed by Wehrwolfmann)
+
 2.3 - 2026-08-16
 * Add Simplified Chinese translations(Contributed by Aromatic)
 * Make frequency items translatable(Contributed by sgakerru)
@@ -13,7 +17,6 @@
 * Fix a regression that blocked restoring when booted from an ISO
 * Replace the mount library call with the mount command to avoid corrupting lsblk output
 * Fix issues when DISPLAY is not set(Contributed by Austin Horstman)
-
 
 2.1.1 - 2024-05-11
 * Fix btrfs-assistant script regression impacting wlroots
