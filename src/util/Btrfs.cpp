@@ -71,14 +71,20 @@ QStringList Btrfs::children(const uint64_t subvolId, const QString &uuid) const
 
     QStringList children;
 
-    while (returnCode != BTRFS_UTIL_ERROR_STOP_ITERATION) {
+    while (true) {
         char *path = nullptr;
         struct btrfs_util_subvolume_info subvolInfo;
         returnCode = btrfs_util_subvolume_iterator_next_info(iter, &path, &subvolInfo);
-        if (returnCode == BTRFS_UTIL_OK && subvolInfo.parent_id == subvolId) {
-            children.append(QString::fromLocal8Bit(path));
-            free(path);
+        if (returnCode != BTRFS_UTIL_OK) {
+            if (returnCode != BTRFS_UTIL_ERROR_STOP_ITERATION) {
+                qWarning() << "Failed to iterate over the subvolumes of" << mountpoint << ":" << btrfs_util_strerror(returnCode);
+            }
+            break;
         }
+        if (subvolInfo.parent_id == subvolId) {
+            children.append(QString::fromLocal8Bit(path));
+        }
+        free(path);
     }
 
     btrfs_util_destroy_subvolume_iterator(iter);
@@ -265,14 +271,18 @@ void Btrfs::loadSubvols(const QString &uuid)
 
         SubvolumeMap subvols;
 
-        while (returnCode != BTRFS_UTIL_ERROR_STOP_ITERATION) {
+        while (true) {
             char *path = nullptr;
             struct btrfs_util_subvolume_info subvolInfo;
             returnCode = btrfs_util_subvolume_iterator_next_info(iter, &path, &subvolInfo);
-            if (returnCode == BTRFS_UTIL_OK) {
-                subvols[subvolInfo.id] = infoToSubvolume(uuid, QString::fromLocal8Bit(path), subvolInfo);
-                free(path);
+            if (returnCode != BTRFS_UTIL_OK) {
+                if (returnCode != BTRFS_UTIL_ERROR_STOP_ITERATION) {
+                    qWarning() << "Failed to iterate over the subvolumes of" << mountpoint << ":" << btrfs_util_strerror(returnCode);
+                }
+                break;
             }
+            subvols[subvolInfo.id] = infoToSubvolume(uuid, QString::fromLocal8Bit(path), subvolInfo);
+            free(path);
         }
         btrfs_util_destroy_subvolume_iterator(iter);
 
