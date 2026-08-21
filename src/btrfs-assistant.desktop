@@ -1,9 +1,9 @@
 [Desktop Entry]
 Name=Btrfs Assistant
 Name[zh_CN]=Btrfs 助手
-Comment=Change system settings
-Comment[ru]=Изменение системных настроек
-Comment[zh_CN]=更改系统设置
+Comment=GUI management tool to make managing a Btrfs filesystem easier
+Comment[ru]=Графический инструмент, упрощающий управление файловой системой Btrfs
+Comment[zh_CN]=让 Btrfs 文件系统管理更加简单的图形管理工具
 Exec=btrfs-assistant-launcher
 Terminal=false
 Type=Application
