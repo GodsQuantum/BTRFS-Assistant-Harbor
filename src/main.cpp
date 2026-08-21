@@ -10,6 +10,8 @@
 #include <QFile>
 #include <QTranslator>
 
+#include <optional>
+
 void setApplicationInfo()
 {
     QCoreApplication::setApplicationName(QCoreApplication::translate("main", "Btrfs Assistant"));
@@ -37,20 +39,28 @@ int main(int argc, char *argv[])
     QString snapperPath = Settings::instance().value("snapper", "/usr/bin/snapper").toString();
     QString btrfsMaintenanceConfig = Settings::instance().value("bm_config", "/etc/default/btrfsmaintenance").toString();
 
-    // Ensure we are running on a system with btrfs
-    if (!System::runCmd("findmnt --real -no fstype ", false).output.contains("btrfs")) {
-        QTextStream(stderr) << QCoreApplication::translate("main", "Error: No Btrfs filesystems found") << Qt::endl;
-        return 1;
-    }
-
-    // The btrfs object is used to interact with the application
-    Btrfs btrfs;
-
-    // If Snapper is installed, instantiate the snapper object
+    // The btrfs object is used to interact with the application. Constructing it walks every
+    // subvolume of every mounted Btrfs filesystem, so it is only created once the command line
+    // has been processed: --help and --version have no use for it and answer without privileges.
+    std::optional<Btrfs> btrfs;
     Snapper *snapper = nullptr;
-    if (QFile::exists(snapperPath)) {
-        snapper = new Snapper(&btrfs, snapperPath);
-    }
+
+    auto initializeBtrfs = [&]() {
+        // Ensure we are running on a system with btrfs
+        if (!System::runCmd("findmnt --real -no fstype ", false).output.contains("btrfs")) {
+            QTextStream(stderr) << QCoreApplication::translate("main", "Error: No Btrfs filesystems found") << Qt::endl;
+            return false;
+        }
+
+        btrfs.emplace();
+
+        // If Snapper is installed, instantiate the snapper object
+        if (QFile::exists(snapperPath)) {
+            snapper = new Snapper(&btrfs.value(), snapperPath);
+        }
+
+        return true;
+    };
 
     // If $DISPLAY or $WAYLAND_DISPLAY is not empty, launch in GUI mode; else launch in CLI mode
     if (!qEnvironmentVariableIsEmpty("DISPLAY") || !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {
@@ -70,10 +80,15 @@ int main(int argc, char *argv[])
 
         // Process CLI options
         parser.process(app);
+
+        if (!initializeBtrfs()) {
+            return 1;
+        }
+
         if (parser.isSet(listOption) && snapper != nullptr) {
             return Cli::listSnapshots(snapper);
         } else if (parser.isSet(restoreOption) && snapper != nullptr) {
-            return Cli::restore(&btrfs, snapper, parser.value(restoreOption).toInt());
+            return Cli::restore(&btrfs.value(), snapper, parser.value(restoreOption).toInt());
         }
 
         // Set the desktop name for Wayland
@@ -85,7 +100,7 @@ int main(int argc, char *argv[])
             btrfsMaintenance.reset(new BtrfsMaintenance(btrfsMaintenanceConfig));
         }
 
-        MainWindow mainWindow(&btrfs, btrfsMaintenance.get(), snapper);
+        MainWindow mainWindow(&btrfs.value(), btrfsMaintenance.get(), snapper);
         mainWindow.show();
         return app.exec();
     } else {
@@ -94,10 +109,21 @@ int main(int argc, char *argv[])
         setApplicationInfo();
 
         parser.process(app);
+
+        // Nothing to do but print the usage; there is no reason to look at the filesystem first
+        if (!parser.isSet(listOption) && !parser.isSet(restoreOption)) {
+            parser.showHelp();
+            return 0;
+        }
+
+        if (!initializeBtrfs()) {
+            return 1;
+        }
+
         if (parser.isSet(listOption) && snapper != nullptr) {
             return Cli::listSnapshots(snapper);
         } else if (parser.isSet(restoreOption) && snapper != nullptr) {
-            return Cli::restore(&btrfs, snapper, parser.value(restoreOption).toInt());
+            return Cli::restore(&btrfs.value(), snapper, parser.value(restoreOption).toInt());
         } else {
             parser.showHelp();
             return 0;
