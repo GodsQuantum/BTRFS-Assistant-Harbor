@@ -1,5 +1,9 @@
 ### Btrfs Assistant
 
+2.3.2 - 2026-10-09
+* Add Japanese translations(Contributed by 三月七玩Fedora)
+* Ensure that an unprivledged user can run CLI functions(Contributed by Wehrwolfmann)
+
 2.3.1 - 2026-08-21
 * Add German translations(Contributed by Hen Ry)
 * Add Russian translations(Contributed by Wehrwolfmann)
@@ -36,12 +40,10 @@
 * CLI snapshots are now restored via an index to make the process more user friendly
 * Changed timestamp on subvol backups to UTC and ISO format
 
-
 1.9 - 2024-01-14
 * Improve CSV parsing(Contributed by HoroTW)
 * Added the ability to modify Snapper snapshot descriptions(Contributed by HoroTW)
 * Added support for QT_STYLE_OVERRIDE(Contributed by BluishHumility)
-
 
 1.8 - 2023-02-11
 * Add support for handling snapshots of the root of the btrfs partition
