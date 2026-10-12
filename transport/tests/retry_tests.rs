@@ -87,3 +87,36 @@ fn upper_bound_prevents_accidental_unbounded_retries() {
     assert!(attempted.is_err());
     assert_eq!(calls, 0);
 }
+
+#[test]
+fn transient_cifs_eagain_after_server_restart_is_retried() {
+    let mut attempt = 0;
+    let result: Result<RetryOutcome<&str>> = retry_transient(
+        3,
+        || {
+            attempt += 1;
+            if attempt <= 2 {
+                return Err(io::Error::from_raw_os_error(11).into());
+            }
+            Ok("reconnected")
+        },
+        |_| {},
+    );
+    assert_eq!(result.unwrap().value, "reconnected");
+    assert_eq!(attempt, 3);
+}
+
+#[test]
+fn transient_network_eio_is_bounded_and_output_must_still_verify() {
+    let mut calls = 0;
+    let result: Result<RetryOutcome<()>> = retry_transient(
+        1,
+        || {
+            calls += 1;
+            Err(io::Error::from_raw_os_error(5).into())
+        },
+        |_| {},
+    );
+    assert!(result.is_err());
+    assert_eq!(calls, 2);
+}

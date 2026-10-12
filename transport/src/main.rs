@@ -159,9 +159,12 @@ enum Action {
 }
 
 fn gate_target(root: &Path, allow_local: bool) -> Result<()> {
+    ensure!(root.is_absolute(), "repository root must be absolute");
+    let root_stat = std::fs::symlink_metadata(root)
+        .context("cannot inspect network destination before transfer")?;
     ensure!(
-        root.is_absolute() && !root.is_symlink() && root.is_dir(),
-        "repository root must be an existing absolute real directory"
+        root_stat.file_type().is_dir(),
+        "destination must be a real directory, not a symlink"
     );
     if allow_local {
         return Ok(());
@@ -228,10 +231,21 @@ fn run_send(
         "incremental --parent requires --parent-archive from a completed backup"
     );
     ensure!(retries <= 100, "retry bound exceeded");
-    let expected_repo_id = {
-        let _owner = RepoAccess::begin()?;
-        Repository::open(repo_root)?.id()
-    };
+    // The mount may already be temporarily disconnected BEFORE send starts.
+    // Retry preflight rather than aborting on a transient EHOSTDOWN.
+    let expected_repo_id = retry_transient(
+        retries,
+        || {
+            let _owner = RepoAccess::begin()?;
+            gate_target(repo_root, allow_local)?;
+            Ok(Repository::open(repo_root)?.id())
+        },
+        |seconds| {
+            eprintln!("Network repository unavailable during preflight; retry after {seconds}s");
+            thread::sleep(Duration::from_secs(seconds));
+        },
+    )?
+    .value;
     let source_uuid = readonly_btrfs_uuid(snapshot)?;
     let parent_uuid = match parent {
         Some(p) => Some(readonly_btrfs_uuid(p)?),
@@ -246,17 +260,6 @@ fn run_send(
         parent_archive: parent_archive.map(str::to_owned),
         protocol: 2,
     };
-    // A missing parent archive must be rejected BEFORE btrfs send is spawned.
-    if let Some(parent_name) = parent_archive {
-        let _owner = RepoAccess::begin()?;
-        let archived = Repository::open(repo_root)?
-            .snapshot_identity(parent_name)?
-            .ok_or_else(|| anyhow::anyhow!("incremental parent archive lacks source identity"))?;
-        ensure!(
-            Some(archived.source_uuid) == identity.parent_uuid,
-            "archived incremental parent UUID differs from source"
-        );
-    }
     let outcome = retry_transient(
         retries,
         || {
@@ -270,6 +273,16 @@ fn run_send(
                 fresh.id() == expected_repo_id,
                 "repository identity changed across reconnect"
             );
+            if let Some(parent_name) = parent_archive {
+                let _owner = RepoAccess::begin()?;
+                let archived = fresh.snapshot_identity(parent_name)?.ok_or_else(|| {
+                    anyhow::anyhow!("incremental parent archive lacks source identity")
+                })?;
+                ensure!(
+                    Some(archived.source_uuid) == identity.parent_uuid,
+                    "incremental parent archive UUID changed or is incorrect"
+                );
+            }
             ensure!(
                 readonly_btrfs_uuid(snapshot)? == source_uuid,
                 "source snapshot identity changed across retry"
@@ -497,10 +510,6 @@ fn execute(action: Action) -> Result<()> {
                 experimental,
                 "uncertified Btrfs transport requires --experimental"
             );
-            {
-                let _owner = RepoAccess::begin()?;
-                gate_target(&repo, allow_local)?;
-            }
             run_send(
                 &repo,
                 &name,
