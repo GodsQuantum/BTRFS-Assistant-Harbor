@@ -22,7 +22,7 @@ add_executable(btrfs-assistant-harbor-bin
     ${btrfsassistant_SRCS} ${FILES_TS}
 )
 
-install(FILES ${FILES_TS} DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/btrfs-assistant/translations)
+install(FILES ${FILES_TS} DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/btrfs-assistant-harbor/translations)
 install(FILES btrfs-assistant-harbor.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
 install(FILES btrfs-assistant-harbor.metainfo.xml DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/metainfo)
 install(FILES org.btrfs-assistant-harbor.pkexec.policy DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/polkit-1/actions/)

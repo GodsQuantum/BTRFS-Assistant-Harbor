@@ -10,6 +10,7 @@
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -76,7 +77,7 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     form->addRow(tr("Scheduled transfer"), m_frequency);
     layout->addWidget(settings);
 
-    auto *actions = new QHBoxLayout();
+    auto *actions = new QGridLayout();
     auto *inventory = new QPushButton(tr("List remote backups"), this);
     auto *interrupted = new QPushButton(tr("Interrupted transfers"), this);
     auto *resume = new QPushButton(tr("Resume selected"), this);
@@ -84,14 +85,15 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     auto *initCas = new QPushButton(tr("Initialize CAS destination"), this);
     auto *verify = new QPushButton(tr("Verify selected archive"), this);
     auto *recover = new QPushButton(tr("Preview recovery"), this);
-    actions->addWidget(m_send);
-    actions->addWidget(inventory);
-    actions->addWidget(interrupted);
-    actions->addWidget(resume);
-    actions->addWidget(verify);
-    actions->addWidget(recover);
-    actions->addWidget(schedule);
-    actions->addWidget(initCas);
+    // Two rows prevent button overflow on HiDPI 13-inch laptops.
+    actions->addWidget(m_send, 0, 0);
+    actions->addWidget(inventory, 0, 1);
+    actions->addWidget(interrupted, 0, 2);
+    actions->addWidget(resume, 0, 3);
+    actions->addWidget(verify, 1, 0);
+    actions->addWidget(recover, 1, 1);
+    actions->addWidget(schedule, 1, 2);
+    actions->addWidget(initCas, 1, 3);
     layout->addLayout(actions);
     layout->addWidget(new QLabel(tr("Select a completed archive to verify/recover, or an interrupted transfer to resume"), this));
     m_archives->setMinimumHeight(100);
