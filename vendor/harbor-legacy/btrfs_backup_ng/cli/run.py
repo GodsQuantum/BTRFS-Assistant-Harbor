@@ -1,0 +1,1472 @@
+"""Run command: Execute all configured backup jobs."""
+
+import argparse
+import contextlib
+import hashlib
+import logging
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import Any, Literal
+
+from .. import __util__, endpoint, lifecycle
+from ..__logger__ import add_file_handler, create_logger
+from ..config import (
+    Config,
+    ConfigError,
+    TargetConfig,
+    VolumeConfig,
+    find_config_file,
+    load_config,
+)
+from ..core.operations import (
+    DEFAULT_TRANSFER_TIMEOUT,
+    TransferResult,
+    sync_snapshots,
+)
+from ..notifications import (
+    EmailConfig,
+    WebhookConfig,
+    create_backup_event,
+    send_notifications,
+)
+from ..notifications import (
+    NotificationConfig as NotifConfig,
+)
+from ..retention import RetentionError, extract_timestamp
+from ..transaction import set_transaction_log
+from .common import (
+    apply_config_verbosity,
+    assert_target_mounted,
+    get_log_level,
+    get_timestamp_format,
+    should_show_progress,
+    snapper_destination_options,
+    space_options_from_args,
+    thread_raw_compression,
+    thread_raw_encryption,
+    thread_ssh_target_config,
+    btrfs_debug_enabled,
+    create_snapshot_dir,
+)
+from .prune import (
+    execute_retention_deletes,
+    is_degenerate_policy,
+    plan_endpoint_retention,
+    plan_retention_of,
+    plan_snapper_retention_of,
+)
+
+logger = logging.getLogger(__name__)
+
+
+#: How long a starting run waits for a run already in progress. Short on purpose:
+#: it lets two runs that started together sort themselves out, while a transfer
+#: that has been going for hours is not worth queueing behind -- the waiting run
+#: would just repeat work the running one is already doing.
+RUN_LOCK_WAIT_SECONDS = 10.0
+
+
+def _run_lock_path(config_path: Path | str) -> Path:
+    """Where this configuration's run lock lives.
+
+    A runtime directory, not the config directory or the backup target: the
+    config directory may be read-only, and the target may be remote, which is
+    the case that cannot hold a lock at all.
+
+    Keyed by a digest of the resolved config path so two different
+    configurations never share a lock, while the same configuration always
+    resolves to the same one however it was spelled on the command line. The
+    stem is kept in the name too, so an operator looking at the directory can
+    tell what the file belongs to.
+    """
+    if os.geteuid() == 0:
+        base = Path("/run/btrfs-backup-ng")
+    else:
+        runtime = os.environ.get("XDG_RUNTIME_DIR")
+        base = (
+            Path(runtime) / "btrfs-backup-ng"
+            if runtime
+            else Path.home() / ".cache" / "btrfs-backup-ng"
+        )
+    # Coerce: config discovery returns a str on some paths and a Path on others,
+    # and a lock that raises AttributeError would take down every run.
+    candidate = Path(config_path)
+    try:
+        resolved = candidate.resolve()
+    except OSError:
+        resolved = candidate
+    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:16]
+    # 0o700: the lock coordinates work that often runs as root, so it must not
+    # sit in a directory other users can write ([[root symlink safety]] -- the
+    # lock open itself is O_NOFOLLOW, but the directory should not invite the
+    # attempt).
+    base.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return base / f"run-{resolved.stem}-{digest}.lock"
+
+
+@contextlib.contextmanager
+def _run_lock(config_path: Path | str) -> Any:
+    """Hold the run lock, or say clearly why there is none.
+
+    Two failures that must not be treated alike:
+
+    * Another run holds it, or the lock file is not something we will use (a
+      planted symlink or FIFO). Both raise RuntimeError out of this, and the
+      caller refuses to run -- a second concurrent run over the same volumes is
+      exactly what this exists to prevent.
+    * The lock machinery cannot be set up at all, because the runtime directory
+      cannot be created (a read-only home, a stripped-down container). Failing
+      the backup for that would turn a missing guard into an outage, which is
+      worse than the race it guards against. So it warns loudly and continues
+      WITHOUT the lock, rather than pretending it has one.
+    """
+    try:
+        lock_file = _run_lock_path(config_path)
+    except OSError as e:
+        logger.warning(
+            "Could not create the run-lock directory (%s). This run is NOT "
+            "protected against overlapping with another run of the same "
+            "configuration; if one is already in progress, both will proceed. "
+            "Continuing anyway.",
+            e,
+        )
+        yield
+        return
+    with __util__.exclusive_lock(
+        lock_file,
+        timeout=RUN_LOCK_WAIT_SECONDS,
+        subject=f"a run for {config_path}",
+    ):
+        yield
+
+
+def execute_run(args: argparse.Namespace) -> int:
+    """Execute the run command.
+
+    Args:
+        args: Parsed command line arguments
+
+    Returns:
+        Exit code (0 for success, non-zero for failure)
+    """
+    # Initialize logger
+    log_level = get_log_level(args)
+    create_logger(False, level=log_level)
+
+    # Find and load config
+    try:
+        config_path = find_config_file(getattr(args, "config", None))
+        if config_path is None:
+            print("No configuration file found.")
+            print("Create one with: btrfs-backup-ng config init")
+            print("")
+            print("Or use legacy mode: btrfs-backup-ng /source /dest")
+            return 1
+
+        logger.info("Loading configuration from: %s", config_path)
+        config, warnings = load_config(config_path)
+
+    except ConfigError as e:
+        logger.error("Configuration error: %s", e)
+        return 1
+
+    # The configuration's quiet/verbose applies from here on -- before the
+    # line announcing the log file, which used to be the one INFO line printed
+    # under `quiet = true` after the configuration had been read.
+    apply_config_verbosity(args, config)
+    # Enable file logging if configured
+    if config.global_config.log_file:
+        add_file_handler(config.global_config.log_file)
+        logger.info("File logging enabled: %s", config.global_config.log_file)
+
+        # Emitted AFTER the file handler is installed. Logged before it, these
+        # went to the console only -- an operator running from cron or systemd
+        # with log_file set had a log that silently omitted every config
+        # warning, which is the one place they would look afterwards.
+    # Applied again with the file handler in place, so the shared logger's
+    # floor accounts for the file's level (the call is idempotent).
+    apply_config_verbosity(args, config)
+    for warning in warnings:
+        logger.warning("Config: %s", warning)
+
+    # Enable transaction logging if configured
+    if config.global_config.transaction_log:
+        set_transaction_log(config.global_config.transaction_log)
+        logger.info(
+            "Transaction logging enabled: %s", config.global_config.transaction_log
+        )
+
+    if not config.volumes:
+        logger.error("No volumes configured")
+        return 1
+
+    # Dry run mode
+    if getattr(args, "dry_run", False):
+        return _dry_run(config)
+
+    # Only one run at a time on this machine, for this config. A timer firing
+    # while the previous transfer is still going used to start a second run on
+    # the same volumes and targets, with nothing to stop the two colliding:
+    # systemd declines to start a second copy of the same unit, so the packaged
+    # timer was covered by systemd rather than by us, and a manual run racing a
+    # timer run was not covered at all. Local raw:// targets take a per-target
+    # flock, but ssh:// has none and raw+ssh:// cannot hold one (its target_lock
+    # is a documented no-op), so the guard belongs here, where it works for every
+    # target type. Raised by mjg in #93.
+    #
+    # Keyed on the config file, so unrelated configs do not block each other. The
+    # wait is short deliberately: it lets two runs starting together sort
+    # themselves out, while a transfer that has been going for hours is not worth
+    # queueing behind.
+    try:
+        with _run_lock(config_path):
+            return _run_configured_backups(args, config)
+    except RuntimeError as e:
+        # Not a backup failure, but no backup was made either, so it is reported
+        # as a failure rather than a silent success -- a run that did not happen
+        # must never exit 0.
+        logger.error("%s", e)
+        logger.error(
+            "Another btrfs-backup-ng run is using this configuration. Nothing was "
+            "backed up by THIS run. If a scheduled timer reports this repeatedly, "
+            "the schedule is firing faster than a run takes to finish."
+        )
+        return 1
+
+
+def _run_configured_backups(args: argparse.Namespace, config: Config) -> int:
+    """Run every configured volume. Split out so the run lock wraps one call."""
+    # Get parallelism settings
+    parallel_volumes = (
+        getattr(args, "parallel_volumes", None) or config.global_config.parallel_volumes
+    )
+    parallel_targets = (
+        getattr(args, "parallel_targets", None) or config.global_config.parallel_targets
+    )
+
+    start_time = time.time()
+    logger.info(__util__.log_heading(f"Started at {time.ctime()}"))
+    logger.info(
+        "Parallel volumes: %d, parallel targets: %d", parallel_volumes, parallel_targets
+    )
+
+    # Get CLI overrides for compression/throttling
+    compress_override = getattr(args, "compress", None)
+    rate_limit_override = getattr(args, "rate_limit", None)
+    # Space-check flags (--no-check-space/--force/--safety-margin); threaded into the
+    # transfer options so they actually take effect (see space_options_from_args).
+    space_options = space_options_from_args(args)
+    # Default is to catch up: send whatever each destination is missing, not
+    # only the snapshot just taken (issue #104).
+    newest_only = bool(getattr(args, "newest_only", False))
+
+    # Determine if progress should be shown
+    show_progress = should_show_progress(args)
+    if show_progress:
+        logger.debug("Progress bars enabled (interactive terminal detected)")
+    else:
+        logger.debug("Progress bars disabled")
+
+    # Execute backup for each enabled volume
+    enabled_volumes = config.get_enabled_volumes()
+    logger.info("Processing %d volume(s)", len(enabled_volumes))
+
+    results = []
+    transfer_stats = {
+        "completed": 0,
+        "failed": 0,
+        "snapshots_created": 0,
+        # Targets vs SNAPSHOTS. "completed" counts targets that finished without
+        # error, which is what the notification has always reported as
+        # "transfers completed" -- a target whose plan was empty because it was
+        # already up to date counted the same as one that delivered a backup.
+        "snapshots_transferred": 0,
+    }
+    error_messages = []
+
+    if parallel_volumes > 1 and len(enabled_volumes) > 1:
+        # Parallel volume execution. Ctrl-C reaches only this thread; the stop it
+        # requests is what keeps the workers from beginning anything new.
+        with (
+            ThreadPoolExecutor(max_workers=parallel_volumes) as executor,
+            lifecycle.stop_on_interrupt(executor),
+        ):
+            futures = {
+                executor.submit(
+                    _backup_volume,
+                    volume,
+                    config,
+                    parallel_targets,
+                    compress_override,
+                    rate_limit_override,
+                    show_progress,
+                    space_options,
+                    newest_only,
+                    btrfs_debug_enabled(args, config),
+                ): volume
+                for volume in enabled_volumes
+            }
+            for future in as_completed(futures):
+                volume = futures[future]
+                try:
+                    success, vol_stats, vol_errors = future.result()
+                    results.append((volume.path, success))
+                    transfer_stats["completed"] += vol_stats.get("completed", 0)
+                    transfer_stats["failed"] += vol_stats.get("failed", 0)
+                    transfer_stats["snapshots_transferred"] += vol_stats.get(
+                        "snapshots_transferred", 0
+                    )
+                    transfer_stats["snapshots_created"] += vol_stats.get(
+                        "snapshots_created", 0
+                    )
+                    error_messages.extend(vol_errors)
+                except Exception as e:
+                    logger.error("Volume %s failed: %s", volume.path, e)
+                    results.append((volume.path, False))
+                    error_messages.append(f"Volume {volume.path}: {e}")
+    else:
+        # Sequential execution
+        for volume in enabled_volumes:
+            try:
+                success, vol_stats, vol_errors = _backup_volume(
+                    volume,
+                    config,
+                    parallel_targets,
+                    compress_override,
+                    rate_limit_override,
+                    show_progress,
+                    space_options,
+                    newest_only,
+                    btrfs_debug_enabled(args, config),
+                )
+                results.append((volume.path, success))
+                transfer_stats["completed"] += vol_stats.get("completed", 0)
+                transfer_stats["failed"] += vol_stats.get("failed", 0)
+                transfer_stats["snapshots_transferred"] += vol_stats.get(
+                    "snapshots_transferred", 0
+                )
+                transfer_stats["snapshots_created"] += vol_stats.get(
+                    "snapshots_created", 0
+                )
+                error_messages.extend(vol_errors)
+            except Exception as e:
+                logger.error("Volume %s failed: %s", volume.path, e)
+                results.append((volume.path, False))
+                error_messages.append(f"Volume {volume.path}: {e}")
+
+    # Summary
+    end_time = time.time()
+    duration = end_time - start_time
+    logger.info(__util__.log_heading(f"Finished at {time.ctime()}"))
+
+    success_count = sum(1 for _, success in results if success)
+    fail_count = len(results) - success_count
+
+    if fail_count > 0:
+        logger.warning(
+            "Completed with errors: %d succeeded, %d failed", success_count, fail_count
+        )
+        exit_code = 1
+    else:
+        # The snapshot count, not the target count: "all volumes completed" is
+        # equally true of a run that delivered nothing because every target was
+        # already up to date, and an operator reading a summary after an incident
+        # needs to know which of those happened.
+        moved = transfer_stats.get("snapshots_transferred", 0)
+        logger.info(
+            "All %d volume(s) completed successfully; %d snapshot(s) transferred",
+            success_count,
+            moved,
+        )
+        exit_code = 0
+
+    # Send notifications if configured
+    _send_backup_notifications(
+        config,
+        volumes_processed=len(results),
+        volumes_failed=fail_count,
+        snapshots_created=transfer_stats.get("snapshots_created", 0),
+        transfers_completed=transfer_stats.get("completed", 0),
+        transfers_failed=transfer_stats.get("failed", 0),
+        duration_seconds=duration,
+        errors=error_messages,
+    )
+
+    return exit_code
+
+
+def _format_retention(retention: Any) -> str:
+    """One endpoint's policy as a line. A count policy has no bucket values."""
+    if getattr(retention, "keep", 0) > 0:
+        return f"keep={retention.keep} (at least), min={retention.min}"
+    return (
+        f"min={retention.min}, hourly={retention.hourly}, "
+        f"daily={retention.daily}, weekly={retention.weekly}, "
+        f"monthly={retention.monthly}, yearly={retention.yearly}"
+    )
+
+
+def _dry_run(config: Config) -> int:
+    """Show what would be done without making changes."""
+    print("Dry run mode - showing what would be done:")
+    print("")
+
+    for volume in config.get_enabled_volumes():
+        print(f"Volume: {volume.path}")
+
+        if volume.is_snapper_source():
+            print("  Source: snapper")
+            if volume.snapper:
+                print(f"  Snapper config: {volume.snapper.config_name}")
+                print(f"  Include types: {', '.join(volume.snapper.include_types)}")
+                print(f"  Min age: {volume.snapper.min_age}")
+        else:
+            print("  Source: native")
+            print(f"  Snapshot prefix: {volume.snapshot_prefix}")
+            print(f"  Snapshot dir: {volume.snapshot_dir}")
+
+            # The source policy, not the volume's: reporting the volume policy
+            # described an endpoint that is not pruned under it, and called a
+            # healthy per-scope config degenerate.
+            source_retention = config.get_source_retention(volume)
+            print(f"  Retention (source): {_format_retention(source_retention)}")
+            if is_degenerate_policy(source_retention):
+                print(
+                    "  Retention (source): WOULD FAIL -- policy keeps only the latest "
+                    "snapshot (run `prune --force` to prune it deliberately)"
+                )
+            else:
+                print(
+                    "  Retention: applied after transfer "
+                    "(use `prune --dry-run` to preview exact deletions)"
+                )
+
+        if volume.targets:
+            print("  Targets:")
+            for target in volume.targets:
+                sudo_note = " (sudo)" if target.ssh_sudo else ""
+                print(f"    -> {target.path}{sudo_note}")
+                target_retention = config.get_target_retention(volume, target)
+                print(f"       Retention: {_format_retention(target_retention)}")
+                if is_degenerate_policy(target_retention):
+                    print(
+                        "       Retention: WOULD FAIL -- policy keeps only the latest "
+                        "backup (run `prune --force` to prune it deliberately)"
+                    )
+        else:
+            print("  Targets: (none)")
+        print("")
+
+    return 0
+
+
+def _backup_volume(
+    volume: VolumeConfig,
+    config: Config,
+    parallel_targets: int,
+    compress_override: str | None = None,
+    rate_limit_override: str | None = None,
+    show_progress: bool = False,
+    space_options: dict[str, Any] | None = None,
+    newest_only: bool = False,
+    btrfs_debug: bool = False,
+) -> tuple[bool, dict[str, int], list[str]]:
+    """Execute backup for a single volume.
+
+    Args:
+        volume: Volume configuration
+        config: Full configuration
+        parallel_targets: Max concurrent target transfers
+        compress_override: CLI override for compression method
+        rate_limit_override: CLI override for bandwidth limit
+        show_progress: Whether to show progress bars
+        space_options: Space-check options from the CLI space flags
+
+    Returns:
+        Tuple of (success, transfer_stats, error_messages)
+    """
+    stats = {
+        "completed": 0,
+        "failed": 0,
+        "snapshots_created": 0,
+        # Targets vs SNAPSHOTS. "completed" counts targets that finished without
+        # error, which is what the notification has always reported as
+        # "transfers completed" -- a target whose plan was empty because it was
+        # already up to date counted the same as one that delivered a backup.
+        "snapshots_transferred": 0,
+    }
+    errors = []
+    logger.info(__util__.log_heading(f"Volume: {volume.path}"))
+
+    # Handle snapper-sourced volumes differently
+    if volume.is_snapper_source():
+        return _backup_snapper_volume(
+            volume,
+            config,
+            compress_override,
+            rate_limit_override,
+            show_progress,
+            space_options,
+        )
+
+    # Build endpoint kwargs
+    endpoint_kwargs = {
+        "snap_prefix": volume.snapshot_prefix,
+        "convert_rw": False,
+        "subvolume_sync": False,
+        "btrfs_debug": btrfs_debug,
+        "fs_checks": "auto",
+        "timestamp_format": get_timestamp_format(config),
+    }
+
+    # Prepare source endpoint
+    try:
+        source_path = Path(volume.path).resolve()
+
+        # Set up snapshot directory. The source and an absolute snapshot_dir
+        # must already exist; only what lies below them is created. See
+        # create_snapshot_dir.
+        full_snapshot_dir = create_snapshot_dir(volume.snapshot_dir, source_path)
+
+        source_kwargs = dict(endpoint_kwargs)
+        source_kwargs["path"] = full_snapshot_dir
+        # Set snapshot_folder - use absolute path for external snapshot directories
+        source_kwargs["snapshot_folder"] = str(full_snapshot_dir)
+
+        source_endpoint = endpoint.choose_endpoint(
+            str(source_path),
+            source_kwargs,
+            source=True,
+        )
+        source_endpoint.prepare()
+        logger.debug("Source endpoint ready: %s", source_endpoint)
+
+    except Exception as e:
+        logger.error("Failed to prepare source endpoint for %s: %s", volume.path, e)
+        errors.append(f"Source endpoint {volume.path}: {e}")
+        return False, stats, errors
+
+    # Create snapshot
+    if lifecycle.stopped_before(f"the backup of {volume.path}"):
+        errors.append(f"Volume {volume.path}: {lifecycle.NOT_STARTED}")
+        return False, stats, errors
+    try:
+        logger.info("Creating snapshot...")
+        snapshot = source_endpoint.snapshot()
+        # Counted here, where it happened. The notification derived this from the
+        # number of fully-successful VOLUMES, so a volume that created a snapshot
+        # and transferred it to one target while another target failed reported
+        # "0 snapshots created" -- a snapshot that exists on disk, denied.
+        stats["snapshots_created"] += 1
+        logger.info("Created snapshot: %s", snapshot)
+    except Exception as e:
+        logger.error("Failed to create snapshot: %s", e)
+        errors.append(f"Snapshot creation for {volume.path}: {e}")
+        return False, stats, errors
+
+    # Prepare destination endpoints
+    if not volume.targets:
+        logger.info("No targets configured, snapshot created but not transferred")
+        return True, stats, errors
+
+    destination_endpoints = []
+    prepare_failures = 0
+    for index, target in enumerate(volume.targets):
+        # Preparing a target is new work: an ssh master, remote diagnostics
+        # with a write test, perhaps a password prompt. None of it begins after
+        # an interrupt; this target and the rest are counted as not done.
+        remaining = volume.targets[index:]
+        if lifecycle.stopped_before(
+            f"the transfer to {target.path}", later=len(remaining) - 1
+        ):
+            stats["failed"] += len(remaining)
+            errors.extend(
+                f"Destination endpoint {t.path}: {lifecycle.NOT_STARTED}"
+                for t in remaining
+            )
+            return False, stats, errors
+        try:
+            # One mount check, shared with `transfer`. The inline copy this
+            # replaces tested the scheme with path.startswith(...) and listed
+            # raw:// as exempt, so `run` skipped the check for a raw target
+            # entirely -- an unmounted USB raw target with require_mount = true
+            # was written to the root filesystem and reported as a success.
+            assert_target_mounted(target.path, target.require_mount)
+
+            dest_kwargs = dict(endpoint_kwargs)
+            thread_ssh_target_config(dest_kwargs, target)
+
+            thread_raw_encryption(dest_kwargs, target)
+            thread_raw_compression(dest_kwargs, target, compress_override)
+            # Global, so threaded here rather than by the per-target helper.
+            dest_kwargs["transfer_stall_timeout"] = (
+                config.global_config.transfer_stall_timeout
+            )
+            dest_endpoint = endpoint.choose_endpoint(
+                target.path,
+                dest_kwargs,
+                source=False,
+            )
+            endpoint.assert_encryption_applied(target.encrypt, dest_endpoint)
+            endpoint.assert_compression_applied(dest_kwargs["compress"], dest_endpoint)
+            dest_endpoint.prepare()
+            # Store endpoint with its target config for compression/throttle options
+            destination_endpoints.append((dest_endpoint, target))
+            logger.debug("Destination endpoint ready: %s", dest_endpoint)
+
+        except Exception as e:
+            if getattr(target, "optional", False):
+                # Declared as allowed to be absent. Reported, not counted: it does
+                # not fail the run and does not hold back source retention, which
+                # is the whole point of marking a monthly drive optional rather
+                # than choosing between a permanently red run and an unguarded one.
+                logger.warning("Skipping optional target %s: %s", target.path, e)
+                continue
+            logger.error("Failed to prepare destination %s: %s", target.path, e)
+            errors.append(f"Destination endpoint {target.path}: {e}")
+            # Count it. This block used to log, record the error, and stop --
+            # `all_success` was declared BELOW the loop and never saw it, and
+            # `stats["failed"]` was untouched. So a volume with more than one
+            # target whose preparation failed here reported success: exit 0, a
+            # "success" notification, and the failure visible only as a log line.
+            #
+            # That covers every reason preparation can fail, and require_mount is
+            # among them: the mount check could correctly detect that an external
+            # drive was absent, refuse the target, and the run would still say the
+            # backup worked. A safety check whose verdict is discarded is not a
+            # safety check.
+            #
+            # Single-target volumes were saved only by the `not
+            # destination_endpoints` guard below, which is why this survived.
+            prepare_failures += 1
+            stats["failed"] += 1
+
+    if not destination_endpoints:
+        logger.error("No destination endpoints could be prepared")
+        return False, stats, errors
+
+    # Transfer to destinations. A target that never got as far as a transfer has
+    # already failed, so the verdict starts from that rather than from True.
+    all_success = prepare_failures == 0
+    # Targets whose transfer SUCCEEDED -- only these are pruned afterwards (fate-sharing: never
+    # prune on a broken backup).
+    succeeded_targets: list = []
+
+    if parallel_targets > 1 and len(destination_endpoints) > 1:
+        # Parallel target transfers
+        with (
+            ThreadPoolExecutor(max_workers=parallel_targets) as executor,
+            lifecycle.stop_on_interrupt(executor),
+        ):
+            futures = {
+                executor.submit(
+                    _transfer_to_target,
+                    source_endpoint,
+                    dest_endpoint,
+                    target_config,
+                    snapshot,
+                    config.global_config.incremental,
+                    compress_override,
+                    rate_limit_override,
+                    show_progress,
+                    space_options,
+                    config.global_config.transfer_timeout,
+                    newest_only,
+                    _catch_up_selector(volume, config, target_config, dest_endpoint),
+                    str(volume.path),
+                ): (dest_endpoint, target_config)
+                for dest_endpoint, target_config in destination_endpoints
+            }
+            for future in as_completed(futures):
+                dest, target_cfg = futures[future]
+                try:
+                    outcome = future.result()
+                    if outcome is not None:
+                        stats["completed"] += 1
+                        stats["snapshots_transferred"] += outcome.transferred_count
+                        succeeded_targets.append((dest, target_cfg))
+                    else:
+                        stats["failed"] += 1
+                        all_success = False
+                except Exception as e:
+                    logger.error("Transfer to %s failed: %s", dest, e)
+                    stats["failed"] += 1
+                    errors.append(f"Transfer to {target_cfg.path}: {e}")
+                    all_success = False
+    else:
+        # Sequential transfers
+        for dest_endpoint, target_config in destination_endpoints:
+            try:
+                outcome = _transfer_to_target(
+                    source_endpoint,
+                    dest_endpoint,
+                    target_config,
+                    snapshot,
+                    config.global_config.incremental,
+                    compress_override,
+                    rate_limit_override,
+                    show_progress,
+                    space_options,
+                    config.global_config.transfer_timeout,
+                    newest_only,
+                    _catch_up_selector(volume, config, target_config, dest_endpoint),
+                    str(volume.path),
+                )
+                if outcome is not None:
+                    stats["completed"] += 1
+                    stats["snapshots_transferred"] += outcome.transferred_count
+                    succeeded_targets.append((dest_endpoint, target_config))
+                else:
+                    stats["failed"] += 1
+                    all_success = False
+            except Exception as e:
+                logger.error("Transfer to %s failed: %s", dest_endpoint, e)
+                stats["failed"] += 1
+                errors.append(f"Transfer to {target_config.path}: {e}")
+                all_success = False
+
+    # --- Retention (prune) phase ---
+    # run = snapshot -> transfer -> prune, as a strict pipeline. Apply the SAME time-based
+    # retention engine as the `prune` command (non-interactively), so `run` leaves the source and
+    # its successfully-transferred targets in a policy-compliant state instead of accumulating
+    # snapshots forever. Strict contract: a degenerate policy or an invalid `min` fails loudly
+    # (non-zero exit) rather than being silently skipped.
+    #
+    # Fate-sharing, both ways: only targets whose transfer SUCCEEDED are pruned,
+    # and the source is pruned only if EVERY target succeeded. The lock reconcile
+    # protects a snapshot whose transfer failed part-way, but a target that never
+    # got as far as a transfer -- refused by require_mount, or failing to prepare
+    # for any other reason -- takes no lock at all, so the snapshots it still owes
+    # had nothing holding them. Deleting history that a target is waiting for, to
+    # satisfy a policy, is not a trade this tool gets to make silently.
+    prune_ok = _prune_after_transfer(
+        volume,
+        config,
+        source_endpoint,
+        succeeded_targets,
+        errors,
+        prune_source=all_success,
+    )
+    return (all_success and prune_ok), stats, errors
+
+
+def _prune_after_transfer(
+    volume: VolumeConfig,
+    config: Config,
+    source_endpoint: Any,
+    succeeded_targets: list,
+    errors: list[str],
+    prune_source: bool = True,
+) -> bool:
+    """The ``run`` pipeline's post-transfer retention phase (regular volumes).
+
+    Applies the SAME shared time-based retention engine as the ``prune`` command
+    (``plan_endpoint_retention`` + ``execute_retention_deletes``), non-interactively, to the
+    source and each successfully-transferred target. Returns True on success; returns False (with
+    messages appended to ``errors``) if the policy is degenerate or invalid, or a delete fails --
+    so ``run`` exits non-zero rather than silently skipping retention. ``run`` never forces a
+    degenerate prune: an intentional keep-only-latest prune is the explicit ``prune --force``.
+    """
+    if lifecycle.stopped_before(f"the prune of {volume.path} and its targets"):
+        errors.append(f"Prune {volume.path}: {lifecycle.NOT_STARTED}")
+        return False
+
+    # Degeneracy is judged PER ENDPOINT below, not once for the volume: with
+    # per-scope policies a volume default can be degenerate while every endpoint
+    # that actually runs has a good policy of its own, and refusing the whole
+    # volume for that would block a valid configuration.
+
+    prefix = volume.snapshot_prefix
+    ts_format = get_timestamp_format(config)
+    ok = True
+    # Each endpoint gets its OWN policy. The source and a target want different
+    # answers -- keep many recent snapshots on the box while the targets hold the
+    # long tail -- and two targets can differ from each other, since a rarely
+    # connected archive and an always-on space-limited disk are not the same
+    # problem. Before this they all shared one policy, so neither could be
+    # expressed. A config that sets no per-scope keys resolves to the same value
+    # for every endpoint, exactly as before.
+    endpoints = []
+    if prune_source:
+        endpoints.append(
+            (
+                source_endpoint,
+                f"source {volume.path}",
+                config.get_source_retention(volume),
+            )
+        )
+    else:
+        # Said plainly: a source that stops pruning will grow, and an operator who
+        # is not told why will find a full disk instead of a reason.
+        logger.warning(
+            "Not pruning source %s: a target did not complete, and the snapshots "
+            "it still needs are not held by any lock. Source retention resumes "
+            "once every target succeeds.",
+            volume.path,
+        )
+    endpoints += [
+        (ep, f"target {tc.path}", config.get_target_retention(volume, tc))
+        for ep, tc in succeeded_targets
+    ]
+    for ep, label, endpoint_retention in endpoints:
+        if is_degenerate_policy(endpoint_retention):
+            logger.error(
+                "Refusing to prune %s: retention keeps ONLY the latest snapshot "
+                "(all buckets 0, no keep count, min=%s). Fix the policy, or run "
+                "`prune --force` to prune it deliberately.",
+                label,
+                endpoint_retention.min,
+            )
+            errors.append(f"Degenerate retention policy: {label}")
+            ok = False
+            continue
+        try:
+            _keep, to_delete = plan_endpoint_retention(
+                ep, endpoint_retention, prefix, ts_format
+            )
+            deleted, del_errs = execute_retention_deletes(ep, to_delete)
+            if deleted:
+                logger.info("Pruned %d old snapshot(s) (%s)", deleted, label)
+            if del_errs:
+                for msg in del_errs:
+                    logger.error("  %s", msg)
+                errors.extend(del_errs)
+                ok = False
+        except RetentionError as e:
+            logger.error("Prune failed (%s): %s", label, e)
+            errors.append(f"Prune {label}: {e}")
+            ok = False
+        except Exception as e:  # noqa: BLE001 - record and continue to the next endpoint
+            logger.error("Prune error (%s): %s", label, e)
+            errors.append(f"Prune {label}: {e}")
+            ok = False
+    return ok
+
+
+def _backup_snapper_volume(
+    volume: VolumeConfig,
+    config: Config,
+    compress_override: str | None = None,
+    rate_limit_override: str | None = None,
+    show_progress: bool = False,
+    space_options: dict[str, Any] | None = None,
+) -> tuple[bool, dict[str, int], list[str]]:
+    """Execute backup for a snapper-sourced volume.
+
+    Snapper volumes don't create new snapshots - they sync existing
+    snapper-managed snapshots to the backup targets.
+
+    Args:
+        volume: Volume configuration with snapper settings
+        config: Full configuration
+        compress_override: CLI override for compression method
+        rate_limit_override: CLI override for bandwidth limit
+        show_progress: Whether to show progress bars
+
+    Returns:
+        Tuple of (success, transfer_stats, error_messages)
+    """
+    from ..core.operations import sync_snapper_snapshots
+    from ..snapper import SnapperScanner
+    from ..snapper.scanner import SnapperNotFoundError
+
+    stats = {
+        "completed": 0,
+        "failed": 0,
+        "snapshots_created": 0,
+        # Targets vs SNAPSHOTS. "completed" counts targets that finished without
+        # error, which is what the notification has always reported as
+        # "transfers completed" -- a target whose plan was empty because it was
+        # already up to date counted the same as one that delivered a backup.
+        "snapshots_transferred": 0,
+    }
+    # snapshots_created stays 0 on this path deliberately: snapper creates the
+    # snapshots, this pipeline only transfers them. Previously the notification
+    # derived the count from successful VOLUMES, so a snapper volume reported a
+    # snapshot this tool had not taken.
+    errors = []
+
+    logger.info("Snapper-sourced volume: %s", volume.path)
+
+    # Get snapper config name
+    snapper_config = volume.snapper
+    if snapper_config is None:
+        logger.error("Snapper volume missing snapper configuration")
+        errors.append(f"Volume {volume.path}: missing snapper config")
+        return False, stats, errors
+
+    config_name = snapper_config.config_name
+
+    # Auto-detect config if set to "auto"
+    try:
+        scanner = SnapperScanner()
+        if config_name == "auto":
+            detected = scanner.find_config_for_path(volume.path)
+            if detected:
+                config_name = detected.name
+                logger.info("Auto-detected snapper config: %s", config_name)
+            else:
+                logger.error("Could not auto-detect snapper config for %s", volume.path)
+                errors.append(f"Volume {volume.path}: cannot detect snapper config")
+                return False, stats, errors
+    except SnapperNotFoundError as e:
+        logger.error("Snapper not available: %s", e)
+        errors.append(f"Snapper not found: {e}")
+        return False, stats, errors
+
+    # Process each target
+    if not volume.targets:
+        logger.info("No targets configured for snapper volume")
+        return True, stats, errors
+
+    all_success = True
+    succeeded_targets: list[tuple[Any, dict[str, Any]]] = []
+    for target in volume.targets:
+        if lifecycle.stopped_before(f"the transfer to {target.path}"):
+            errors.append(f"Target {target.path}: {lifecycle.NOT_STARTED}")
+            all_success = False
+            stats["failed"] += 1
+            continue
+        try:
+            # Same shared check as above. This copy also carried a shorter
+            # message that omitted how to turn the check off.
+            assert_target_mounted(target.path, target.require_mount)
+
+            # Build transfer options.
+            #
+            # Compression defaults ON only for raw+ssh://, where the raw endpoint
+            # owns it, records it in the .meta sidecar, and a restore can reverse
+            # it -- so it is a real saving over the wire.
+            #
+            # It must NOT default on for ssh://. Nothing decompresses a non-raw
+            # receive stream, so `btrfs receive` gets compressed bytes and blocks
+            # forever. This default meant a snapper backup to an ssh:// target
+            # hung out of the box, for users who never asked for compression at
+            # all. An explicit `compress` on such a target is now refused at
+            # config load; this is the implicit half of the same bug.
+            default_compress = (
+                "zstd" if target.path.startswith("raw+ssh://") else "none"
+            )
+
+            options = {
+                "compress": compress_override or target.compress or default_compress,
+                "rate_limit": rate_limit_override or target.rate_limit,
+                "show_progress": show_progress,
+                "progress_volume": str(volume.path),
+                # Threaded rather than left to the default: the point of making it
+                # configurable is that an install with a slow link can raise it.
+                "transfer_timeout": config.global_config.transfer_timeout,
+                # Space-check flags so --no-check-space/--force actually apply.
+                **(space_options or {}),
+            }
+
+            # Route the destination through the endpoint layer (local/ssh/raw)
+            # with the options every command opens a snapper destination with,
+            # so `prune` later sees exactly the backups this run wrote.
+            snapper_endpoint_config = snapper_destination_options(
+                config, target, compress_override
+            )
+            destination_endpoint = endpoint.choose_endpoint(
+                target.path, snapper_endpoint_config
+            )
+            endpoint.assert_encryption_applied(target.encrypt, destination_endpoint)
+            endpoint.assert_compression_applied(
+                snapper_endpoint_config["compress"], destination_endpoint
+            )
+
+            # Sync snapper snapshots to this target
+            logger.info("Syncing snapper config '%s' to %s", config_name, target.path)
+            transferred = sync_snapper_snapshots(
+                scanner,
+                config_name,
+                destination_endpoint,
+                snapper_config=snapper_config,
+                options=options,
+                select=_snapper_catch_up_selector(
+                    volume,
+                    config,
+                    target,
+                    snapper_endpoint_config,
+                    destination_endpoint,
+                ),
+            )
+
+            stats["completed"] += transferred
+            logger.info("Transferred %d snapshot(s) to %s", transferred, target.path)
+            # Only a target whose transfer SUCCEEDED is eligible for retention,
+            # matching the native pipeline's fate-sharing rule.
+            succeeded_targets.append((target, snapper_endpoint_config))
+
+        except __util__.AbortError as e:
+            logger.error("Backup to %s aborted: %s", target.path, e)
+            errors.append(f"Target {target.path}: {e}")
+            all_success = False
+            stats["failed"] += 1
+        except Exception as e:
+            logger.error("Backup to %s failed: %s", target.path, e)
+            errors.append(f"Target {target.path}: {e}")
+            all_success = False
+            stats["failed"] += 1
+
+    prune_ok = _prune_snapper_after_transfer(volume, config, succeeded_targets, errors)
+    return (all_success and prune_ok), stats, errors
+
+
+def _prune_snapper_after_transfer(
+    volume: VolumeConfig,
+    config: Config,
+    succeeded_targets: list,
+    errors: list[str],
+) -> bool:
+    """The snapper pipeline's retention phase. Returns True on success.
+
+    `run` on a native volume ends with `_prune_after_transfer`; the snapper path
+    had no retention phase at all, so snapper destinations grew without bound.
+    This is its twin, and it now DELETES rather than only reporting.
+
+    It shares the native phase's contract deliberately -- a degenerate or invalid
+    policy, or a failed delete, returns False so `run` exits non-zero rather than
+    silently skipping retention -- with one difference that is not going away:
+
+    **The SOURCE is never pruned.** snapper owns its own timeline through its
+    cleanup algorithms, and bbng deleting source snapshots would fight it. Only
+    destinations whose transfer SUCCEEDED are pruned, matching the native phase's
+    fate-sharing rule.
+    """
+    if not succeeded_targets:
+        return True
+    if lifecycle.stopped_before(f"the prune of the snapper backups of {volume.path}"):
+        errors.append(f"Prune {volume.path}: {lifecycle.NOT_STARTED}")
+        return False
+
+    from .prune import (
+        delete_snapper_backups,
+        format_snapper_retention_plan,
+        is_degenerate_policy,
+        plan_snapper_retention,
+    )
+
+    ok = True
+    for target, endpoint_config in succeeded_targets:
+        # Per-target retention, as on the native path. A snapper destination is
+        # frequently the only copy of a backup, so resolving one policy for every
+        # target here would delete under a policy the target does not have.
+        retention = config.get_target_retention(volume, target)
+        if is_degenerate_policy(retention):
+            logger.error(
+                "Refusing to prune snapper backups for %s: retention keeps ONLY "
+                "the latest backup (all buckets 0, no keep count, min=%s). Fix "
+                "the policy, or prune it deliberately.",
+                target.path,
+                retention.min,
+            )
+            errors.append(f"Degenerate retention policy: target {target.path}")
+            ok = False
+            continue
+        try:
+            to_keep, to_delete = plan_snapper_retention(
+                target.path, retention, endpoint_config
+            )
+        except Exception as e:  # noqa: BLE001 - one target must not abort the rest
+            # An enumeration that FAILED is not an empty destination. Pruning
+            # nothing is the safe outcome; reporting success is not.
+            logger.error("Could not plan snapper retention for %s: %s", target.path, e)
+            errors.append(f"Snapper retention plan {target.path}: {e}")
+            ok = False
+            continue
+
+        if not to_delete:
+            if to_keep:
+                logger.info(
+                    "Snapper retention for %s: all %d backup(s) are within policy.",
+                    target.path,
+                    len(to_keep),
+                )
+            continue
+
+        logger.debug(
+            "%s", format_snapper_retention_plan(target.path, to_keep, to_delete)
+        )
+        deleted, del_errs = delete_snapper_backups(
+            target.path, to_delete, endpoint_config
+        )
+        if deleted:
+            logger.info("Pruned %d old snapper backup(s) from %s", deleted, target.path)
+        if del_errs:
+            for msg in del_errs:
+                logger.error("  %s", msg)
+            errors.extend(del_errs)
+            ok = False
+    return ok
+
+
+def _catch_up_selector(
+    volume: VolumeConfig,
+    config: Config,
+    target_config: TargetConfig,
+    destination_endpoint: Any,
+):
+    """What ``run`` sends a target that is behind: what its prune will keep.
+
+    ``run`` prunes each target straight after transferring to it, with the
+    target's own policy. A target that has been away is missing a backlog, and
+    sending all of it means sending snapshots that are neither the newest nor
+    the oldest of their time bucket only for the prune to delete them. So the
+    same retention decision the prune makes (``plan_retention_of``, with the
+    prefix and timestamp format it uses) is asked first, of the target's
+    snapshots plus the ones it is missing, and only the missing ones it keeps
+    are sent; each is then sent against the newest earlier snapshot the target
+    holds. For a btrfs target that leaves exactly what the prune would have
+    left. For a raw target it can leave fewer: a stored increment's parent is
+    protected by the prune, and a parent that was never sent needs no
+    protection.
+
+    Returns a ``select`` for ``sync_snapshots``, or None to send everything:
+    under a policy the prune refuses to apply (it would delete nothing, so
+    nothing may be left out), and whenever the decision cannot be made -- the
+    target cannot be listed, names collide, the policy is invalid -- because
+    leaving out a snapshot the prune would have kept loses history.
+    """
+    retention = config.get_target_retention(volume, target_config)
+    if is_degenerate_policy(retention):
+        return None
+    prefix = volume.snapshot_prefix
+    ts_format = get_timestamp_format(config)
+
+    def select(source_snapshots: list, present_names: set):
+        missing = [s for s in source_snapshots if s.get_name() not in present_names]
+        if len(missing) < 2:
+            return None
+        try:
+            held = list(destination_endpoint.list_snapshots())
+        except Exception as e:  # noqa: BLE001 - cannot decide, so send everything
+            logger.debug(
+                "Catch-up: could not list %s (%s); sending all", target_config.path, e
+            )
+            return None
+        combined = held + missing
+        names = [s.get_name() for s in combined]
+        if len(names) != len(set(names)):
+            return None
+        try:
+            to_keep, _ = plan_retention_of(combined, retention, prefix, ts_format)
+        except Exception as e:  # noqa: BLE001 - cannot decide, so send everything
+            logger.debug(
+                "Catch-up: retention not decidable for %s (%s)", target_config.path, e
+            )
+            return None
+        kept = {id(s) for s in to_keep}
+        get_id = getattr(destination_endpoint, "get_id", None)
+        destination_id = get_id() if callable(get_id) else None
+
+        def pinned_for_this_target(snap) -> bool:
+            # A lock this destination holds on the source snapshot is a
+            # transfer that did not finish. Only a completed transfer releases
+            # it (and a prune then deletes the copy as before); left out here
+            # it would never be released, and the source would keep the
+            # snapshot for ever with "Skipping locked snapshot" every run.
+            if destination_id is None:
+                return False
+            return destination_id in getattr(snap, "locks", ()) or (
+                destination_id in getattr(snap, "parent_locks", ())
+            )
+
+        def dated(snap) -> bool:
+            # The planner sends nothing it cannot order by time unless asked
+            # for it by name. A selection IS such an ask, so an undated
+            # subvolume in the snapshot directory -- kept by retention as
+            # unparseable -- must not be turned into a full send by being
+            # selected here. The plan without a selection leaves it out.
+            # Dated by the listing's rule, the one the retention above used.
+            return extract_timestamp(snap.get_name(), prefix, ts_format) is not None
+
+        chosen = [
+            s
+            for s in missing
+            if (id(s) in kept or pinned_for_this_target(s)) and dated(s)
+        ]
+        chosen_ids = {id(s) for s in chosen}
+        left_out = [
+            s.get_name() for s in missing if id(s) not in chosen_ids and dated(s)
+        ]
+        if left_out:
+            logger.info(
+                "Not sending %d of %d missing snapshot(s) to %s: the target's "
+                "retention would delete them straight after the transfer (%s).",
+                len(left_out),
+                len(missing),
+                target_config.path,
+                ", ".join(left_out),
+            )
+        return chosen
+
+    return select
+
+
+def _snapper_catch_up_selector(
+    volume: VolumeConfig,
+    config: Config,
+    target_config: TargetConfig,
+    endpoint_config: dict[str, Any],
+    destination_endpoint: Any = None,
+):
+    """What ``run`` sends a snapper target that is behind: what its prune keeps.
+
+    The snapper twin of ``_catch_up_selector``. ``run`` prunes each snapper
+    destination straight after transferring to it, with the target's own
+    policy, over the backups' info.xml dates (``_prune_snapper_after_transfer``
+    -> ``plan_snapper_retention``). A destination that has been away is
+    missing a backlog of snapper snapshots, and sending all of it means
+    sending snapshots that are neither the newest nor the oldest of their
+    time bucket only for the prune to delete them. So the same decision the
+    prune makes (``plan_snapper_retention_of``) is asked first, of the
+    destination's backups plus the snapshots it is missing, and only the
+    missing ones it keeps are sent; the planner then chains each against the
+    newest earlier snapshot the destination holds or receives in this run.
+    The destination ends up holding exactly what it would have held had
+    everything been sent and pruned.
+
+    Returns a ``select`` for ``sync_snapper_snapshots``, or None to send
+    everything: under a policy the prune refuses (degenerate -- it would
+    delete nothing, so nothing may be left out), and whenever the decision
+    cannot be made -- the destination cannot be enumerated, the policy is
+    invalid -- because leaving out a snapshot the prune would have kept loses
+    history.
+    """
+    retention = config.get_target_retention(volume, target_config)
+    if is_degenerate_policy(retention):
+        return None
+
+    def select(missing: list):
+        from ..core.restore import list_snapper_backups, snapper_layout_present
+
+        if len(missing) < 2:
+            return None
+        try:
+            # A destination that exists but has no .snapshots yet holds no
+            # backups: the first backup to it is a catch-up like any other.
+            # The enumeration refuses to call an absent layout "empty" (it is
+            # a restore-side reader), so it is asked only when there is one.
+            if destination_endpoint is not None and not snapper_layout_present(
+                destination_endpoint
+            ):
+                held: list = []
+            else:
+                held = list_snapper_backups(target_config.path, endpoint_config)
+        except Exception as e:  # noqa: BLE001 - cannot decide, so send everything
+            logger.debug(
+                "Catch-up: could not enumerate snapper backups at %s (%s); sending all",
+                target_config.path,
+                e,
+            )
+            return None
+        try:
+            to_keep, _ = plan_snapper_retention_of(held + list(missing), retention)
+        except Exception as e:  # noqa: BLE001 - cannot decide, so send everything
+            logger.debug(
+                "Catch-up: retention not decidable for %s (%s)", target_config.path, e
+            )
+            return None
+        kept = {id(s) for s in to_keep}
+        chosen = [s for s in missing if id(s) in kept]
+        left_out = [str(s.number) for s in missing if id(s) not in kept]
+        if left_out:
+            logger.info(
+                "Not sending %d of %d missing snapper snapshot(s) to %s: the "
+                "target's retention would delete them straight after the "
+                "transfer (%s).",
+                len(left_out),
+                len(missing),
+                target_config.path,
+                ", ".join(left_out),
+            )
+        return chosen
+
+    return select
+
+
+def _transfer_to_target(
+    source_endpoint,
+    destination_endpoint,
+    target_config: TargetConfig,
+    snapshot,
+    incremental: bool,
+    compress_override: str | None = None,
+    rate_limit_override: str | None = None,
+    show_progress: bool = False,
+    space_options: dict[str, Any] | None = None,
+    transfer_timeout: int = DEFAULT_TRANSFER_TIMEOUT,
+    newest_only: bool = False,
+    select=None,
+    progress_volume: str | None = None,
+) -> TransferResult | None:
+    """Transfer to a single target, catching up whatever it is missing.
+
+    Args:
+        source_endpoint: Source endpoint
+        destination_endpoint: Destination endpoint
+        target_config: Target configuration with compression/throttle settings
+        snapshot: Snapshot to transfer
+        incremental: Whether to use incremental transfers
+        compress_override: CLI override for compression method
+        rate_limit_override: CLI override for bandwidth limit
+        show_progress: Whether to show progress bars
+        space_options: Space-check options from the CLI space flags
+
+    Returns:
+        True if successful
+    """
+    # A queued target a worker picks up after Ctrl-C: the interrupt reached
+    # only the main thread, and this is where the worker hears of it.
+    if lifecycle.stopped_before(f"the transfer to {target_config.path}"):
+        return None
+    try:
+        # Build transfer options with compression and throttling
+        # CLI overrides take precedence over config
+        transfer_options = {
+            "compress": compress_override or target_config.compress,
+            "rate_limit": rate_limit_override or target_config.rate_limit,
+            "ssh_sudo": target_config.ssh_sudo,
+            "show_progress": show_progress,
+            "transfer_timeout": transfer_timeout,
+            "progress_volume": progress_volume,
+            # Space-check flags (--no-check-space/--force/--safety-margin) so the
+            # destination space preflight can actually be bypassed when requested.
+            **(space_options or {}),
+        }
+
+        result = sync_snapshots(
+            source_endpoint,
+            destination_endpoint,
+            keep_num_backups=0,
+            no_incremental=not incremental,
+            # None lets the planner consider every source snapshot and send
+            # whatever THIS destination is missing. Passing the snapshot just
+            # created pinned the plan to that one, so a target that missed a run
+            # -- drive unplugged, host down, a transfer that failed -- stayed
+            # behind for ever, because every later run offered it only the
+            # newest. `transfer` has always caught up and snapper sources have
+            # always caught up, so `run` disagreed with the rest of the tool and
+            # with itself. Issue #104; newest-only is kept behind a flag.
+            snapshot=snapshot if newest_only else None,
+            options=transfer_options,
+            # What the target's own prune would keep (see _catch_up_selector).
+            select=None if newest_only else select,
+        )
+    except __util__.AbortError as e:
+        # sync_snapshots attaches the outcome to the exception precisely so a
+        # partial run can be reported as one (operations._raise_transfer_failures).
+        # Nothing read it, so "3 of 5 delivered, 2 failed" and "nothing moved at
+        # all" were the same line in the log.
+        partial = getattr(e, "result", None)
+        if partial is not None and partial.transferred:
+            logger.error(
+                "Transfer to %s aborted after %d of %d snapshot(s): %s",
+                destination_endpoint,
+                partial.transferred_count,
+                partial.attempted,
+                e,
+            )
+        else:
+            logger.error("Transfer to %s aborted: %s", destination_endpoint, e)
+        return None
+    except Exception as e:
+        logger.error("Transfer to %s failed: %s", destination_endpoint, e)
+        return None
+
+    # An empty plan means the destination already holds every source snapshot.
+    # That is a legitimate no-op, and it is not a delivery: saying so is the
+    # whole point of returning the result instead of True.
+    if result.transferred_count == 0:
+        logger.info("%s is already up to date", destination_endpoint)
+    return result
+
+
+def _send_backup_notifications(
+    config: Config,
+    volumes_processed: int,
+    volumes_failed: int,
+    snapshots_created: int,
+    transfers_completed: int,
+    transfers_failed: int,
+    duration_seconds: float,
+    errors: list[str],
+) -> None:
+    """Send backup completion notifications if configured.
+
+    Args:
+        config: Full configuration with notification settings
+        volumes_processed: Total volumes processed
+        volumes_failed: Number of failed volumes
+        snapshots_created: Number of snapshots created
+        transfers_completed: Number of successful transfers
+        transfers_failed: Number of failed transfers
+        duration_seconds: Total backup duration
+        errors: List of error messages
+    """
+    notif_config = config.global_config.notifications
+    if not notif_config.is_enabled():
+        return
+
+    # Determine overall status
+    status: Literal["success", "failure", "partial"]
+    if volumes_failed == 0 and transfers_failed == 0:
+        status = "success"
+    elif volumes_failed == volumes_processed and transfers_completed == 0:
+        # Total failure means nothing got through. A single-volume run with one
+        # good target and one refused target marks the volume failed, which made
+        # every such run report "failure" while a backup had in fact been
+        # delivered -- the operator cannot tell that from a run that did nothing.
+        status = "failure"
+    else:
+        status = "partial"
+
+    # Create notification event
+    event = create_backup_event(
+        status=status,
+        volumes_processed=volumes_processed,
+        volumes_failed=volumes_failed,
+        snapshots_created=snapshots_created,
+        transfers_completed=transfers_completed,
+        transfers_failed=transfers_failed,
+        duration_seconds=duration_seconds,
+        errors=errors,
+    )
+
+    # Convert config schema to notification module types
+    email_config = EmailConfig(
+        enabled=notif_config.email.enabled,
+        smtp_host=notif_config.email.smtp_host,
+        smtp_port=notif_config.email.smtp_port,
+        smtp_user=notif_config.email.smtp_user,
+        smtp_password=notif_config.email.smtp_password,
+        smtp_tls=notif_config.email.smtp_tls,
+        from_addr=notif_config.email.from_addr,
+        to_addrs=notif_config.email.to_addrs,
+        on_success=notif_config.email.on_success,
+        on_failure=notif_config.email.on_failure,
+        timeout=notif_config.email.timeout,
+    )
+
+    webhook_config = WebhookConfig(
+        enabled=notif_config.webhook.enabled,
+        url=notif_config.webhook.url,
+        method=notif_config.webhook.method,
+        headers=notif_config.webhook.headers,
+        on_success=notif_config.webhook.on_success,
+        on_failure=notif_config.webhook.on_failure,
+        timeout=notif_config.webhook.timeout,
+    )
+
+    notif = NotifConfig(email=email_config, webhook=webhook_config)
+
+    # Send notifications
+    results = send_notifications(notif, event)
+
+    for method, success in results.items():
+        if success:
+            logger.info("Sent %s notification", method)
+        else:
+            logger.warning("Failed to send %s notification", method)

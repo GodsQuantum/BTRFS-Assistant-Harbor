@@ -1,0 +1,30 @@
+# Maintainer: Btrfs Assistant Harbor community
+# Development snapshot, independently buildable on Arch/CachyOS.
+pkgname=btrfs-assistant-harbor
+pkgver=0.1.0alpha2
+pkgrel=1
+pkgdesc='Btrfs Assistant fork with Snapper remote backup, Harbor checkpoint-v2 and Rust FastCDC CAS'
+arch=('x86_64')
+url='https://gitlab.com/btrfs-assistant/btrfs-assistant'
+license=('GPL-3.0-or-later' 'MIT')
+depends=('qt6-base' 'btrfs-progs' 'snapper' 'polkit' 'python' 'python-filelock' 'python-rich')
+makedepends=('cmake' 'ninja' 'qt6-tools' 'rust' 'pkgconf')
+source=("${pkgname}-${pkgver}.tar.gz")
+sha256sums=('@SHA256@')
+build() {
+    cmake -S "${srcdir}/btrfs-assistant-harbor" -B "${srcdir}/build" \
+        -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+    cmake --build "${srcdir}/build" --parallel 4
+}
+check() {
+    ctest --test-dir "${srcdir}/build" --output-on-failure
+    python -m unittest discover -s "${srcdir}/btrfs-assistant-harbor/tests" -p test_remote_schedule.py
+    cargo test --locked --manifest-path "${srcdir}/btrfs-assistant-harbor/transport/Cargo.toml" --all-targets
+}
+package() {
+    DESTDIR="${pkgdir}" cmake --install "${srcdir}/build"
+    install -Dm644 "${srcdir}/btrfs-assistant-harbor/LICENSE" \
+      "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE-GPL3"
+    install -Dm644 "${srcdir}/btrfs-assistant-harbor/README.fr.md" \
+      "${pkgdir}/usr/share/doc/${pkgname}/README.fr.md"
+}

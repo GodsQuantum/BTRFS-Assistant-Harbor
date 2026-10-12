@@ -1,0 +1,5457 @@
+"""btrfs-backup-ng: SSH Endpoint for managing remote operations.
+
+This module provides the SSHEndpoint class, which integrates with SSHMasterManager
+to handle SSH-based operations robustly, including btrfs send/receive commands.
+
+Key features:
+- Verifies remote filesystem is BTRFS before attempting transfers
+- Tests SSH connectivity with a simple test file
+- Uses mbuffer or pv if available to improve transfer reliability
+- Provides detailed error reporting and verification
+- Implements transfer method fallbacks for maximum reliability
+- Includes direct SSH transfer functionality (previously in ssh_transfer.py)
+
+Environment variables that affect behavior:
+- BTRFS_BACKUP_PASSWORDLESS_ONLY: If set to 1/true/yes, disables the use of sudo
+  -S flag and will only attempt passwordless sudo (-n flag), failing if a password
+  would be required.
+"""
+
+import contextlib
+import copy
+import getpass
+import os
+import shlex
+import shutil
+import subprocess
+import threading
+import time
+import types
+import uuid
+from pathlib import Path
+from subprocess import CompletedProcess
+from threading import Lock
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    TypeVar,
+    cast,
+)
+
+if TYPE_CHECKING:
+    pass
+
+# Handle pwd import with proper typing
+_pwd: Optional[types.ModuleType]
+try:
+    import pwd as _pwd_module
+
+    _pwd = _pwd_module
+    _pwd_available = True
+except ImportError:
+    _pwd = None
+    _pwd_available = False
+
+
+from btrfs_backup_ng import __util__  # noqa: E402
+from btrfs_backup_ng.__logger__ import logger  # noqa: E402
+from btrfs_backup_ng import lifecycle  # noqa: E402
+from btrfs_backup_ng.lifecycle import track as track_child  # noqa: E402
+from btrfs_backup_ng.endpoint.raw_metadata import StructureVerdict  # noqa: E402
+from btrfs_backup_ng.core.errors import (  # noqa: E402
+    TransientNetworkError,
+    classify_error,
+)
+from btrfs_backup_ng.core.transfer import (  # noqa: E402
+    finish_stderr,
+    stderr_text,
+    tail_stderr,
+)
+from btrfs_backup_ng.core.retry import (  # noqa: E402
+    DEFAULT_TRANSFER_POLICY,
+    RetryContext,
+    RetryPolicy,
+)
+from btrfs_backup_ng.core.space import SpaceInfo  # noqa: E402
+from btrfs_backup_ng.core.transfer import (  # noqa: E402
+    DEFAULT_TRANSFER_TIMEOUT,
+    UNMEASURABLE_FALLBACK_TIMEOUT,
+)
+from btrfs_backup_ng.sshutil.master import SSHMasterManager  # noqa: E402
+
+from .common import DeletionResult, Endpoint  # noqa: E402
+
+__all__ = ["SSHEndpoint"]
+
+# Type variable for self in SSHEndpoint
+_Self = TypeVar("_Self", bound="SSHEndpoint")
+
+
+def _guarded_pipeline(pipeline: str) -> str:
+    """Wrap a remote pipeline so a dropped connection kills all of it.
+
+    `exec` gives the single-command case its orphan protection: the shell is
+    replaced by `btrfs receive`, so a signal reaches it directly. A pipeline
+    cannot be exec'd, and the two obvious substitutes both fail, measured
+    against the exact strings this module emits:
+
+      * `trap "kill 0" HUP INT TERM; cmd | cmd` -- a shell defers a trap until
+        the running FOREGROUND command finishes, so nothing is signalled while
+        the transfer is in flight. SIGHUP and SIGTERM both left the shell, the
+        decompressor and `btrfs receive` running: precisely the orphans the
+        exec was preventing.
+      * `kill 0` from inside the handler also signals the trapping shell, whose
+        handler runs `kill 0` again. That recursion exhausts the stack and the
+        shell dies of SIGSEGV -- reproduced on sh, dash and bash alike.
+
+    Backgrounding the pipeline and blocking in `wait` fixes the first problem,
+    because `wait` is interruptible and the handler runs immediately. Resetting
+    the trap before `kill 0` fixes the second, because by the time the group is
+    signalled this shell has default disposition and simply dies. `wait` then
+    yields the pipeline's own exit status, so a failing `btrfs receive` is still
+    reported as a failure rather than swallowed.
+
+    Backgrounding costs the pipeline its stdin, which is the ENTIRE POINT of the
+    command: POSIX says an asynchronous list gets /dev/null on stdin when job
+    control is off, which is every non-interactive `sh -c`. bash exempts a
+    backgrounded PIPELINE from that rule; dash and busybox ash do not. So the
+    stream is fed to the decompressor on a bash remote and to /dev/null on a
+    dash or busybox one -- measured, with `btrfs receive` replaced by a byte
+    counter and nothing else changed:
+
+        debian:stable-slim  (/bin/sh -> dash)      0 bytes    "unexpected end of file"
+        alpine:latest       (/bin/sh -> busybox)   0 bytes
+        fedora:latest       (/bin/sh -> bash)      4096 bytes
+
+    Debian, Ubuntu and the busybox-based NAS boxes are exactly the machines
+    people back up to, so compression over ssh:// was inert on most of them
+    while passing every test on a bash host.
+
+    Duplicating stdin onto fd 3 and redirecting the group from it restores the
+    stream: an explicit redirection is applied AFTER the /dev/null default, so
+    it wins. Verified delivering the full payload on all three shells above,
+    with a failing `btrfs receive` still exiting non-zero through the group.
+    """
+    # `$! ;`, never `$!;`: the command line is parsed by the account's login
+    # shell first, and csh/tcsh read a `!` followed by anything but a blank,
+    # `=` or `(` as a history reference, even inside single quotes.
+    return (
+        f"exec 3<&0; {{ {pipeline}; }} <&3 & pid=$! ; "
+        f'trap "trap - HUP INT TERM; kill 0" HUP INT TERM; '
+        f'wait "$pid"'
+    )
+
+
+def _build_receive_command(
+    dest_path: str,
+    use_sudo: bool = False,
+    password_on_stdin: bool = False,
+    decompress: str | None = None,
+    verbose: bool = False,
+) -> str:
+    """Build a btrfs receive command with orphan process protection.
+
+    The command is wrapped to ensure proper cleanup when the SSH session ends.
+    This prevents zombie processes when the SSH connection is interrupted.
+
+    Args:
+        dest_path: Destination path for btrfs receive, RAW and unquoted. This
+                   function owns the escaping; callers must not pre-quote.
+        use_sudo: Whether to run with sudo
+        password_on_stdin: If True, use 'sudo -S' (read password from stdin).
+                          If False, use 'sudo -n' (passwordless sudo).
+        decompress: Compression method the stream was compressed with, or None.
+                    When given, the remote runs `<decompressor> | btrfs receive`
+                    so the compression applied before the wire is undone after
+                    it. This is the half of stream compression that was missing:
+                    the sender could compress, and nothing decompressed.
+
+    Returns:
+        Shell command string with orphan protection
+    """
+    # Escape exactly once, here. The result is embedded in a shell script that is
+    # itself quoted as a single argument below, so the destination survives both
+    # levels of shell parsing regardless of spaces, quotes or metacharacters.
+    quoted_dest = shlex.quote(dest_path)
+
+    # btrfs_debug: -vv on the remote receive too, one line per file operation,
+    # forwarded back over ssh's stderr and drained by the caller's tail.
+    flags = " -vv" if verbose else ""
+    # Build the base btrfs receive command
+    if use_sudo:
+        if password_on_stdin:
+            # sudo -S reads password from stdin first, then btrfs receive reads data
+            base_receive = f"sudo -S btrfs receive{flags} {quoted_dest}"
+        else:
+            # sudo -n for passwordless sudo
+            base_receive = f"sudo -n btrfs receive{flags} {quoted_dest}"
+    else:
+        base_receive = f"btrfs receive{flags} {quoted_dest}"
+
+    # Set up a cleanup trap for disconnect signals. When SSH disconnects, SIGHUP
+    # is sent to the shell, which triggers the trap.
+    #
+    # We run the receive command directly (not backgrounded) so stdin flows
+    # through properly, and `exec` replaces the shell with btrfs receive so
+    # signals are delivered directly to it.
+    #
+    # Note: We don't use the named pipe approach as it can cause issues with
+    # SSH's stdin handling and buffering.
+    if decompress:
+        from ..core.transfer import COMPRESSION_PROGRAMS
+
+        program = COMPRESSION_PROGRAMS.get(decompress)
+        if program is None:
+            raise ValueError(
+                f"Unknown compression method {decompress!r}; expected one of "
+                f"{sorted(COMPRESSION_PROGRAMS)}"
+            )
+        decompressor = " ".join(shlex.quote(part) for part in program["decompress"])
+
+        if use_sudo and password_on_stdin:
+            # `sudo -S` reads the password from ITS stdin. Putting the
+            # decompressor in front of sudo would feed the password line into the
+            # decompressor instead, so sudo would never receive it and the
+            # decompressor would choke on plaintext ("not in gzip format",
+            # measured). Ordering is therefore not free to change.
+            #
+            # But elevating a SHELL -- `sudo -S sh -c '<decompress> | btrfs
+            # receive'` -- asks sudoers for permission to run sh, and the sudoers
+            # recipe this project's own README gives grants only /usr/bin/btrfs.
+            # Measured against a host configured exactly that way: "Sorry, user
+            # is not allowed to execute '/usr/sbin/sh -c ...'", and the backup
+            # never ran. So the shell form is what breaks a restricted host, and
+            # the ordering is what breaks every host -- neither one alone can be
+            # fixed by rewriting the other.
+            #
+            # Both are satisfied without ever elevating a shell. The password
+            # primes sudo's credential cache, after which the pipeline runs with
+            # `sudo -n` scoped to btrfs alone. Where that cache is refused
+            # (timestamp_timeout=0) the decompressor runs UNELEVATED and its
+            # output is prefixed with the password line, so `sudo -S` consumes
+            # that line and btrfs receive gets the decompressed stream -- scoped
+            # to btrfs again. Root therefore runs exactly one known binary on
+            # every path. Measured across six sudoers policies, on remotes whose
+            # /bin/sh is bash, dash and busybox ash:
+            #
+            #   full sudo, caching               scoped    works
+            #   btrfs-only, caching              scoped    works  (was BROKEN)
+            #   full sudo, timestamp_timeout=0   prefixed  works
+            #   btrfs-only, timestamp_timeout=0  prefixed  works  (was BROKEN)
+            #   btrfs-only NOPASSWD              scoped    works
+            #   no sudo rights at all            --        fails loudly
+            #
+            # The remote decides for itself. sudo deliberately gives the same
+            # answer ("a password is required") whether a command is forbidden or
+            # merely needs authenticating, so NO non-interactive probe from this
+            # side can tell those apart -- the choice cannot be made here.
+            #
+            # `printf` is a shell builtin in dash, bash and busybox ash (checked
+            # in all three), so the password never reaches a process argument
+            # list; and `printf %s` preserves backslashes, which dash's `echo`
+            # would eat.
+            #
+            # Gated on use_sudo, not on password_on_stdin alone: a caller that
+            # asked for no elevation must not be handed a `sudo -S` command
+            # merely because it offered a password. The uncompressed branch has
+            # always honoured use_sudo, and this branch has to agree with it.
+            # Priming, the decision and the transfer all live INSIDE the guarded
+            # group, and that placement is load-bearing. With no tty -- which is
+            # every ssh command -- sudo keys its credential ticket on the PARENT
+            # PID. _guarded_pipeline runs the transfer in a BACKGROUNDED subshell,
+            # so priming outside it records a ticket against this shell that the
+            # subshell's `sudo -n` cannot see: measured as "a password is
+            # required" on bash and dash alike, with the payload never delivered,
+            # while the identical commands unbackgrounded succeeded.
+            group = (
+                'printf "%s\\n" "$__bbng_pw" | sudo -S -v 2>/dev/null; '
+                # </dev/null so the capability probe cannot consume a single byte of
+                # the stream: its stdin is fd 3, the transfer itself. `btrfs
+                # --version` does not read stdin, but a probe sharing the
+                # payload's file description should not depend on that.
+                "if sudo -n btrfs --version </dev/null >/dev/null 2>&1; then "
+                f"{decompressor} | sudo -n btrfs receive {quoted_dest}; "
+                "else "
+                # No usable credential cache (timestamp_timeout=0). Decompress
+                # UNELEVATED and prefix the decompressed stream with the password
+                # line, so `sudo -S` eats that line and hands the rest to btrfs
+                # receive. sudo stays scoped to btrfs here too, so this path needs
+                # no permission to run a shell as root either -- and a host that
+                # does not actually want a password is caught by the branch above,
+                # whose `sudo -n` probe succeeds there, so the password line can
+                # never reach btrfs as stream data.
+                f'{{ printf "%s\\n" "$__bbng_pw"; {decompressor}; }} | '
+                f"sudo -S btrfs receive {quoted_dest}; "
+                "fi"
+            )
+            script = 'trap "" PIPE; IFS= read -r __bbng_pw; ' + _guarded_pipeline(group)
+            return f"exec sh -c {shlex.quote(script)}"
+        script = (
+            f'trap "" PIPE; {_guarded_pipeline(f"{decompressor} | {base_receive}")}'
+        )
+    else:
+        # Unchanged: with no pipeline, exec replaces the shell with btrfs receive
+        # so signals reach it directly.
+        script = f'trap "" PIPE; exec {base_receive}'
+
+    # Quote the whole script as ONE argument to `sh -c`. Building this by
+    # wrapping the script in literal single quotes would cancel the escaping of
+    # any single-quoted destination inside it: a path with a space would be
+    # truncated, an apostrophe would be a remote syntax error, and a `;` would
+    # run an injected command whose exit status masks a failing btrfs receive.
+    #
+    # `exec` so the remote login shell REPLACES itself with the shell holding the
+    # trap, instead of forking and waiting. ssh runs this string through the
+    # login shell, so without exec there are two shells and the trap is in the
+    # inner one: a signal reaches the outer shell, which has no trap, and the
+    # pipeline is orphaned. bash hides this by exec-ing a sole final command on
+    # its own, dash and busybox ash do not -- the same bash-vs-dash split that
+    # cost this feature its stdin, and the same Debian/Ubuntu/Alpine remotes.
+    # Measured in a dash container: orphaned sh, subshell and receive without it,
+    # clean with it; unchanged under bash either way.
+    return f"exec sh -c {shlex.quote(script)}"
+
+
+def _compressed_send_script(remote_send: str, compressor: str) -> str:
+    """The remote half of a compressed restore: ``<send> | <compressor>``, exiting
+    with the SEND's status.
+
+    A pipeline exits with its last stage's status, so ``btrfs send`` failing
+    ("cannot find parent subvolume", a path that is not a subvolume) would come
+    back as the compressor's 0 and the local side would learn of it only from
+    an empty stream. The send's status is written to a side descriptor inside
+    the pipeline and becomes the script's exit status; the compressed bytes go
+    to the original stdout through another. Every construct is POSIX -- the
+    remote's ``sh`` is dash or busybox ash as often as bash -- and the send is
+    the first stage, so a ``sudo -S`` in it still reads its password from the
+    ssh session's stdin. Runs under ``sh -c`` so the login shell need not be
+    POSIX itself.
+    """
+    script = (
+        "exec 3>&1; "
+        f"s=$( {{ {{ {remote_send}; echo $? >&4; }} | {compressor} >&3; }} 4>&1 ); "
+        'exit "$s"'
+    )
+    return f"sh -c {shlex.quote(script)}"
+
+
+#: How long a transfer may move NO bytes before it is treated as stuck.
+#:
+#: The default; `transfer_stall_timeout` in [global] overrides it, and 0 disables
+#: the check. An operator who hits a false positive needs a way out that is not
+#: "edit the source" -- the same reason the wall clock became configurable.
+#:
+#: A wall-clock limit cannot tell a slow transfer from a dead one: it kills a
+#: healthy first sync of a large subvolume over a slow link, and waits the full
+#: hour on a pipe that died in the first minute. Reported as #93, where an
+#: initial 36 GB transfer over 100 Mbit hit a one-hour cap that had nothing to do
+#: with how the transfer was actually doing.
+#:
+#: Generous on purpose. A transfer legitimately moves nothing while btrfs walks
+#: metadata on a large subvolume, and a congested link can pause for a long time
+#: without being broken. This is the "nothing has happened at all" line, not a
+#: performance target.
+STALL_TIMEOUT_SECONDS = 900
+
+
+class SSHEndpoint(Endpoint):
+    """SSH-based endpoint for remote operations.
+
+    This endpoint type handles connections to remote hosts via SSH.
+    SSH username can be specified in three ways, in order of precedence:
+    1. Via --ssh-username command line argument (highest priority)
+    2. In the URI (e.g., ssh://user@host:/path)
+    3. Current local user (fallback)
+
+    When running as root with sudo, SSH identity files and usernames need special handling.
+
+    Enhanced with direct SSH transfer capabilities for improved reliability:
+    - Verifies remote filesystem is BTRFS before attempting transfers
+    - Tests SSH connectivity with a simple test file
+    - Uses mbuffer or pv if available to improve transfer reliability
+    - Provides detailed error reporting and verification
+    - Implements transfer method fallbacks for maximum reliability
+
+    Note: This class incorporates the functionality previously provided by
+    the separate ssh_transfer.py module, offering an integrated solution for
+    reliable BTRFS transfers over SSH.
+    """
+
+    _is_remote = True
+    _supports_multiprocessing = True
+
+    # Class-level cache for sudo passwords, keyed by "user@hostname"
+    # This allows password sharing across multiple SSHEndpoint instances for the same host
+    _sudo_password_cache: Dict[str, str] = {}
+
+    def __init__(
+        self,
+        hostname: str,
+        config: Optional[Dict[str, Any]] = None,
+        *,
+        ssh_sudo: bool = False,
+        ssh_identity_file: Optional[str] = None,
+        username: Optional[str] = None,
+        port: Optional[int] = None,
+        ssh_opts: Optional[List[str]] = None,
+        agent_forwarding: bool = False,
+        passwordless: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the SSH endpoint.
+
+        Args:
+            hostname: Remote hostname
+            config: Configuration dictionary
+            **kwargs: Additional keyword arguments passed to parent class
+        """
+        # Deep copy config to avoid shared references in multiprocessing
+        if config is not None:
+            config = copy.deepcopy(config)
+            logger.debug("SSHEndpoint: Using provided config (deep copied)")
+        else:
+            config = {}
+            logger.debug("SSHEndpoint: No config provided, using empty dict")
+
+        # Initialize our config before calling parent init
+        self.config: Dict[str, Any] = config or {}
+        self.hostname: str = hostname
+        self._instance_id: str = f"{os.getpid()}_{uuid.uuid4().hex[:8]}"
+        self._lock: Lock = Lock()
+        self._last_transfer_snapshot: Optional[bool] = None
+        logger.debug(
+            "SSHEndpoint: Config keys before parent init: %s", list(config.keys())
+        )
+        self._cached_sudo_password: Optional[str] = None  # Add this line
+
+        # Call parent init with both config and kwargs
+        super().__init__(config=self.config, **kwargs)
+
+        # The base Endpoint.__init__ rebuilds self.config from a fixed key
+        # whitelist, which drops SSH-specific keys. Restore them from the
+        # passed-in config so ssh://user@host URLs and --ssh-sudo / --ssh-key
+        # are honored; otherwise the username falls back to SUDO_USER/current
+        # user and ssh_sudo / identity file are silently lost.
+        for _ssh_key in (
+            "username",
+            "port",
+            "ssh_opts",
+            "agent_forwarding",
+            "ssh_sudo",
+            "passwordless",
+            "ssh_identity_file",
+            "ssh_key",
+            "ssh_auth_sock",
+            "ssh_password_fallback",
+            "ssh_host_key_policy",
+            "skip_remote_lock",
+            "lock_root",
+            "transfer_stall_timeout",
+        ):
+            if config.get(_ssh_key) is not None:
+                self.config[_ssh_key] = config[_ssh_key]
+
+        # Validated HERE, at construction, so every call site is covered --
+        # the host reaches both a shell=True pipeline and ssh's own option
+        # parser, and a check at the config boundary alone would leave the
+        # hand-written, wizard and direct-CLI forms unprotected.
+        self.hostname = __util__.validated_ssh_host(hostname)
+        logger.debug("SSHEndpoint initialized with hostname: %s", self.hostname)
+        logger.debug("SSHEndpoint: kwargs provided: %s", list(kwargs.keys()))
+        self.config["username"] = self.config.get("username")
+        self.config["port"] = self.config.get("port")
+        self.config["ssh_opts"] = self.config.get("ssh_opts", [])
+        self.config["agent_forwarding"] = self.config.get("agent_forwarding", False)
+
+        # Initialize tracking variables for verification
+        self._last_transfer_snapshot = None
+
+        # Cache for diagnostics to avoid redundant testing
+        self._diagnostics_cache: Dict[str, Tuple[Dict[str, bool], float]] = {}
+        self._diagnostics_cache_timeout = 300  # 5 minutes
+
+        self.config["path"] = self.config.get("path", "/")
+        self.config["ssh_sudo"] = self.config.get("ssh_sudo", False)
+        self.config["passwordless"] = self.config.get("passwordless", False)
+        self.config["simple_progress"] = kwargs.get("simple_progress", True)
+        self.config["ssh_password_fallback"] = config.get(
+            "ssh_password_fallback", False
+        ) or kwargs.get("ssh_password_fallback", False)
+
+        # Log important settings for troubleshooting
+        logger.info(
+            "SSH endpoint configuration: hostname=%s, sudo=%s, passwordless=%s, simple_progress=%s",
+            self.hostname,
+            self.config.get("ssh_sudo", False),
+            self.config.get("passwordless", False),
+            self.config.get("simple_progress", True),
+        )
+
+        # Username handling with clear precedence:
+        # 1. Explicitly provided username (from command line via --ssh-username)
+        # 2. Username from the URL (ssh://user@host/path)
+        # 3. SUDO_USER environment variable if running as root with sudo
+        # 4. Current user as fallback
+        if not self.config.get("username"):
+            # No username provided in config, check sudo environment
+            if os.geteuid() == 0 and os.environ.get("SUDO_USER"):
+                self.config["username"] = os.environ.get("SUDO_USER")
+                logger.debug(
+                    "Using sudo original user as username: %s", self.config["username"]
+                )
+                logger.debug(
+                    "Running as root (euid=0) with SUDO_USER=%s",
+                    os.environ.get("SUDO_USER"),
+                )
+            else:
+                logger.debug("Not running as sudo, getting current user")
+                try:
+                    self.config["username"] = getpass.getuser()
+                    logger.debug(
+                        "Using current user as username: %s", self.config["username"]
+                    )
+                except Exception as e:
+                    # Fallback if getpass.getuser() fails
+                    logger.warning(f"Error getting current username: {e}")
+                    logger.debug(
+                        f"getpass.getuser() failed with exception: {e}", exc_info=True
+                    )
+                    # Try environment variables
+                    username = os.environ.get("USER") or os.environ.get("USERNAME")
+                    logger.debug(
+                        "Trying environment variables: USER=%s, USERNAME=%s",
+                        os.environ.get("USER"),
+                        os.environ.get("USERNAME"),
+                    )
+                    if not username:
+                        # Last resort fallback
+                        username = "btrfs-backup-user"
+                        logger.warning(f"Using default fallback username: {username}")
+                        logger.debug(
+                            "No username found in environment, using hardcoded fallback"
+                        )
+                    self.config["username"] = username
+                    logger.debug(f"Using fallback username: {username}")
+        else:
+            logger.debug(
+                "Using explicitly configured username: %s", self.config["username"]
+            )
+
+        identity_file = self.config.get("ssh_identity_file")
+        logger.debug("SSH identity file from config: %s", identity_file)
+
+        # Auto-detect SSH key when running as sudo without explicit identity file
+        running_as_sudo = os.geteuid() == 0 and os.environ.get("SUDO_USER")
+        if not identity_file and running_as_sudo:
+            sudo_user = os.environ.get("SUDO_USER")
+            sudo_user_home = None
+            if _pwd_available and _pwd is not None and sudo_user is not None:
+                try:
+                    sudo_user_home = _pwd.getpwnam(sudo_user).pw_dir
+                except Exception:
+                    pass
+            if sudo_user_home is None:
+                sudo_user_home = (
+                    f"/home/{sudo_user}" if sudo_user != "root" else "/root"
+                )
+
+            # Check for common SSH key types
+            for key_name in ["id_ed25519", "id_rsa", "id_ecdsa"]:
+                key_path = os.path.join(sudo_user_home, ".ssh", key_name)
+                if os.path.exists(key_path) and os.access(key_path, os.R_OK):
+                    identity_file = key_path
+                    self.config["ssh_identity_file"] = identity_file
+                    logger.debug(
+                        "Auto-detected SSH key for sudo user %s: %s",
+                        sudo_user,
+                        identity_file,
+                    )
+                    break
+
+        if identity_file:
+            running_as_sudo = os.geteuid() == 0 and os.environ.get("SUDO_USER")
+            logger.debug(
+                "Running as sudo check: euid=%d, SUDO_USER=%s, running_as_sudo=%s",
+                os.geteuid(),
+                os.environ.get("SUDO_USER"),
+                running_as_sudo,
+            )
+            if running_as_sudo:
+                sudo_user = os.environ.get("SUDO_USER")
+                logger.debug("Processing identity file for sudo user: %s", sudo_user)
+                sudo_user_home = None
+                if sudo_user:
+                    sudo_user_home = None
+                    if _pwd_available and _pwd is not None:
+                        try:
+                            sudo_user_home = _pwd.getpwnam(sudo_user).pw_dir
+                            logger.debug(
+                                f"Found home directory for sudo user: {sudo_user_home}"
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Error getting home directory for sudo user: {e}"
+                            )
+                            logger.debug(f"pwd.getpwnam() failed: {e}", exc_info=True)
+                            # Fall back to default location
+                            sudo_user_home = None
+
+                    # Use fallback if we couldn't get the home directory
+                    if sudo_user_home is None:
+                        sudo_user_home = (
+                            f"/home/{sudo_user}" if sudo_user != "root" else "/root"
+                        )
+                        logger.debug(f"Using fallback home directory: {sudo_user_home}")
+                if sudo_user_home and identity_file.startswith("~"):
+                    identity_file = identity_file.replace("~", sudo_user_home, 1)
+                    logger.debug("Expanded ~ in identity file path: %s", identity_file)
+                if sudo_user_home and not os.path.isabs(identity_file):
+                    identity_file = os.path.join(sudo_user_home, identity_file)
+                    logger.debug(
+                        "Converted relative path to absolute: %s", identity_file
+                    )
+                self.config["ssh_identity_file"] = identity_file
+                logger.debug("Final identity file path: %s", identity_file)
+                try:
+                    id_file = Path(identity_file).absolute()
+                    if not id_file.exists():
+                        logger.warning("SSH identity file does not exist: %s", id_file)
+                        logger.warning(
+                            "When running with sudo, ensure the identity file path is absolute and accessible"
+                        )
+                    elif not os.access(str(id_file), os.R_OK):
+                        logger.warning("SSH identity file is not readable: %s", id_file)
+                        logger.warning("Check file permissions: chmod 600 %s", id_file)
+                    else:
+                        logger.debug("Using SSH identity file: %s (verified)", id_file)
+                except Exception as e:
+                    logger.warning("Error processing identity file path: %s", e)
+                    self.config["ssh_identity_file"] = identity_file
+            else:
+                logger.debug("Using SSH identity file: %s", identity_file)
+
+        # Log the final configuration
+        logger.debug("SSH path: %s", self.config["path"])
+        logger.debug("SSH username: %s", self.config["username"])
+        logger.debug("SSH hostname: %s", self.hostname)
+        logger.debug("SSH port: %s", self.config["port"])
+        logger.debug("SSH sudo: %s", self.config["ssh_sudo"])
+
+        # Centralized agent forwarding logic
+        logger.debug("Applying agent forwarding configuration")
+        self._apply_agent_forwarding()
+
+        logger.debug(
+            "Creating SSHMasterManager with: hostname=%s, username=%s, port=%s",
+            self.hostname,
+            self.config["username"],
+            self.config["port"],
+        )
+        # Allow SSH password auth if flag is set or environment variable is set
+        allow_password = self.config.get("ssh_password_fallback", False) or bool(
+            os.environ.get("BTRFS_BACKUP_SSH_PASSWORD")
+        )
+        if allow_password:
+            logger.debug("SSH password auth enabled")
+
+        self.ssh_manager: SSHMasterManager = SSHMasterManager(
+            hostname=self.hostname,
+            username=self.config["username"],
+            port=self.config["port"],
+            ssh_opts=self.config["ssh_opts"],
+            persist="60",
+            debug=True,
+            identity_file=self.config.get("ssh_identity_file"),
+            allow_password_auth=allow_password,
+            ssh_auth_sock=self.config.get("ssh_auth_sock"),
+            host_key_policy=self.config.get("ssh_host_key_policy", "accept-new"),
+        )
+        logger.debug("SSHMasterManager created successfully")
+
+        self._lock = Lock()  # Already set in type definition
+        self._instance_id = (
+            f"{os.getpid()}_{uuid.uuid4().hex[:8]}"  # Already set in type definition
+        )
+        logger.debug("SSHEndpoint instance ID: %s", self._instance_id)
+
+        # Force ssh_sudo to True if requested in kwargs or config
+        cli_ssh_sudo = kwargs.get("ssh_sudo") or (config and config.get("ssh_sudo"))
+        logger.debug(
+            f"[SSHEndpoint.__init__] Initial ssh_sudo: {self.config.get('ssh_sudo', False)}, CLI/config ssh_sudo: {cli_ssh_sudo}"
+        )
+        logger.debug(
+            "SSH sudo propagation check: kwargs.ssh_sudo=%s, config.ssh_sudo=%s",
+            kwargs.get("ssh_sudo"),
+            config.get("ssh_sudo"),
+        )
+        if cli_ssh_sudo and not self.config.get("ssh_sudo", False):
+            logger.warning("SSH sudo flag not properly propagated, forcing to True")
+            self.config["ssh_sudo"] = True
+        logger.debug(
+            f"[SSHEndpoint.__init__] Final ssh_sudo: {self.config.get('ssh_sudo', False)}"
+        )
+
+        # Password collection is deferred to _prepare() -> start_master()
+        # This allows key-based auth to be tried first, and only prompts for
+        # password if keys fail. The SSHMasterManager handles this flow.
+
+        # Skip diagnostics during __init__ - they will run in _prepare() after
+        # the SSH master connection is established. This avoids connection issues
+        # and redundant password prompts.
+        logger.debug(
+            "SSHEndpoint initialization completed (diagnostics deferred to _prepare)"
+        )
+
+    def _prepare(self) -> None:
+        """Prepare the SSH endpoint by starting the master connection.
+
+        This method is called by prepare() in the parent class and ensures
+        the SSH master connection is established before any commands are run.
+        This is essential for password authentication fallback to work properly.
+        """
+        logger.debug("Preparing SSH endpoint, starting master connection...")
+
+        # Password should already be collected in __init__ if ssh_password_fallback is enabled
+        # This is just a fallback in case _prepare is called without __init__ password collection
+
+        # Start the SSH master connection (handles password fallback if needed)
+        if not self.ssh_manager.start_master():
+            logger.error(
+                f"Failed to establish SSH connection to {self.config.get('username')}@{self.hostname}"
+            )
+            raise ConnectionError(
+                f"Could not establish SSH connection to {self.hostname}. "
+                "Check SSH credentials (keys or password)."
+            )
+
+        logger.debug("SSH master connection established successfully")
+
+        # After master connection, sync password caches
+        # If SSH master collected a password, use it for sudo too (common scenario)
+        if (
+            hasattr(self.ssh_manager, "_cached_ssh_password")
+            and self.ssh_manager._cached_ssh_password
+            and not self._cached_sudo_password
+        ):
+            logger.debug("Syncing SSH password to sudo cache (same credentials)")
+            self._cached_sudo_password = self.ssh_manager._cached_ssh_password
+            cache_key = f"{self.config.get('username', 'unknown')}@{self.hostname}"
+            SSHEndpoint._sudo_password_cache[cache_key] = (
+                self.ssh_manager._cached_ssh_password
+            )
+
+        # Now run diagnostics to detect capabilities using the actual configured path
+        try:
+            diag_path = self.config.get("path", "/")
+            self._run_diagnostics(path=diag_path)
+            logger.debug("SSH diagnostics completed")
+        except Exception as e:
+            logger.debug(f"SSH diagnostics failed (non-fatal): {e}")
+
+    def __repr__(self) -> str:
+        username: str = self.config.get("username", "")
+        return f"(SSH) {username}@{self.hostname}:{self.config['path']}"
+
+    def delete_snapshots(self, snapshots: List[Any], **kwargs: Any) -> DeletionResult:
+        """Delete the given snapshots (subvolumes) on the remote host via SSH.
+
+        Consults the locks recorded ON THE TARGET as well as the in-memory ones.
+        A prune running in another process (or on another machine) lists this
+        destination fresh, so every snapshot it sees has an empty in-memory lock
+        set -- including one a restore is reading at that moment. The guard
+        existed; it simply could not see the other process.
+
+        Returns a :class:`DeletionResult`. This method has six distinct outcomes
+        -- refused for an unusable remote lock, skipped for a local or a remote
+        lock, skipped because the path is not a subvolume, failed at the delete,
+        failed with an exception, deleted -- and reported all six as None.
+        """
+        from ..sshutil.lock import (
+            RemoteLockUnavailable,
+            blocked_by_remote_lock,
+            snapshot_lock_name,
+        )
+
+        result = DeletionResult()
+        remote_locked: set[str] = set()
+        if self._lock_target_path() is not None:
+            try:
+                remote_locked = blocked_by_remote_lock(
+                    self._lock_manager(), list(snapshots)
+                )
+            except RemoteLockUnavailable as exc:
+                # Deleting without knowing risks removing what a restore is
+                # reading, so nothing is deleted -- said plainly, because a
+                # deletion pass that quietly removes nothing reads as success.
+                # It said so in the log and returned None anyway, which is how
+                # the caller went on to report the batch as deleted.
+                logger.error(
+                    "Not deleting anything on this destination: %s. Nothing was "
+                    "removed; resolve the error above and run this again.",
+                    exc,
+                )
+                result.fail_all(snapshots, f"the remote lock is unusable: {exc}")
+                return result
+        if remote_locked:
+            logger.info(
+                "Skipping %d snapshot(s) locked by another process on this "
+                "destination: %s",
+                len(remote_locked),
+                ", ".join(sorted(remote_locked)),
+            )
+
+        for snapshot in snapshots:
+            if hasattr(snapshot, "locks") and (
+                snapshot.locks or getattr(snapshot, "parent_locks", False)
+            ):
+                logger.info("Skipping locked snapshot: %s", snapshot)
+                result.skip(snapshot, "held by a retention lock")
+                continue
+            if snapshot_lock_name(snapshot) in remote_locked:
+                result.skip(snapshot, "locked by another process on this destination")
+                continue
+
+            # Handle remote path normalization properly
+            if hasattr(snapshot, "get_path"):
+                remote_path = str(snapshot.get_path())
+            else:
+                remote_path = str(snapshot)
+
+            # Ensure the path is properly normalized for remote execution
+            remote_path = self._normalize_path(remote_path)
+
+            # Verify the subvolume exists before attempting deletion. Asked as a
+            # btrfs subcommand, not `test -d`: the remote sudoers policy grants
+            # btrfs only, so an elevated `test` fails for lack of privilege and
+            # is indistinguishable from a missing path -- which skipped every
+            # snapshot and made remote pruning silently delete nothing. It is
+            # also the stricter precondition for the `btrfs subvolume delete`
+            # below, since it fails on a plain directory rather than passing it.
+            test_cmd = ["btrfs", "subvolume", "show", remote_path]
+            try:
+                test_result = self._exec_remote_command(
+                    test_cmd,
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                if test_result.returncode != 0:
+                    logger.warning(
+                        f"Not an existing btrfs subvolume, skipping deletion: {remote_path}"
+                    )
+                    result.skip(snapshot, "not an existing btrfs subvolume")
+                    continue
+            except Exception as e:
+                logger.warning(f"Could not verify snapshot path {remote_path}: {e}")
+                # Could not even establish whether there is anything to delete.
+                # Not a skip: the deletion was asked for and did not happen, and
+                # the cause (a dead connection, an unmounted remote filesystem)
+                # applies to every snapshot in the batch.
+                result.fail(snapshot, f"could not verify the path: {e}")
+                continue
+
+            # Build deletion command with proper sudo handling
+            cmd = ["btrfs", "subvolume", "delete", remote_path]
+            logger.debug("Executing remote deletion command: %s", cmd)
+
+            try:
+                # Use retry mechanism for commands that may require authentication
+                use_sudo = self.config.get("ssh_sudo", False)
+                if use_sudo:
+                    proc = self._exec_remote_command_with_retry(
+                        cmd,
+                        max_retries=2,
+                        check=False,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                else:
+                    proc = self._exec_remote_command(
+                        cmd,
+                        check=False,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                if proc.returncode == 0:
+                    logger.info("Deleted remote snapshot subvolume: %s", remote_path)
+                    result.deleted.append(snapshot)
+                else:
+                    stderr = (
+                        proc.stderr.decode(errors="replace").strip()
+                        if hasattr(proc, "stderr") and proc.stderr
+                        else "Unknown error"
+                    )
+                    # Check for common btrfs deletion errors
+                    if "No such file or directory" in stderr:
+                        logger.warning(
+                            f"Snapshot already deleted or path not found: {remote_path}"
+                        )
+                        result.skip(snapshot, "already absent on the destination")
+                    elif "statfs" in stderr.lower():
+                        logger.error(
+                            f"Filesystem access error when deleting {remote_path}: {stderr}"
+                        )
+                        logger.error(
+                            "This may indicate the remote path is not accessible or the filesystem is unmounted"
+                        )
+                        result.fail(snapshot, f"filesystem access error: {stderr}")
+                    else:
+                        logger.error(
+                            f"Failed to delete remote snapshot {remote_path}: {stderr}"
+                        )
+                        result.fail(snapshot, stderr)
+            except Exception as e:
+                logger.error(
+                    f"Exception while deleting remote snapshot {remote_path}: {e}"
+                )
+                # Log additional diagnostic information
+                logger.debug(f"Deletion exception details: {e}", exc_info=True)
+                result.fail(snapshot, e)
+        return result
+
+    def delete_old_snapshots(self, keep: int) -> DeletionResult:
+        """Delete old snapshots on the remote host, keeping the most recent ``keep`` unlocked.
+
+        LEGACY count-based path (see ``Endpoint.delete_old_snapshots``); the modern retention
+        engine is time-based ``retention.apply_retention`` via ``prune``.
+        """
+        snapshots = self.list_snapshots()
+        unlocked = [
+            s
+            for s in snapshots
+            if not getattr(s, "locks", False) and not getattr(s, "parent_locks", False)
+        ]
+        if keep <= 0 or len(unlocked) <= keep:
+            logger.debug(
+                "No unlocked snapshots to delete (keep=%d, unlocked=%d)",
+                keep,
+                len(unlocked),
+            )
+            return DeletionResult()
+        to_delete = unlocked[:-keep]
+        result = DeletionResult()
+        for snap in to_delete:
+            logger.info("Deleting old remote snapshot: %s", str(snap))
+            result.extend(self.delete_snapshots([snap]))
+        return result
+
+    #: ssh:// writes its snapshot locks on the remote destination, so they
+    #: survive the process and are visible to any other process or machine
+    #: touching that destination.
+    persists_locks: bool = True
+
+    def _lock_target_path(self) -> str | None:
+        """The remote directory locks live in, or None if this endpoint has none.
+
+        The one resolution shared by the writer (``set_lock``) and the reader
+        (the delete guard). They must agree: if this returns None the writer
+        cannot record a lock, so the reader finding nothing is a proven-empty
+        answer rather than a check that silently did not run.
+        """
+        # ``lock_root`` wins where it is set, because ``path`` is not always the
+        # destination. The snapper flow points the endpoint at
+        # ``.snapshots/<n>.incoming`` for the duration of a receive, and a lock
+        # root that followed it would write the lock INSIDE the slot being
+        # published -- then get renamed into place along with it.
+        path = self.config.get("lock_root") or self.config.get("path")
+        if path in (None, ""):
+            return None
+        return str(path)
+
+    def _lock_manager(self) -> Any:
+        """The lock manager for this destination, one per resolved path.
+
+        See ``sshutil.lock.cached_manager`` for why it is shared rather than
+        rebuilt per call, and why the cache is keyed by path.
+        """
+        from ..sshutil.lock import cached_manager
+
+        return cached_manager(
+            self, self._lock_target_path() or "", self._build_lock_manager
+        )
+
+    def _build_lock_manager(self) -> Any:
+        """A lock manager bound to this destination, elevating as it does."""
+        import socket as _socket
+
+        from ..sshutil.lock import RemoteLockManager
+
+        path = self._lock_target_path()
+        if path is None:
+            raise ValueError("ssh endpoint has no target path; cannot lock")
+
+        def run(script: str) -> tuple[int, str, str]:
+            # PIPE explicitly: unlike the raw endpoint's, this _exec_remote_command
+            # does NOT capture by default. Without this the script's verdict goes
+            # to the terminal, the manager reads empty output, and every
+            # acquisition reports BUSY -- so no lock is ever taken. Only a real
+            # remote showed this; a test runner always hands back captured text.
+            result = self._exec_remote_command(
+                ["sh", "-c", script],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            if result.stdout is None:
+                raise RuntimeError(
+                    "the remote lock command returned no captured output; its "
+                    "verdict cannot be read, so no lock state can be trusted"
+                )
+            out, err = result.stdout or b"", result.stderr or b""
+            if isinstance(out, bytes):
+                out = out.decode("utf-8", errors="replace")
+            if isinstance(err, bytes):
+                err = err.decode("utf-8", errors="replace")
+            return result.returncode, out, err
+
+        def run_elevated(script: str) -> tuple[int, str, str]:
+            # _build_remote_command deliberately elevates btrfs and nothing else,
+            # so the elevation is applied here rather than by widening that rule.
+            # Only reached when the unprivileged attempt could not create the lock
+            # directory -- a root-owned destination, which is the common case.
+            return run(f"sudo -n sh -c {shlex.quote(script)}")
+
+        return RemoteLockManager(
+            run,
+            path,
+            hostname=_socket.gethostname(),
+            run_elevated=run_elevated,
+        )
+
+    @contextlib.contextmanager
+    def receiving_lock(
+        self, destination: str, *, timeout: float | None = None
+    ) -> Iterator[None]:
+        """Hold the right to create ``destination`` on this target.
+
+        Scoped to ONE destination subvolume rather than to the whole target,
+        because that is the only thing that actually collides. Measured against a
+        real remote: two ``btrfs receive`` runs into the same directory under
+        DIFFERENT names both succeed, while two under the SAME name leave one
+        failing with "creating subvolume ... failed: File exists". A whole-target
+        lock would therefore serialise backups of /, /home and /var to a single
+        destination -- transfers btrfs runs happily in parallel -- to prevent a
+        clash that can only occur between transfers sharing a destination.
+
+        What this adds over btrfs's own behaviour is timing and attribution: the
+        clash is refused BEFORE the stream starts rather than after pushing the
+        whole snapshot across the wire, and the refusal names the host and
+        process holding it. It also spans machines, which nothing here did.
+
+        Re-entrant within a process, because the snapper flow holds this across
+        both the receive and the publish that renames ``<n>.incoming`` into
+        ``<n>`` -- two halves of one transaction on the same slot -- and the
+        transfer beneath must not contend with its own caller.
+        """
+        from ..sshutil.lock import (
+            RECEIVING_LOCK_PREFIX,
+            RemoteLockBusy,
+            RemoteLockUnavailable,
+        )
+
+        if self._lock_target_path() is None:
+            yield
+            return
+
+        name = f"{RECEIVING_LOCK_PREFIX}{destination}"
+        manager = self._lock_manager()
+        if manager.holds(name):
+            yield  # already held further up this call stack
+            return
+
+        try:
+            manager.acquire_once(name, f"receive:{destination}")
+        except RemoteLockBusy as exc:
+            # Built from the holder's details rather than by interpolating the
+            # exception, whose text repeats the destination and the lock name.
+            # An operator reading a wrapped three-line sentence to find a
+            # hostname is being made to work for it.
+            info = exc.info or {}
+            holder = "another process"
+            if info:
+                holder = (
+                    f"{info.get('hostname', 'an unknown host')} "
+                    f"(pid {info.get('pid', '?')})"
+                )
+            raise __util__.AbortError(
+                f"Already being received by {holder}: {destination}\n"
+                f"Refusing to start a second transfer to the same path -- both "
+                f"would create the same subvolume, and the loser only finds out "
+                f"after transferring everything."
+            ) from exc
+        except RemoteLockUnavailable as exc:
+            if self.config.get("skip_remote_lock"):
+                logger.warning(
+                    "Could not lock %s before receiving (%s), and "
+                    "--skip-remote-lock was given, so this continues WITHOUT "
+                    "protection against a concurrent transfer to the same path.",
+                    destination,
+                    exc,
+                )
+                yield
+                return
+            raise __util__.AbortError(
+                f"Could not lock {destination!r} before receiving: {exc}. "
+                f"Refusing to continue unprotected: a second transfer to the "
+                f"same path would collide. Pass --skip-remote-lock to proceed "
+                f"anyway."
+            ) from exc
+
+        # Recorded while the lock is held and before anything is received: what
+        # is at the path now is not this run's work, and must survive this
+        # run's failure.
+        dest_dir, _, received = str(destination).rstrip("/").rpartition("/")
+        preexisted = self.artifact_exists(dest_dir or "/", received)
+
+        def remove_partial() -> None:
+            self._cleanup_partial_subvolume(
+                dest_dir or "/", received, created_by_this_run=not preexisted
+            )
+
+        manager._start_heartbeat(name)
+        try:
+            # The order an interrupted or failed receive is unwound in (see
+            # btrfs_backup_ng.lifecycle): the receive's processes are stopped
+            # and waited for; then the partial subvolume THIS run created at
+            # the path is removed; only then is the lock released, so no other
+            # transfer can have started creating that path in between.
+            with lifecycle.undo_on_failure(remove_partial):
+                with lifecycle.process_scope():
+                    yield
+        finally:
+            manager.release(name)
+
+    def _read_locks(self) -> dict:
+        """The locks recorded ON THIS TARGET, in the lock-file shape.
+
+        ``restore --status`` and ``--unlock`` go through this. Overriding it here
+        is what makes those commands tell the truth about a remote target rather
+        than announcing that it does not persist locks.
+        """
+        from ..sshutil.lock import read_persisted_locks
+
+        if self._lock_target_path() is None:
+            return {}
+        return read_persisted_locks(self._lock_manager())
+
+    def _write_locks(self, lock_dict: dict) -> None:
+        """Reconcile this target's locks to ``lock_dict`` (``restore --unlock``)."""
+        from ..sshutil.lock import write_persisted_locks
+
+        if self._lock_target_path() is None:
+            return
+        write_persisted_locks(self._lock_manager(), lock_dict)
+
+    def set_lock(
+        self,
+        snapshot: Any,
+        lock_id: Any,
+        lock_state: bool,
+        parent: bool = False,
+    ) -> None:
+        """Pin or unpin a snapshot, in memory AND on the remote destination.
+
+        The base Endpoint.set_lock writes a LOCAL lock file at ``config['path']``.
+        For an ssh endpoint that path is on the REMOTE host, so the base write
+        opens a nonexistent local path and raises -- which aborted a restore FROM
+        an ssh:// source at the lock step. Hence this override, and hence NOT
+        calling super().
+
+        It used to stop there, holding the pin in memory only, with "persisting
+        ssh locks across runs is a separate change" written where
+        this sentence now is. That is the change. An in-memory pin is invisible
+        to a prune running in another process or on another machine, which was
+        therefore free to delete the very snapshot a restore was reading.
+
+        The in-memory set is still maintained: the transfer and prune logic in
+        this run reads it directly, and a remote round trip per query would be
+        gratuitous.
+        """
+        target = snapshot.parent_locks if parent else snapshot.locks
+        if lock_state:
+            target.add(lock_id)
+        else:
+            target.discard(lock_id)
+
+        from ..sshutil.lock import record_pin
+
+        # The manager is built inside record_pin's guard: a target whose lock
+        # directory cannot be set up is reported through the same refusal as a
+        # pin that cannot be written.
+        record_pin(
+            self._lock_manager,
+            snapshot,
+            lock_id,
+            lock_state,
+            parent=parent,
+            skip_remote_lock=bool(self.config.get("skip_remote_lock")),
+            where="destination",
+            noun="snapshot",
+        )
+
+    def send(
+        self, snapshot: Any, parent: Any = None, clones: Optional[List[Any]] = None
+    ) -> subprocess.Popen[Any]:
+        """Stream ``btrfs send`` FROM the remote host over ssh (restore direction).
+
+        The base ``Endpoint.send`` runs ``btrfs send`` LOCALLY -- correct for a local
+        backup SOURCE, but wrong when this ssh endpoint is the BACKUP location a restore
+        reads FROM: the snapshot lives on the remote host, so a local send fails. Run the
+        send on the remote and return a Popen whose stdout is the stream, for the local
+        ``btrfs receive`` to consume (mirrors the raw+ssh restore, which reads its stream
+        back over ssh). Incremental restore threads ``-p <parent>``.
+        """
+        remote_snap = self._normalize_path(snapshot.get_path())
+        argv: List[str] = ["btrfs", "send"]
+        if parent is not None:
+            argv += ["-p", self._normalize_path(parent.get_path())]
+        for clone in clones or []:
+            argv += ["-c", self._normalize_path(clone.get_path())]
+        argv.append(remote_snap)
+        # _build_remote_command prepends sudo (-n in passwordless mode) for btrfs; the
+        # remote command is shlex-quoted so a path with spaces/metacharacters cannot be
+        # split or injected when ssh runs it through the remote shell.
+        remote_cmd = self._build_remote_command(argv)
+        remote_str = " ".join(shlex.quote(str(a)) for a in remote_cmd)
+        ssh_base = self.ssh_manager.get_ssh_base_cmd(force_tty=False)
+        # When the remote's sudo wants a password, _build_remote_command has just
+        # produced `sudo -S btrfs send ...`, which reads that password from ITS
+        # stdin. Nothing used to write one: the process was opened with no stdin
+        # at all, so sudo read EOF, exited 1, and the restore reported
+        # "btrfs send/receive failed with return codes: [1, 1]".
+        #
+        # That made a whole class of destination back up but never restore --
+        # measured against a real remote whose sudo requires a password. Backing
+        # up to a host you cannot restore from is the worst way for this to fail,
+        # because nothing reveals it until the day it matters.
+        needs_password = any(part == "-S" for part in remote_cmd)
+        password = self._get_sudo_password() if needs_password else None
+        if needs_password and not password:
+            raise __util__.AbortError(
+                f"Restoring from {self.hostname} needs a sudo password for the "
+                f"remote `btrfs send`, and none is available. Set "
+                f"BTRFS_BACKUP_SUDO_PASSWORD, or grant the remote user "
+                f"passwordless sudo for /usr/bin/btrfs."
+            )
+
+        compress_method = self._stream_compress_method()
+        if compress_method:
+            return self._compressed_remote_send(
+                remote_str, ssh_base, compress_method, password
+            )
+
+        ssh_cmd = ssh_base + [remote_str]
+        logger.debug("Remote btrfs send over ssh: %s", " ".join(ssh_cmd))
+
+        # stderr -> a pipe drained as it is written (core.transfer.StderrTail),
+        # like the base send. It was DEVNULL, and the reason recorded here was
+        # exactly the drain's absence: the supervisor blocks on the RECEIVE and
+        # never read the send's stderr during the stream, so a pipe could fill
+        # -- ssh forwards the remote command's stderr too -- stall the send,
+        # starve the receive, and hang until the overall timeout. A failed
+        # remote send then surfaced only as ssh's exit status. The tail reads
+        # concurrently and keeps the last 64 KiB, so the remote "ERROR: ..."
+        # line reaches the report. (Never redirect remote stderr into stdout
+        # -- it corrupts the btrfs stream.)
+        process = track_child(
+            subprocess.Popen(
+                ssh_cmd,
+                stdin=subprocess.PIPE if password else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        )
+        tail_stderr(
+            process,
+            log_as="remote btrfs send" if self.config.get("btrfs_debug") else None,
+        )
+        if password and process.stdin:
+            # The password line, then EOF. ssh forwards our stdin to the remote
+            # command; sudo consumes the line and `btrfs send` never reads stdin,
+            # so closing immediately is correct and stops the remote waiting.
+            process.stdin.write(f"{password}\n".encode())
+            process.stdin.flush()
+            process.stdin.close()
+        return process
+
+    def _compressed_remote_send(
+        self,
+        remote_send: str,
+        ssh_base: List[str],
+        compress_method: str,
+        password: Optional[str],
+    ) -> subprocess.Popen[Any]:
+        """The restore-direction mirror of the compressed backup transfer.
+
+        Backing up, the local side compresses ``btrfs send`` before the wire and
+        ``_build_receive_command`` puts the decompressor in front of the remote
+        ``btrfs receive``. Restoring, the roles swap: the REMOTE compresses its
+        ``btrfs send`` and THIS host decompresses before its own receive. The
+        method is the one value ``compress`` names, applied on both ends from
+        it, so the two halves cannot disagree. Until this existed ``--compress``
+        on an ``ssh://`` restore was accepted and did nothing: the transfer
+        layer dropped it for a local destination, and this send had no
+        compressor.
+
+        The remote pipeline is ``btrfs send | <compressor>``, and the exit
+        status that comes back is the SEND's, not the compressor's. A
+        pipeline's status is its last stage's, so a ``btrfs send`` that fails
+        -- "cannot find parent subvolume" -- would exit 0 through a compressor
+        that happily compressed nothing; the shell script captures the send's
+        status on a side descriptor and exits with it. POSIX constructs only
+        (``exec``, command substitution, fd duplication), because the remote's
+        ``sh`` is dash or busybox ash as often as bash; run under all three by
+        the tier3 container cells.
+        Locally the ssh and the decompressor run under the one ``pipefail``
+        runner every other multi-stage pipeline here uses, so a failure at
+        either end is the failure the executor sees.
+
+        The sudo password, when the remote needs one, still crosses ssh's
+        stdin: the send is the first stage of the remote pipeline and inherits
+        it, and the compressor reads only the pipe.
+        """
+        from ..core.transfer import (
+            COMPRESSION_PROGRAMS,
+            check_compression_available,
+            popen_pipeline_pipefail,
+        )
+
+        program = COMPRESSION_PROGRAMS[compress_method]
+        if not check_compression_available(compress_method):
+            raise __util__.AbortError(
+                f"--compress {compress_method} needs {program['check']!r} on this "
+                f"host to decompress the restore stream, and it is not installed. "
+                f"Install it, or restore without --compress."
+            )
+        compressor = " ".join(shlex.quote(part) for part in program["compress"])
+        decompressor = " ".join(shlex.quote(part) for part in program["decompress"])
+        remote_str = _compressed_send_script(remote_send, compressor)
+        ssh_part = " ".join(shlex.quote(str(c)) for c in ssh_base + [remote_str])
+        pipeline = f"{ssh_part} | {decompressor}"
+        logger.info(
+            "Decompressing the restore stream with %s here: the remote "
+            "compresses its btrfs send before the wire, and this host undoes "
+            "it before btrfs receive.",
+            compress_method,
+        )
+        logger.debug("Compressed remote btrfs send over ssh: %s", pipeline)
+        process = popen_pipeline_pipefail(
+            pipeline,
+            stdin=subprocess.PIPE if password else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        tail_stderr(
+            process,
+            log_as="remote btrfs send" if self.config.get("btrfs_debug") else None,
+        )
+        if password and process.stdin:
+            process.stdin.write(f"{password}\n".encode())
+            process.stdin.flush()
+            process.stdin.close()
+        return process
+
+    def _apply_agent_forwarding(self) -> None:
+        """
+        Apply SSH agent forwarding if enabled in config.
+        """
+        agent_forwarding: bool = self.config.get("agent_forwarding", False)
+        ssh_auth_sock: Optional[str] = os.environ.get("SSH_AUTH_SOCK")
+        ssh_opts: List[str] = self.config.get("ssh_opts", []).copy()
+
+        if agent_forwarding:
+            if ssh_auth_sock:
+                logger.info(
+                    "Enabling SSH agent forwarding (IdentityAgent=%s)", ssh_auth_sock
+                )
+                # Avoid duplicate IdentityAgent entries
+                identity_agent_opt = f"IdentityAgent={ssh_auth_sock}"
+                if identity_agent_opt not in ssh_opts:
+                    ssh_opts.append(identity_agent_opt)
+                self.config["ssh_opts"] = ssh_opts
+            else:
+                logger.warning(
+                    "SSH agent forwarding requested but SSH_AUTH_SOCK is not set. Agent forwarding will not work."
+                )
+
+    def _run_diagnostics(
+        self, path: str = "/", force_refresh: bool = False
+    ) -> Dict[str, bool]:
+        """Run SSH and sudo diagnostics to identify potential issues.
+
+        Attempts several tests to verify SSH connectivity, btrfs availability,
+        sudo access, and filesystem type. Updates self.config["passwordless_sudo_available"]
+        based on sudo test results.
+
+        Args:
+            path: Remote path to test for btrfs operations
+            force_refresh: If True, bypass cache and run fresh diagnostics
+
+        Returns:
+            Dictionary with test results (True=passed, False=failed):
+            {
+                'ssh_connection': bool,  # Basic SSH connectivity
+                'btrfs_command': bool,   # btrfs command exists on remote
+                'passwordless_sudo': bool,  # Sudo without password works
+                'sudo_btrfs': bool,      # Can run btrfs with sudo
+                'write_permissions': bool,  # Can write to path
+                'btrfs_filesystem': bool  # Path is on btrfs filesystem
+            }
+        """
+        # Check cache first to avoid redundant testing
+        current_time = time.time()
+        cache_key = f"{self.hostname}:{path}"
+
+        if not force_refresh and cache_key in self._diagnostics_cache:
+            cached_result, cache_time = self._diagnostics_cache[cache_key]
+            if current_time - cache_time < self._diagnostics_cache_timeout:
+                logger.debug(
+                    f"Using cached diagnostics for {cache_key} (age: {current_time - cache_time:.1f}s)"
+                )
+                # Update config with cached result
+                self.config["passwordless_sudo_available"] = cached_result.get(
+                    "passwordless_sudo", False
+                )
+                return cached_result
+            else:
+                logger.debug(
+                    f"Diagnostics cache expired for {cache_key}, running fresh tests"
+                )
+
+        if force_refresh:
+            logger.debug(f"Forcing fresh diagnostics for {cache_key}")
+        else:
+            logger.debug(f"Running fresh diagnostics for {cache_key}")
+
+        # Initialize results dictionary
+        results: Dict[str, bool] = {
+            "ssh_connection": False,
+            "btrfs_command": False,
+            "passwordless_sudo": False,
+            "sudo_btrfs": False,
+            "write_permissions": False,
+            "btrfs_filesystem": False,
+        }
+
+        # Test SSH Connection
+        logger.debug("Testing SSH connection...")
+        try:
+            cmd_result: CompletedProcess[Any] = self._exec_remote_command(
+                ["echo", "SSH connection successful"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            results["ssh_connection"] = cmd_result.returncode == 0
+            if not results["ssh_connection"]:
+                logger.error("SSH connection test failed")
+                logger.debug(
+                    f"SSH connection stderr: {cmd_result.stderr.decode() if cmd_result.stderr else 'None'}"
+                )
+                return results
+            else:
+                logger.debug("SSH connection test passed")
+        except Exception as e:
+            logger.error(f"SSH connection test failed: {e}")
+            logger.debug(f"SSH connection exception details: {e}", exc_info=True)
+            return results
+
+        # Test btrfs command availability
+        logger.debug("Testing btrfs command availability...")
+        try:
+            result = self._exec_remote_command(["command", "-v", "btrfs"], check=False)
+            results["btrfs_command"] = result.returncode == 0
+            if results["btrfs_command"]:
+                btrfs_path = result.stdout.decode().strip() if result.stdout else ""
+                logger.debug(f"btrfs command found: {btrfs_path}")
+                logger.debug(f"btrfs command path: {btrfs_path}")
+            else:
+                logger.error("btrfs command not found on remote host")
+                logger.debug(
+                    f"btrfs command check stderr: {result.stderr.decode() if result.stderr else 'None'}"
+                )
+        except Exception as e:
+            logger.error(f"Error checking btrfs command: {e}")
+            logger.debug(f"btrfs command check exception: {e}", exc_info=True)
+
+        # Test passwordless sudo for btrfs commands
+        # We test with btrfs directly since sudoers rules often only allow specific commands
+        logger.debug("Testing passwordless sudo for btrfs...")
+        try:
+            # Use retry mechanism for sudo btrfs testing to handle potential authentication issues
+            result = self._exec_remote_command_with_retry(
+                ["sudo", "-n", "btrfs", "--version"], max_retries=2, check=False
+            )
+            # Both passwordless_sudo and sudo_btrfs are set based on btrfs test
+            # This handles sudoers rules that only allow btrfs, not generic sudo
+            results["passwordless_sudo"] = result.returncode == 0
+            results["sudo_btrfs"] = result.returncode == 0
+            if results["passwordless_sudo"]:
+                logger.debug("Passwordless sudo for btrfs is available")
+            else:
+                logger.warning("Passwordless sudo is not available")
+                logger.debug(
+                    f"Passwordless sudo stderr: {result.stderr.decode() if result.stderr else 'None'}"
+                )
+        except Exception as e:
+            logger.error(f"Error checking passwordless sudo: {e}")
+            logger.debug(f"Passwordless sudo exception: {e}", exc_info=True)
+
+        # Test write permissions
+        logger.debug(f"Testing write permissions to path: {path}")
+        try:
+            test_file = f"{path}/.btrfs-backup-write-test-{uuid.uuid4().hex[:8]}"
+            logger.debug(f"Testing write with test file: {test_file}")
+            result = self._exec_remote_command(["touch", test_file], check=False)
+            if result.returncode == 0:
+                self._exec_remote_command(["rm", "-f", test_file], check=False)
+                results["write_permissions"] = True
+                logger.debug(f"Path is directly writable: {path}")
+                logger.debug("Direct write test passed")
+            else:
+                logger.debug(
+                    f"Direct write failed, trying with sudo. Error: {result.stderr.decode() if result.stderr else 'None'}"
+                )
+
+                # Try with passwordless sudo first
+                result = self._exec_remote_command_with_retry(
+                    ["sudo", "-n", "touch", test_file], max_retries=2, check=False
+                )
+                if result.returncode == 0:
+                    self._exec_remote_command_with_retry(
+                        ["sudo", "-n", "rm", "-f", test_file],
+                        max_retries=2,
+                        check=False,
+                    )
+                    results["write_permissions"] = True
+                    logger.debug(f"Path is writable with passwordless sudo: {path}")
+                    logger.debug("Passwordless sudo write test passed")
+                else:
+                    # If passwordless sudo fails, check if we have password-based sudo available
+                    logger.debug(
+                        "Passwordless sudo write failed, checking if password-based sudo could work"
+                    )
+
+                    # If ssh_sudo is enabled and we're not in passwordless mode,
+                    # assume write permissions will work with password-based sudo
+                    use_sudo = self.config.get("ssh_sudo", False)
+                    passwordless_available = results.get("passwordless_sudo", False)
+
+                    if use_sudo and not passwordless_available:
+                        # We have sudo configured but not passwordless - likely will work with password
+                        results["write_permissions"] = True
+                        logger.debug(
+                            f"Path likely writable with password-based sudo: {path}"
+                        )
+                        logger.debug(
+                            "Assuming write permissions available via password-based sudo"
+                        )
+                    else:
+                        # No sudo configuration or other issue
+                        results["write_permissions"] = False
+                        logger.error(f"Path is not writable (even with sudo): {path}")
+                        logger.debug(
+                            f"Sudo write failed. Error: {result.stderr.decode() if result.stderr else 'None'}"
+                        )
+                        logger.debug(
+                            "Consider enabling ssh_sudo in configuration if elevated permissions are needed"
+                        )
+        except Exception as e:
+            logger.error(f"Error checking write permissions: {e}")
+            logger.debug(f"Write permissions exception: {e}", exc_info=True)
+
+        # Test if filesystem is btrfs
+        logger.debug(f"Testing filesystem type for path: {path}")
+        try:
+            result = self._exec_remote_command(
+                ["stat", "-f", "-c", "%T", path],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            fs_type = result.stdout.decode().strip() if result.stdout else ""
+            results["btrfs_filesystem"] = fs_type == "btrfs"
+            if results["btrfs_filesystem"]:
+                logger.debug(f"Path is on a btrfs filesystem: {path}")
+                logger.debug(f"Filesystem type confirmed: {fs_type}")
+            else:
+                logger.error(f"Path is not on a btrfs filesystem (found: {fs_type})")
+                logger.debug(f"Expected 'btrfs', got '{fs_type}'")
+        except Exception as e:
+            logger.error(f"Error checking filesystem type: {e}")
+            logger.debug(f"Filesystem type check exception: {e}", exc_info=True)
+
+        # Log summary of results
+        logger.debug("Diagnostic tests completed, generating summary...")
+        all_passed = all(results.values())
+
+        # Only show full summary at INFO level if there are failures
+        if all_passed:
+            logger.debug("All diagnostic tests passed")
+            for test_name, test_passed in results.items():
+                logger.debug(f"Test {test_name}: PASSED")
+        else:
+            # Show summary at INFO level only for failures
+            failed_tests = [t for t, passed in results.items() if not passed]
+            logger.debug(f"Some diagnostic tests failed: {failed_tests}")
+            logger.info("\nDiagnostic Summary:")
+            logger.info("-" * 50)
+            for test_name, test_passed in results.items():
+                status = "PASS" if test_passed else "FAIL"
+                logger.info(f"{test_name.replace('_', ' ').title():20} {status}")
+            logger.info("-" * 50)
+
+        # Provide specific recommendations based on what failed
+        if not all(results.values()):
+            if not results["sudo_btrfs"]:
+                self._show_sudoers_fix_instructions()
+
+            if not results["write_permissions"]:
+                logger.info("\nTo fix write permissions:")
+                logger.info(
+                    f"Ensure that user '{self.config.get('username')}' has write permission to {path}"
+                )
+
+                # Provide more specific guidance based on sudo configuration
+                use_sudo = self.config.get("ssh_sudo", False)
+                passwordless_sudo = results.get("passwordless_sudo", False)
+
+                if use_sudo and not passwordless_sudo:
+                    logger.info("OR configure passwordless sudo for write operations:")
+                    logger.info("  sudo visudo")
+                    logger.info(
+                        f"  Add: {self.config.get('username')} ALL=(ALL) NOPASSWD: /usr/bin/btrfs"
+                    )
+                elif not use_sudo:
+                    logger.info(
+                        "OR enable ssh_sudo in configuration to use elevated permissions:"
+                    )
+                    logger.info("  Set ssh_sudo: true in your configuration")
+                else:
+                    logger.info(
+                        "OR ensure sudo is configured properly to allow writing to this location."
+                    )
+
+                logger.info(
+                    "\nNote: Write permission errors during diagnostics may be false negatives"
+                )
+                logger.info(
+                    "if password-based sudo is available but passwordless sudo is not configured."
+                )
+
+            if not results["btrfs_filesystem"]:
+                logger.info("\nTo fix filesystem type:")
+                logger.info(f"The path {path} must be on a btrfs filesystem.")
+                logger.info("btrfs-backup-ng cannot work with other filesystem types.")
+
+        # Store passwordless sudo detection result for automatic use
+        self.config["passwordless_sudo_available"] = results["passwordless_sudo"]
+        if results["passwordless_sudo"]:
+            logger.debug(
+                "Auto-detected passwordless sudo capability - will use passwordless mode by default"
+            )
+        else:
+            logger.debug(
+                "Passwordless sudo not available - will require password prompts or manual configuration"
+            )
+
+        # Cache the results to avoid redundant testing
+        self._diagnostics_cache[cache_key] = (results.copy(), current_time)
+        logger.debug(f"Cached diagnostics for {cache_key}")
+
+        return results
+
+    def _show_sudoers_fix_instructions(self) -> None:
+        """Show instructions for fixing sudoers configuration."""
+        logger.info("\nTo fix sudo access:")
+        user = self.config.get("username")
+        logger.info("Add one of these lines to /etc/sudoers via 'sudo visudo':")
+        logger.info("\n# Full access to btrfs commands:")
+        logger.info(f"{user} ALL=(ALL) NOPASSWD: /usr/bin/btrfs")
+        logger.info("\n# Or more restricted access:")
+        logger.info(
+            f"{user} ALL=(ALL) NOPASSWD: /usr/bin/btrfs subvolume*, /usr/bin/btrfs send*, /usr/bin/btrfs receive*"
+        )
+
+    def get_id(self) -> str:
+        """Return a unique identifier for this SSH endpoint."""
+        username: str = self.config.get("username", "")
+        username_part: str = f"{username}@" if username else ""
+        return f"ssh://{username_part}{self.hostname}:{self.config['path']}"
+
+    def get_space_info(self, path: Optional[str] = None) -> SpaceInfo:
+        """Get space information for the remote endpoint's destination path.
+
+        Queries filesystem space and btrfs quota information on the remote host
+        via SSH, using a single compound command to minimize round trips.
+
+        Args:
+            path: Optional path to check. If None, uses self.config['path'].
+
+        Returns:
+            SpaceInfo with filesystem and quota information.
+        """
+        import json as _json
+
+        if path is None:
+            path = str(self.config["path"])
+        else:
+            path = str(path)
+
+        logger.debug("Getting space info for remote path: %s", path)
+
+        # Use a compound Python command to get both statvfs and quota info
+        # This minimizes SSH round trips
+        python_script = f"""
+import os, json, subprocess
+path = {path!r}
+result = {{"path": path, "error": None}}
+try:
+    s = os.statvfs(path)
+    result["total"] = s.f_blocks * s.f_frsize
+    result["used"] = (s.f_blocks - s.f_bfree) * s.f_frsize
+    result["available"] = s.f_bavail * s.f_frsize
+    result["source"] = "statvfs"
+except Exception as e:
+    result["error"] = str(e)
+    result["total"] = 0
+    result["used"] = 0
+    result["available"] = 0
+    result["source"] = "error"
+
+# Try to get quota info
+result["quota_enabled"] = False
+result["quota_limit"] = None
+result["quota_used"] = None
+try:
+    qgroup_cmd = ["btrfs", "qgroup", "show", "-reF", path]
+    proc = subprocess.run(qgroup_cmd, capture_output=True, text=True, timeout=30)
+    if proc.returncode == 0:
+        lines = proc.stdout.strip().splitlines()
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("qgroupid") or line.startswith("-"):
+                continue
+            parts = line.split()
+            if len(parts) >= 5:
+                try:
+                    rfer = int(parts[1])
+                    max_rfer = parts[3]
+                    result["quota_enabled"] = True
+                    result["quota_used"] = rfer
+                    if max_rfer.lower() != "none":
+                        result["quota_limit"] = int(max_rfer)
+                    result["source"] = "statvfs+btrfs_qgroup"
+                    break
+                except (ValueError, IndexError):
+                    pass
+except Exception:
+    pass
+
+print(json.dumps(result))
+"""
+
+        try:
+            # Execute the compound command on remote host
+            result = self._exec_remote_command(
+                ["python3", "-c", python_script],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            if result.returncode == 0 and result.stdout:
+                output = result.stdout.decode("utf-8").strip()
+                data = _json.loads(output)
+
+                if data.get("error"):
+                    logger.warning("Remote space check error: %s", data["error"])
+
+                return SpaceInfo(
+                    path=data["path"],
+                    total_bytes=data["total"],
+                    used_bytes=data["used"],
+                    available_bytes=data["available"],
+                    quota_enabled=data.get("quota_enabled", False),
+                    quota_limit=data.get("quota_limit"),
+                    quota_used=data.get("quota_used"),
+                    source=data.get("source", "remote"),
+                )
+            else:
+                # Fallback to basic df command if Python approach fails
+                logger.debug("Python space check failed, falling back to df command")
+                return self._get_space_info_fallback(path)
+
+        except Exception as e:
+            logger.warning("Remote space check failed: %s", e)
+            return self._get_space_info_fallback(path)
+
+    def _get_space_info_fallback(self, path: str) -> SpaceInfo:
+        """Fallback space info using basic df command.
+
+        Used when the Python-based approach fails (e.g., Python not available
+        on remote host).
+        """
+        try:
+            # Use df with POSIX output format
+            result = self._exec_remote_command(
+                ["df", "-P", "-B1", path],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            if result.returncode == 0 and result.stdout:
+                lines = result.stdout.decode("utf-8").strip().splitlines()
+                if len(lines) >= 2:
+                    # Parse: Filesystem 1-blocks Used Available Capacity Mounted
+                    parts = lines[1].split()
+                    if len(parts) >= 4:
+                        total = int(parts[1])
+                        used = int(parts[2])
+                        available = int(parts[3])
+                        return SpaceInfo(
+                            path=path,
+                            total_bytes=total,
+                            used_bytes=used,
+                            available_bytes=available,
+                            source="df",
+                        )
+        except Exception as e:
+            logger.warning("Fallback df space check failed: %s", e)
+
+        # Return empty SpaceInfo if all methods fail
+        logger.error("Could not determine space info for remote path: %s", path)
+        return SpaceInfo(
+            path=path,
+            total_bytes=0,
+            used_bytes=0,
+            available_bytes=0,
+            source="error",
+        )
+
+    def _build_remote_command(self, command: List[str]) -> List[str]:
+        """Prepare a remote command with optional sudo."""
+        if not command:
+            return command
+
+        # Ensure all elements are strings
+        command = [str(c) for c in command]
+
+        # Only ever elevate btrfs itself. The documented remote setup grants
+        # NOPASSWD on /usr/bin/btrfs and nothing else, so elevating any other
+        # binary makes sudo demand a password on a connection that has no way to
+        # supply one: the command fails and its caller reads that as "the path is
+        # not there". Anything that needs privilege must be expressed as a btrfs
+        # subcommand (see delete_snapshots, which asks `btrfs subvolume show`
+        # instead of `test -d`); anything that does not runs unprivileged.
+        needs_sudo = (
+            self.config.get("ssh_sudo", False) and command and command[0] == "btrfs"
+        )
+
+        if needs_sudo:
+            cmd_str: str = " ".join(command)
+            logger.debug("Using sudo for remote command: %s", cmd_str)
+
+            # Check config setting, environment variable, and auto-detected capability
+            passwordless_config = self.config.get("passwordless", False)
+            passwordless_env = os.environ.get(
+                "BTRFS_BACKUP_PASSWORDLESS_ONLY", "0"
+            ).lower() in ("1", "true", "yes")
+
+            # Auto-detect passwordless sudo capability if not explicitly configured
+            passwordless_available = self.config.get(
+                "passwordless_sudo_available", False
+            )
+
+            # Use passwordless mode if explicitly enabled OR if auto-detected as available
+            passwordless_mode = (
+                passwordless_config or passwordless_env or passwordless_available
+            )
+
+            if passwordless_mode:
+                if passwordless_config:
+                    logger.debug("Passwordless mode enabled via config - using sudo -n")
+                elif passwordless_env:
+                    logger.debug(
+                        "Passwordless mode enabled via environment - using sudo -n"
+                    )
+                else:
+                    logger.debug("Passwordless mode auto-detected - using sudo -n")
+            else:
+                logger.debug(
+                    "Password mode enabled - using sudo -S (allow password via stdin)"
+                )
+
+            # Always use -n for passwordless attempts if passwordless mode is enabled
+            # Note: We don't use -E (preserve environment) as it may be blocked by sudoers
+            if len(command) > 1 and command[0] == "btrfs" and command[1] == "receive":
+                if passwordless_mode:
+                    logger.debug("Using sudo with -n flag (passwordless mode)")
+                    return ["sudo", "-n", "-P", "-p", ""] + command
+                else:
+                    logger.debug(
+                        "Using sudo for btrfs receive command with password support"
+                    )
+                    return ["sudo", "-S", "-P", "-p", ""] + command
+            else:
+                # needs_sudo admits only btrfs, so this is every other btrfs
+                # subcommand.
+                logger.debug("Using sudo for regular btrfs command")
+                if passwordless_mode:
+                    return ["sudo", "-n"] + command
+                else:
+                    return ["sudo", "-S"] + command
+        else:
+            logger.debug(
+                "Not using sudo for remote command (ssh_sudo=False): %s", command
+            )
+        return command
+
+    def _get_sudo_password(self, retry_on_failure: bool = False) -> Optional[str]:
+        logger.debug("Attempting to get sudo password...")
+
+        # Build cache key from user@hostname
+        cache_key = f"{self.config.get('username', 'unknown')}@{self.hostname}"
+
+        # Check class-level cache first (shared across all instances for same host)
+        if cache_key in SSHEndpoint._sudo_password_cache and not retry_on_failure:
+            logger.debug(
+                f"Using cached sudo password for {cache_key} (class-level cache)"
+            )
+            return SSHEndpoint._sudo_password_cache[cache_key]
+
+        # Also check instance cache for backwards compatibility
+        if self._cached_sudo_password is not None and not retry_on_failure:
+            logger.debug(
+                "SSHEndpoint._get_sudo_password: Using cached sudo password (instance cache)."
+            )
+            return self._cached_sudo_password
+
+        # Check SSH master manager's cache (often same password for SSH and sudo)
+        if not retry_on_failure:
+            if hasattr(self, "ssh_manager") and hasattr(
+                self.ssh_manager, "_cached_ssh_password"
+            ):
+                if self.ssh_manager._cached_ssh_password:
+                    logger.debug(
+                        "Using SSH password from master cache as sudo password (same credentials)"
+                    )
+                    # Cache it for future use
+                    self._cached_sudo_password = self.ssh_manager._cached_ssh_password
+                    SSHEndpoint._sudo_password_cache[cache_key] = (
+                        self.ssh_manager._cached_ssh_password
+                    )
+                    return self.ssh_manager._cached_ssh_password
+
+        sudo_pw_env = os.environ.get("BTRFS_BACKUP_SUDO_PASSWORD")
+        if sudo_pw_env and not retry_on_failure:
+            logger.debug(
+                "SSHEndpoint._get_sudo_password: Using sudo password from BTRFS_BACKUP_SUDO_PASSWORD env var."
+            )
+            self._cached_sudo_password = sudo_pw_env
+            SSHEndpoint._sudo_password_cache[cache_key] = sudo_pw_env
+            logger.debug(
+                "SSHEndpoint._get_sudo_password: Cached sudo password from env var."
+            )
+            return sudo_pw_env
+
+        if retry_on_failure:
+            if self._cached_sudo_password:
+                logger.debug(
+                    "Clearing cached password and prompting for fresh password due to authentication failure"
+                )
+                self._cached_sudo_password = None
+            if cache_key in SSHEndpoint._sudo_password_cache:
+                logger.debug(f"Clearing class-level cached password for {cache_key}")
+                del SSHEndpoint._sudo_password_cache[cache_key]
+
+        logger.debug(
+            "SSHEndpoint._get_sudo_password: Attempting to prompt for sudo password interactively..."
+        )
+        try:
+            retry_msg = (
+                " (retry after authentication failure)" if retry_on_failure else ""
+            )
+            prompt_message = f"Sudo password for {self.config.get('username', 'remote user')}@{self.hostname}{retry_msg}: "
+            # Log before getpass call
+            logger.debug(
+                f"SSHEndpoint._get_sudo_password: About to call getpass.getpass() with prompt: '{prompt_message}'"
+            )
+
+            password = getpass.getpass(prompt_message)
+
+            # Log after getpass call
+            if password:  # Check if any password was entered
+                logger.debug(
+                    "SSHEndpoint._get_sudo_password: Sudo password received from prompt."
+                )
+                # Log length for confirmation, not the password itself
+                logger.debug(
+                    f"SSHEndpoint._get_sudo_password: Password of length {len(password)} received. Caching it."
+                )
+                # Cache in both instance and class-level cache
+                self._cached_sudo_password = password
+                SSHEndpoint._sudo_password_cache[cache_key] = password
+                return password
+            else:
+                logger.warning(
+                    "SSHEndpoint._get_sudo_password: Empty password received from prompt. Not caching. Will return None."
+                )
+                return None  # Explicitly return None for empty password
+        except Exception as e:
+            logger.error(
+                f"SSHEndpoint._get_sudo_password: Error during interactive sudo password prompt: {type(e).__name__}: {e}"
+            )
+            logger.debug(
+                "SSHEndpoint._get_sudo_password: Interactive password prompt failed - this is normal when running in non-interactive environments"
+            )
+            logger.info("Interactive password prompt not available")
+            logger.info(
+                "To provide sudo password non-interactively, set the BTRFS_BACKUP_SUDO_PASSWORD environment variable"
+            )
+            logger.info(
+                "Alternatively, configure passwordless sudo for btrfs commands on the remote host"
+            )
+            return None
+
+    def _get_ssh_password(self, prompt: bool = False) -> Optional[str]:
+        """Get SSH password from cache, environment, or prompt user.
+
+        Checks multiple sources in order:
+        1. SSH master manager's cached password (already entered for connection)
+        2. Instance sudo password cache (often same as SSH password)
+        3. Class-level sudo password cache
+        4. Instance SSH cache
+        5. Environment variable
+        6. Interactive prompt (if requested)
+
+        Args:
+            prompt: If True, prompt user interactively if no cached/env password
+
+        Returns:
+            SSH password or None if not available
+        """
+        # Check SSH master manager's cache first (password already entered for connection)
+        if hasattr(self, "ssh_manager") and hasattr(
+            self.ssh_manager, "_cached_ssh_password"
+        ):
+            if self.ssh_manager._cached_ssh_password:
+                logger.debug("Using SSH password from master connection cache")
+                return self.ssh_manager._cached_ssh_password
+
+        # Check sudo password cache (often same as SSH password)
+        if self._cached_sudo_password:
+            logger.debug("Using sudo password as SSH password (same credentials)")
+            return self._cached_sudo_password
+
+        # Check class-level sudo cache
+        cache_key = f"{self.config.get('username', 'unknown')}@{self.hostname}"
+        if cache_key in SSHEndpoint._sudo_password_cache:
+            logger.debug("Using class-level sudo cache as SSH password")
+            return SSHEndpoint._sudo_password_cache[cache_key]
+
+        # Check instance SSH cache
+        ssh_cache_key = f"ssh_{cache_key}"
+        if (
+            hasattr(self, "_ssh_password_cache")
+            and ssh_cache_key in self._ssh_password_cache
+        ):
+            logger.debug("Using cached SSH password from instance cache")
+            return self._ssh_password_cache[ssh_cache_key]
+
+        # Check environment variable
+        ssh_password = os.environ.get("BTRFS_BACKUP_SSH_PASSWORD")
+        if ssh_password:
+            logger.debug("Using SSH password from BTRFS_BACKUP_SSH_PASSWORD env var")
+            return ssh_password
+
+        # Prompt interactively if requested
+        if prompt:
+            try:
+                ssh_user = self.config.get("username", "unknown")
+                password = getpass.getpass(
+                    f"SSH password for {ssh_user}@{self.hostname}: "
+                )
+                if password:
+                    if not hasattr(self, "_ssh_password_cache"):
+                        self._ssh_password_cache: Dict[str, str] = {}
+                    self._ssh_password_cache[ssh_cache_key] = password
+                    # Also cache in SSH master manager if available
+                    if hasattr(self, "ssh_manager"):
+                        self.ssh_manager._cached_ssh_password = password
+                    # Also cache as sudo password (often same)
+                    self._cached_sudo_password = password
+                    SSHEndpoint._sudo_password_cache[cache_key] = password
+                    logger.debug("SSH password collected and cached")
+                    return password
+            except Exception as e:
+                logger.debug(f"Could not get SSH password interactively: {e}")
+
+        return None
+
+    def _exec_remote_command_with_retry(
+        self, command: List[Any], max_retries: int = 1, **kwargs: Any
+    ) -> CompletedProcess[Any]:
+        """Execute a command with automatic retry on authentication failures."""
+        result = None
+        for attempt in range(max_retries + 1):
+            try:
+                result = self._exec_remote_command(command, **kwargs)
+
+                # Check if this was a sudo command that failed with authentication issues
+                if (
+                    result.returncode != 0
+                    and attempt < max_retries
+                    and not lifecycle.stop_requested()
+                    and any(
+                        arg == "-S"
+                        for arg in self._build_remote_command([str(c) for c in command])
+                    )
+                ):
+                    stderr = (
+                        str(result.stderr.decode("utf-8", errors="replace"))
+                        if hasattr(result, "stderr") and result.stderr
+                        else ""
+                    )
+
+                    # Check for authentication failure indicators
+                    auth_failure_indicators = [
+                        "Sorry, try again",
+                        "incorrect password",
+                        "authentication failure",
+                        "3 incorrect password attempts",
+                    ]
+
+                    stderr_lower = stderr.lower()
+                    auth_failed = any(
+                        indicator.lower() in stderr_lower
+                        for indicator in auth_failure_indicators
+                    )
+
+                    if auth_failed:
+                        logger.warning(
+                            f"Authentication failure detected on attempt {attempt + 1}/{max_retries + 1}"
+                        )
+                        logger.debug("Retrying with fresh password prompt...")
+
+                        # Clear the cached password and get a fresh one
+                        self._clear_sudo_password_cache()
+                        fresh_password = self._get_sudo_password(retry_on_failure=True)
+
+                        if fresh_password:
+                            # Update kwargs with fresh password
+                            if "input" in kwargs:
+                                kwargs["input"] = (fresh_password + "\n").encode()
+                            logger.debug(
+                                f"Retrying command with fresh password (attempt {attempt + 2}/{max_retries + 1})"
+                            )
+                            continue
+                        else:
+                            logger.error("Could not obtain fresh password for retry")
+                            return result
+
+                return result
+
+            except Exception as e:
+                if attempt == max_retries:
+                    raise
+                if lifecycle.stop_requested():
+                    logger.warning(
+                        "Command execution failed on attempt %d; not retrying: "
+                        "the run was interrupted: %s",
+                        attempt + 1,
+                        e,
+                    )
+                    raise
+                logger.warning(
+                    f"Command execution failed on attempt {attempt + 1}, retrying: {e}"
+                )
+
+        # This should never be reached, but just in case
+        return result  # type: ignore
+
+    def _clear_sudo_password_cache(self) -> None:
+        """Clear the cached sudo password if authentication fails."""
+        if self._cached_sudo_password is not None:
+            logger.debug("Clearing cached sudo password due to authentication failure")
+            self._cached_sudo_password = None
+
+    def _check_and_handle_auth_failure(
+        self, stderr: str, using_sudo_with_stdin: bool
+    ) -> None:
+        """Check for authentication failures and clear cached password if needed."""
+        if not using_sudo_with_stdin or not stderr:
+            return
+
+        # Check for common sudo authentication failure messages
+        auth_failure_indicators = [
+            "Sorry, try again",
+            "incorrect password",
+            "authentication failure",
+            "sudo: 3 incorrect password attempts",
+            "sudo: no password was provided",
+            "sudo: unable to read password",
+            "sudo: a password is required",
+        ]
+
+        stderr_lower = stderr.lower()
+        for indicator in auth_failure_indicators:
+            if indicator.lower() in stderr_lower:
+                logger.warning(f"Authentication failure detected: {indicator}")
+                logger.debug(
+                    "Clearing cached sudo password to allow fresh authentication attempt"
+                )
+                self._clear_sudo_password_cache()
+                break
+
+    def _exec_remote_command(
+        self, command: List[Any], **kwargs: Any
+    ) -> CompletedProcess[Any]:
+        """Execute a command on the remote host via SSH."""
+        # Process command arguments based on whether they're marked as paths
+        string_command = []
+
+        logger.debug("Executing remote command, original format: %s", command)
+        logger.debug(
+            "Command type: %s, first element type: %s",
+            type(command).__name__,
+            type(command[0]).__name__ if command else "None",
+        )
+
+        # Check if command is using the tuple format (arg, is_path)
+        if command and isinstance(command[0], tuple) and len(command[0]) == 2:
+            # New format with (arg, is_path) tuples
+            logger.debug("Detected tuple format command (arg, is_path)")
+            for i, (arg, is_path) in enumerate(command):
+                logger.debug(
+                    "Processing arg %d: '%s' (is_path=%s, type=%s)",
+                    i,
+                    arg,
+                    is_path,
+                    type(arg).__name__,
+                )
+                if is_path and isinstance(arg, (str, Path)):
+                    normalized = self._normalize_path(arg)
+                    logger.debug("Normalized path arg %d: %s -> %s", i, arg, normalized)
+                    string_command.append(normalized)
+                else:
+                    # Not a path, just append as-is
+                    logger.debug("Using non-path arg %d as-is: %s", i, arg)
+                    string_command.append(arg)
+            logger.debug(
+                "Processed marked command arguments for remote execution: %s",
+                string_command,
+            )
+        else:
+            # Legacy format - convert any Path objects in the command to strings
+            logger.debug("Using legacy command format")
+            for i, arg in enumerate(command):
+                if isinstance(arg, (str, Path)):
+                    normalized = self._normalize_path(arg)
+                    logger.debug("Normalized arg %d: %s -> %s", i, arg, normalized)
+                    string_command.append(normalized)
+                else:
+                    logger.debug("Using non-string arg %d as-is: %s", i, arg)
+                    string_command.append(arg)
+            logger.debug(
+                "Processed legacy command format for remote execution: %s",
+                string_command,
+            )
+
+        remote_cmd = self._build_remote_command(string_command)
+        logger.debug("Final remote command after build: %s", remote_cmd)
+
+        # Detect if sudo -S is in the command (needs password on stdin)
+        using_sudo_with_stdin = any(arg == "-S" for arg in remote_cmd)
+        logger.debug(
+            f"Command uses sudo -S: {using_sudo_with_stdin}, remote_cmd: {remote_cmd}"
+        )
+
+        if using_sudo_with_stdin:
+            sudo_password = self._get_sudo_password()
+            if sudo_password:
+                logger.debug("Supplying sudo password via stdin for remote command")
+                logger.debug(
+                    f"Got cached password of length {len(sudo_password)}, setting as input"
+                )
+                kwargs["input"] = (sudo_password + "\n").encode()
+                # Remove stdin if present, as input and stdin cannot both be set
+                if "stdin" in kwargs:
+                    del kwargs["stdin"]
+            else:
+                logger.warning("No sudo password available but command requires it")
+        else:
+            logger.debug("Command does not use sudo -S, not providing password")
+
+        # Build the SSH command - determine if TTY allocation is needed
+        needs_tty = False
+        cmd_str = " ".join(map(str, remote_cmd))
+        if self.config.get("ssh_sudo", False) and not self.config.get(
+            "passwordless", False
+        ):
+            # Check if this is a command that might need TTY for sudo password
+            # BUT: if we're using sudo -S with password via stdin, we DON'T want TTY
+            if "sudo" in cmd_str and "-n" not in cmd_str and not using_sudo_with_stdin:
+                needs_tty = True
+
+        ssh_base_cmd = self.ssh_manager.get_ssh_base_cmd(force_tty=needs_tty)
+        logger.debug("SSH base command: %s", ssh_base_cmd)
+
+        # shlex.quote each element: ssh space-joins the command args and the REMOTE
+        # shell re-parses them, so a path/name with a space or metacharacter would be
+        # re-split (or injected) remotely. Quoting mirrors raw.py's _exec_remote_command
+        # and is a no-op for clean tokens. All callers pass literal argv (command +
+        # flags + values), never bare shell operators, so this cannot break intended
+        # remote-shell syntax.
+        ssh_cmd = ssh_base_cmd + ["--"] + [shlex.quote(str(c)) for c in remote_cmd]
+        logger.debug("Complete SSH command: %s", ssh_cmd)
+
+        # Always capture stderr if not explicitly provided
+        if "stderr" not in kwargs:
+            kwargs["stderr"] = subprocess.PIPE
+            logger.debug("Added stderr capture to kwargs")
+
+        # Default timeout if not specified
+        if "timeout" not in kwargs:
+            kwargs["timeout"] = 30
+            logger.debug("Using default timeout of 30 seconds")
+        else:
+            logger.debug(f"Using specified timeout of {kwargs['timeout']} seconds")
+            logger.debug("Set default timeout to 30 seconds")
+
+        ssh_cmd_str = " ".join(map(str, ssh_cmd))
+        logger.debug("Executing remote command: %s", ssh_cmd_str)
+        logger.debug("Working directory: %s", os.getcwd())
+
+        try:
+            logger.debug("About to execute subprocess.run with command: %s", ssh_cmd)
+            logger.debug(
+                "subprocess.run kwargs: %s",
+                {k: v for k, v in kwargs.items() if k != "input"},
+            )
+            if "input" in kwargs:
+                logger.debug("subprocess.run has input data (password)")
+
+            result = subprocess.run(ssh_cmd, **kwargs)
+            exit_code = result.returncode
+
+            if exit_code != 0 and kwargs.get("check", False) is False:
+                stderr = (
+                    str(result.stderr.decode("utf-8", errors="replace"))
+                    if hasattr(result, "stderr") and result.stderr
+                    else ""
+                )
+
+                # Check for authentication failures and clear cached password
+                self._check_and_handle_auth_failure(stderr, using_sudo_with_stdin)
+
+                logger.debug(
+                    "Command exited with non-zero code %d: %s\nError: %s",
+                    exit_code,
+                    ssh_cmd_str,
+                    stderr,
+                )
+                details: Dict[str, Any] = {
+                    "command": ssh_cmd_str,
+                    "exit_code": exit_code,
+                    "stderr_length": len(stderr) if stderr else 0,
+                    "has_stdout": result.stdout is not None,
+                }
+                logger.debug("Non-zero exit command details: %s", details)
+            elif exit_code == 0:
+                logger.debug("Command executed successfully: %s", ssh_cmd_str)
+                if result.stdout:
+                    stdout_data = result.stdout
+                    if stdout_data:
+                        stdout_len = (
+                            len(stdout_data)
+                            if isinstance(stdout_data, bytes)
+                            else len(str(stdout_data))
+                        )
+                        logger.debug("Command stdout length: %d bytes", stdout_len)
+
+            logger.debug("Command execution result: exit_code=%d", result.returncode)
+            return result
+
+        except subprocess.TimeoutExpired as e:
+            logger.error(
+                "Command timed out after %s seconds: %s", e.timeout, ssh_cmd_str
+            )
+            logger.error(
+                "Timeout occurred in SSH command execution, command was: %s", ssh_cmd
+            )
+            logger.debug(
+                "Timeout exception details: timeout=%s, cmd=%s", e.timeout, e.cmd
+            )
+            raise
+        except Exception as e:
+            logger.error(
+                "Failed to execute remote command: %s\nError: %s", ssh_cmd_str, str(e)
+            )
+            logger.error("Exception type: %s", type(e).__name__)
+            logger.error("Command that failed: %s", ssh_cmd)
+            logger.debug("Full exception details: %s", e, exc_info=True)
+            logger.debug(
+                "SSH command details: host=%s, port=%s, user=%s",
+                self.config.get("hostname", "unknown"),
+                self.config.get("port", 22),
+                self.config.get("username", "unknown"),
+            )
+            raise
+
+    def _btrfs_send(self, source: str, stdout_pipe: Any) -> subprocess.Popen[Any]:
+        """Run btrfs send locally and pipe its output."""
+        command = ["btrfs", "send", source]
+        logger.debug("Preparing to execute btrfs send: %s", command)
+        try:
+            process = track_child(
+                subprocess.Popen(command, stdout=stdout_pipe, stderr=subprocess.PIPE)
+            )
+            tail_stderr(
+                process, log_as="btrfs send" if self.config.get("btrfs_debug") else None
+            )
+            logger.debug("btrfs send process started successfully: %s", command)
+            return process
+        except Exception as e:
+            logger.error("Failed to start btrfs send process: %s", e)
+            raise
+
+    def _normalize_path(self, val: Any) -> str:
+        if val is None:
+            return ""
+        path = val
+        if isinstance(val, tuple) and len(val) == 2:
+            path, is_path = cast(Tuple[Any, Any], val)
+            logger.debug(
+                f"Tuple format detected in _normalize_path: {str(path)} (is_path={str(is_path)})"
+            )
+            if not is_path:
+                logger.debug(f"Not a path, returning as-is: {str(path)}")
+                return str(path)
+        if isinstance(path, Path):
+            logger.debug("Converting Path object to string: %s", path)
+            return str(path)
+        if isinstance(path, str) and "~" in path:
+            logger.debug("Path contains tilde, handling expansion: %s", path)
+            if os.geteuid() == 0 and os.environ.get("SUDO_USER"):
+                sudo_user = os.environ.get("SUDO_USER")
+                logger.debug("Running as root via sudo user: %s", sudo_user)
+                sudo_user_home = None
+                if sudo_user:
+                    sudo_user_home = None
+                    if _pwd_available and _pwd is not None:
+                        try:
+                            sudo_user_home = _pwd.getpwnam(sudo_user).pw_dir
+                            logger.debug("Found sudo user home: %s", sudo_user_home)
+                        except Exception as e:
+                            logger.warning(
+                                "Error getting home directory for sudo user: {}".format(
+                                    e
+                                )
+                            )
+                            # Fall back to default location
+                            sudo_user_home = None
+
+                    # Use fallback if we couldn't get the home directory
+                    if sudo_user_home is None:
+                        sudo_user_home = (
+                            f"/home/{sudo_user}" if sudo_user != "root" else "/root"
+                        )
+                        logger.debug(
+                            "Using fallback home directory: %s", sudo_user_home
+                        )
+                # By this point sudo_user_home should be set if sudo_user was available
+                # This is just a safety check in case something went wrong
+                if sudo_user_home is None and sudo_user:
+                    logger.warning(
+                        "Home directory still not determined, using fallback"
+                    )
+                    if sudo_user == "root":
+                        sudo_user_home = "/root"
+                    else:
+                        sudo_user_home = f"/home/{sudo_user}"
+                if sudo_user_home and path.startswith("~"):
+                    try:
+                        original_path = path
+                        path = path.replace("~", sudo_user_home, 1)
+                        logger.debug(
+                            "Expanded ~ in path: %s -> %s", original_path, path
+                        )
+                    except Exception as e:
+                        logger.error("Error expanding ~ in path: %s", e)
+            else:
+                original_path = path
+                path = os.path.expanduser(path)
+                logger.debug("Expanded user path: %s -> %s", original_path, path)
+        return str(path) if path is not None else ""
+
+    def _verify_btrfs_availability(self, use_sudo: bool = False) -> bool:
+        try:
+            if use_sudo:
+                test_cmd = ["sudo", "-n", "which", "btrfs"]
+                logger.debug("Testing btrfs availability with sudo")
+                # Use retry mechanism for sudo commands to handle authentication
+                test_result = self._exec_remote_command_with_retry(
+                    test_cmd,
+                    max_retries=2,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+            else:
+                test_cmd = ["which", "btrfs"]
+                logger.debug("Testing btrfs availability without sudo")
+                test_result = self._exec_remote_command(
+                    test_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+            if test_result.returncode != 0:
+                stderr = test_result.stderr.decode("utf-8", errors="replace")
+                logger.error("btrfs command not found on remote host: %s", stderr)
+                return False
+            btrfs_path = test_result.stdout.decode("utf-8", errors="replace").strip()
+            logger.debug("Found btrfs on remote host: %s", btrfs_path)
+            return True
+        except Exception as e:
+            logger.error("Failed to verify btrfs availability: %s", e)
+            return False
+
+    def _btrfs_receive(
+        self, destination: str, stdin_pipe: Any, decompress: Optional[str] = None
+    ) -> subprocess.Popen[Any]:
+        """Run btrfs receive on the remote host.
+
+        This method assumes sudo credentials are already cached (either passwordless
+        sudo is available, or credentials were primed via _prime_remote_sudo).
+
+        The remote command is wrapped with orphan protection to ensure the
+        btrfs receive process is terminated if the SSH connection drops.
+
+        Args:
+            destination: Remote path to receive the snapshot
+            stdin_pipe: Pipe providing btrfs send stream data
+            decompress: The method the caller actually compressed the stream
+                with, or None if it sent plain bytes.
+
+        The caller states what it did rather than this method re-deciding from
+        config, because the two halves must agree exactly: a decompressor added
+        here for a stream nobody compressed feeds plain bytes to `zstd -dc`, and
+        a compressor with no decompressor feeds compressed bytes to `btrfs
+        receive`. Both hang rather than fail. One decision, passed down, cannot
+        disagree with itself.
+
+        Returns:
+            Popen process for the receive command
+        """
+        logger.debug("Preparing btrfs receive command for destination: %s", destination)
+
+        # Build the SSH command for remote btrfs receive
+        control_path = str(self.ssh_manager.control_path)
+        ssh_user = self.config.get("username", "root")
+        ssh_port = self.config.get("port")
+        remote_host = f"{ssh_user}@{self.hostname}"
+
+        # Build SSH command with ControlMaster
+        ssh_cmd = [
+            "ssh",
+            "-o",
+            f"ControlPath={control_path}",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ServerAliveInterval=5",
+            "-o",
+            "ServerAliveCountMax=3",
+        ]
+        if ssh_port:
+            ssh_cmd.extend(["-p", str(ssh_port)])
+
+        # Build remote command with orphan protection.
+        # _build_receive_command escapes the destination itself; do not pre-quote.
+        use_sudo = self.config.get("ssh_sudo", False)
+        debug = bool(self.config.get("btrfs_debug"))
+        remote_cmd = _build_receive_command(
+            destination,
+            use_sudo=use_sudo,
+            password_on_stdin=False,
+            decompress=decompress,
+            verbose=debug,
+        )
+        ssh_cmd.extend([remote_host, remote_cmd])
+
+        logger.debug("SSH receive command: %s", " ".join(ssh_cmd))
+
+        try:
+            receive_process = track_child(
+                subprocess.Popen(
+                    ssh_cmd,
+                    stdin=stdin_pipe,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    bufsize=0,
+                )
+            )
+            # The remote receive's stderr comes back over ssh. Drained as it
+            # arrives (core.transfer.StderrTail): with -vv it is a line per
+            # file operation, and read only after exit it would fill the pipe
+            # and stop the receive.
+            tail_stderr(
+                receive_process, log_as="remote btrfs receive" if debug else None
+            )
+
+            # The receive owns that pipe now, so this process must let go of its
+            # copy -- the same reason the two stages upstream do it, one of which
+            # says so in as many words ("Allow send_process to receive SIGPIPE").
+            # This was the third and last handoff in the chain and the only one
+            # that did not.
+            #
+            # Keeping it open leaves a reader alive that never reads, so the
+            # LAST local stage -- pv, mbuffer, or the compressor -- blocks
+            # forever writing into it when the receive exits, instead of taking
+            # SIGPIPE and ending. Observed on a real transfer: `btrfs-backup-ng
+            # run` sleeping in a poll loop with one child, `pv -q -B 32M`, parked
+            # in poll_schedule_timeout on a pipe whose read end this process
+            # still held. The run never terminated, and it held the per-config
+            # run lock while it sat there, so the next run refused to start.
+            if stdin_pipe is not None and hasattr(stdin_pipe, "close"):
+                try:
+                    stdin_pipe.close()
+                except Exception as e:  # noqa: BLE001 - never fail a started transfer
+                    logger.debug("Could not close the handed-over pipe: %s", e)
+
+            logger.debug(
+                "btrfs receive process started with PID: %d", receive_process.pid
+            )
+            return receive_process
+
+        except Exception as e:
+            logger.error("Failed to start btrfs receive process: %s", e)
+            raise
+
+    def list_snapshots(self, flush_cache: bool = False) -> List[Any]:
+        """
+        List snapshots (btrfs subvolumes) on the remote host at the configured path.
+        Returns a list of Snapshot objects.
+        """
+        path = self.config["path"]
+        use_sudo = self.config.get("ssh_sudo", False)
+
+        # If we need sudo with password, prime credentials first
+        if use_sudo and self._is_master_active():
+            # Check if we have passwordless sudo for btrfs
+            # Use btrfs --version instead of sudo -n true since sudoers may only allow btrfs
+            try:
+                result = self._exec_remote_command(
+                    ["sudo", "-n", "btrfs", "--version"],
+                    check=False,
+                    timeout=10,
+                )
+                if result.returncode != 0:
+                    # Need password - prime remote sudo credentials
+                    logger.debug("Priming remote sudo credentials for snapshot listing")
+                    if not self._prime_remote_sudo():
+                        logger.warning("Failed to prime remote sudo, listing may fail")
+            except Exception:
+                pass
+
+        # Standard method - works with cached credentials. -u -R add the subvolume UUID
+        # and received_uuid columns so snapshots are self-describing; older
+        # btrfs-progs simply omit the columns and the parser tolerates that.
+        cmd = ["btrfs", "subvolume", "list", "-o", "-u", "-R", path]
+        try:
+            logger.debug("Listing remote snapshots with command: %s", cmd)
+            # Use retry mechanism for commands that may require authentication
+            if use_sudo:
+                result = self._exec_remote_command_with_retry(
+                    cmd,
+                    max_retries=2,
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            else:
+                result = self._exec_remote_command(
+                    cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
+            if result.returncode != 0:
+                stderr = (
+                    result.stderr.decode(errors="replace").strip()
+                    if result.stderr
+                    else ""
+                )
+
+                # The retry mechanism should have already handled authentication failures
+                # Log the final failure and provide diagnostic information
+                logger.warning(f"Failed to list remote snapshots: {stderr}")
+
+                if use_sudo and (
+                    "a password is required" in stderr
+                    or "sudo:" in stderr
+                    or "Sorry, try again" in stderr
+                ):
+                    logger.error(
+                        "Authentication issues detected during snapshot listing"
+                    )
+                    logger.error(
+                        "SSH endpoint: %s@%s:%s (ssh_sudo=%s)",
+                        self.config.get("username"),
+                        self.hostname,
+                        path,
+                        use_sudo,
+                    )
+                    logger.info("To resolve authentication issues:")
+                    logger.info(
+                        "1. Configure passwordless sudo for btrfs commands on remote host, OR"
+                    )
+                    logger.info(
+                        "2. Set BTRFS_BACKUP_SUDO_PASSWORD environment variable, OR"
+                    )
+                    logger.info(
+                        "3. Run in an interactive terminal for password prompting"
+                    )
+                    logger.info(
+                        f"   Example sudoers entry: {self.config.get('username')} ALL=(ALL) NOPASSWD: /usr/bin/btrfs"
+                    )
+                    self._run_diagnostics(path, force_refresh=True)
+
+                # An enumeration that FAILED is not an empty target. Returning []
+                # here reported "No snapshots found" with exit 0 for a location
+                # holding backups -- measured against a real host where the
+                # listing died with "ERROR: can't perform the search: Operation
+                # not permitted" because the connecting user lacks btrfs
+                # privileges. During a restore that is the most dangerous moment
+                # to be told the backups do not exist.
+                raise RuntimeError(
+                    f"Cannot list snapshots at {self.hostname}:{path}: "
+                    f"{stderr.strip() or f'btrfs subvolume list exited {result.returncode}'}. "
+                    "The location could NOT be enumerated -- this is NOT an empty "
+                    "target. `btrfs subvolume list` needs root on the remote, so "
+                    "either enable ssh_sudo (with passwordless sudo for "
+                    "/usr/bin/btrfs) or connect as a user that can read it."
+                )
+            output = result.stdout.decode(errors="replace") if result.stdout else ""
+            # Parse, then keep only what is really AT this destination. The list
+            # command is filesystem-wide, so the second step is what stops a
+            # never-transferred source snapshot being reported as a backup.
+            scoped = self._scope_to_destination(
+                self._parse_snapshot_list(output, path), path
+            )
+            # Announce AFTER scoping: an entry scoping rejected is not at this
+            # destination, and announcing it here would report a snapshot the
+            # listing does not return.
+            self._report_newly_visible(scoped)
+            return scoped
+        except RuntimeError:
+            raise
+        except Exception as e:
+            logger.error(f"Exception while listing remote snapshots: {e}")
+            self._run_diagnostics(path, force_refresh=True)
+            # Same reasoning as above: an exception means we do not know what is
+            # there, which must never be presented as "nothing is there".
+            raise RuntimeError(
+                f"Cannot list snapshots at {self.hostname}:{path}: {e}. The "
+                "location could NOT be enumerated -- this is NOT an empty target."
+            ) from e
+
+    @staticmethod
+    def _common_suffix_len(a: str, b: str) -> int:
+        """How many trailing characters ``a`` and ``b`` share."""
+        n = 0
+        for x, y in zip(reversed(a), reversed(b)):
+            if x != y:
+                break
+            n += 1
+        return n
+
+    def _parse_snapshot_list(self, output: str, path: str) -> List[Any]:
+        """Parse ``btrfs subvolume list`` output into Snapshot objects.
+
+        Only subvolumes that really live AT ``path`` are returned.
+
+        ``btrfs subvolume list -o <path>`` does not scope to ``<path>``: measured
+        on a real host, listing a destination directory and listing an unrelated
+        sibling directory returned byte-identical output, because the command
+        enumerates the whole FILESYSTEM. This parser used to discard the location
+        with ``os.path.basename()`` and record every hit as living at
+        ``config["path"]``.
+
+        The result was a phantom backup, which is worse than a missing one: a
+        snapshot that existed only at the SOURCE and had never been transferred
+        was reported as present at the destination. Measured -- a destination
+        holding exactly one backup listed as holding three, one of them never
+        transferred. An operator can read that as "my data is safe" and delete
+        the source.
+
+        Two things therefore changed. Same-named subvolumes are resolved to the
+        ONE line whose path best matches the destination, so identity (uuid /
+        received_uuid) is taken from the destination's copy rather than the
+        source's -- picking the source's line would leave received_uuid empty and
+        make ``verify_structure`` call a good backup "unverifiable". And every
+        surviving candidate is confirmed at its exact path (see
+        ``_scope_to_destination``), the same rule ``_verify_snapshot_exists``
+        already applies and whose docstring already explains why a name-only
+        search is wrong; that rule simply never reached the listing.
+
+        Parsing stays free of remote I/O; the confirmation is applied by
+        ``_scope_to_destination`` in ``list_snapshots``.
+        """
+        from btrfs_backup_ng import __util__
+
+        snap_prefix = self.config.get("snap_prefix", "")
+        dest = str(self.config["path"]).rstrip("/")
+
+        # Group candidate lines by name, keeping the one whose reported path is
+        # closest to the destination.
+        best: dict = {}
+        for line in output.splitlines():
+            parts = line.split("path ", 1)
+            if len(parts) != 2:
+                continue
+            snap_path = parts[1].strip()
+            snap_name = os.path.basename(snap_path)
+            if not snap_name.startswith(snap_prefix):
+                continue
+            score = self._common_suffix_len(snap_path, f"{dest}/{snap_name}")
+            previous = best.get(snap_name)
+            if previous is None or score > previous[0]:
+                best[snap_name] = (score, line, snap_path)
+
+        snapshots: List[Any] = []
+        for snap_name, (_score, line, _snap_path) in best.items():
+            date_part = snap_name[len(snap_prefix) :]
+            # Every candidate here came off a `btrfs subvolume list` line, so
+            # each one IS a subvolume -- the "is this a snapshot at all"
+            # question the local listing answers with is_subvolume() is
+            # already answered. A name that yields no timestamp is therefore a
+            # snapshot with no extractable time, listed rather than skipped.
+            time_obj, parsed_as_written = __util__.derive_snapshot_time(
+                date_part, self.config.get("timestamp_format")
+            )
+
+            snapshot = __util__.Snapshot(
+                self.config["path"],
+                snap_prefix,
+                self,
+                time_obj=time_obj,
+                name=snap_name,
+            )
+            snapshot.newly_visible = not parsed_as_written
+            # Identity comes from the chosen line, which is the destination's own
+            # copy -- never a same-named subvolume elsewhere on the filesystem.
+            line_ids = __util__.parse_subvolume_list(line)
+            if line_ids:
+                snapshot.uuid = line_ids[0]["uuid"]
+                snapshot.received_uuid = line_ids[0]["received_uuid"]
+            snapshots.append(snapshot)
+
+        snapshots.sort()
+        logger.info(f"Found {len(snapshots)} remote snapshots at {path}")
+        logger.debug(f"Remote snapshots: {[str(s) for s in snapshots]}")
+        return snapshots
+
+    def _snapshot_names_here_and_elsewhere(
+        self,
+    ) -> Optional[Tuple[List[str], List[str]]]:
+        """Snapshot-shaped names AT this destination, and ones only elsewhere.
+
+        The base version enumerates locally, which for an ssh:// endpoint would
+        stat a path on the WRONG machine. This re-runs the remote subvolume
+        listing, which is filesystem-wide, and then separates snapshot names that
+        are really at this destination from ones that only exist elsewhere on the
+        remote filesystem -- pointing at the wrong directory is the most common
+        reason a destination looks empty, and saying so is more useful than
+        naming a prefix that would not have helped.
+
+        One exact-path probe per candidate prefix, not per name: this runs only
+        when a listing already came back empty, and the number of distinct
+        prefixes on a filesystem is small.
+        """
+        try:
+            result = self._exec_remote_command(
+                ["btrfs", "subvolume", "list", "-o", str(self.config["path"])],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            if result.returncode != 0:
+                return None
+            output = result.stdout.decode(errors="replace") if result.stdout else ""
+        except Exception as e:  # noqa: BLE001 - a diagnostic must never itself abort
+            logger.debug("Could not enumerate the remote for a prefix hint: %s", e)
+            return None
+
+        dest = str(self.config["path"]).rstrip("/")
+        fmt = self.config.get("timestamp_format")
+        by_prefix: Dict[str, List[str]] = {}
+        for line in output.splitlines():
+            parts = line.split("path ", 1)
+            if len(parts) != 2:
+                continue
+            name = os.path.basename(parts[1].strip())
+            inferred = __util__.infer_snapshot_prefix(name, fmt)
+            if inferred is None:
+                continue
+            by_prefix.setdefault(inferred, []).append(name)
+
+        here: List[str] = []
+        elsewhere: List[str] = []
+        for _prefix, names in by_prefix.items():
+            # One probe decides the whole prefix: if any representative is at the
+            # destination the prefix belongs to "here". Bounded at a few names so
+            # a large filesystem cannot turn a diagnostic into a long stall.
+            present = any(
+                self._subvolume_exists_at(f"{dest}/{name}") for name in names[:3]
+            )
+            (here if present else elsewhere).extend(names)
+
+        return here, elsewhere
+
+    def describe_empty_listing(self) -> Optional[str]:
+        """Explain an empty remote listing (see ``Endpoint.describe_empty_listing``)."""
+        gathered = self._snapshot_names_here_and_elsewhere()
+        if gathered is None:
+            return None
+        here, elsewhere = gathered
+        return self._explain_prefix_mismatch(here, elsewhere)
+
+    def prefixes_present(self) -> Dict[str, int]:
+        """Prefixes actually AT this destination (see ``Endpoint.prefixes_present``).
+
+        The base version enumerates locally, which for an ssh:// endpoint would
+        read the wrong machine and quietly return nothing -- so a restore could
+        not act on a prefix the diagnostic had just named on screen. Shares the
+        one remote enumeration with ``describe_empty_listing`` rather than
+        running a second, differently-written one.
+        """
+        gathered = self._snapshot_names_here_and_elsewhere()
+        if gathered is None:
+            return {}
+        here, _elsewhere = gathered
+
+        configured = self.config.get("snap_prefix", "") or ""
+        fmt = self.config.get("timestamp_format")
+        found: Dict[str, int] = {}
+        for name in here:
+            inferred = __util__.infer_snapshot_prefix(name, fmt)
+            if inferred is None or inferred == configured:
+                continue
+            found[inferred] = found.get(inferred, 0) + 1
+        return found
+
+    def _scope_to_destination(self, snapshots: List[Any], path: str) -> List[Any]:
+        """Keep only snapshots that really exist AT ``path``.
+
+        ``btrfs subvolume list`` enumerates the whole filesystem (see
+        ``_parse_snapshot_list``), so a name matching there proves nothing about
+        this destination. Each candidate is confirmed at its exact path with
+        ``btrfs subvolume show`` -- one remote command per candidate, run only
+        after the cheap prefix and timestamp filters have cut the list down.
+
+        ``btrfs`` is the one binary ``--ssh-sudo`` elevates, so this probe always
+        has the privilege that produced the listing itself: a probe failure means
+        the subvolume is not there, not that we were not allowed to look.
+        """
+        dest = str(path).rstrip("/")
+        kept = []
+        for snapshot in snapshots:
+            name = snapshot.get_name()
+            if self._subvolume_exists_at(f"{dest}/{name}"):
+                kept.append(snapshot)
+            else:
+                logger.debug(
+                    "Ignoring %s: a subvolume of that name exists on the remote "
+                    "filesystem but not at %s",
+                    name,
+                    dest,
+                )
+        if len(kept) != len(snapshots):
+            logger.info(
+                "%d of %d subvolumes matching the prefix are not at %s and were "
+                "excluded (they exist elsewhere on the remote filesystem)",
+                len(snapshots) - len(kept),
+                len(snapshots),
+                dest,
+            )
+        return kept
+
+    def verify_structure(self, snapshot: Any) -> StructureVerdict:
+        """Confirm ``snapshot`` is a real received backup on the remote (the ``verify``
+        metadata-level structural check for an ssh:// btrfs target).
+
+        Unlike the local endpoint (which enumerates with ``iterdir`` and so can list a
+        plain directory), the SSH endpoint enumerates with ``btrfs subvolume list``, which
+        returns ONLY real subvolumes -- so subvolume-ness is already guaranteed and the
+        plain-directory false-pass cannot arise here. The meaningful check is therefore the
+        ``received_uuid`` (parsed from the ``-R`` column at list time, computed on the
+        remote): non-empty -> ``ok`` (a received backup); empty -> ``unverifiable`` (a
+        non-received subvolume, not a backup this tool produced). We do not re-run
+        ``btrfs subvolume show`` here: it needs privilege the read-only verify path should
+        not require, and a failure could not be distinguished from a genuinely-absent
+        subvolume -- which would false-fail a good backup.
+        """
+        if getattr(snapshot, "received_uuid", ""):
+            return StructureVerdict("ok", "received subvolume")
+        return StructureVerdict(
+            "unverifiable",
+            "a subvolume, but received_uuid is empty (not a received backup, or the "
+            "remote listing could not read it)",
+        )
+
+    def test_send_stream(self, snapshot: Any, parent: Any = None) -> None:
+        """Verify a ``btrfs send --no-data`` stream can be generated for ``snapshot`` ON
+        THE REMOTE host (the STREAM verification level for an ssh:// btrfs target).
+
+        The command runs where the subvolume actually lives -- via ``_exec_remote_command``
+        (which wraps it for ssh and applies ``ssh_sudo``/path normalization) -- so it never
+        does what the old code did: run ``btrfs send`` LOCALLY against a remote path (which
+        false-failed every ssh:// stream verify). The metadata-only stream is discarded
+        (stdout -> DEVNULL, so nothing but the exit status matters). Raises ``VerifyError``
+        on a non-zero send."""
+        from btrfs_backup_ng.core.verify import VerifyError
+
+        cmd: List[Any] = ["btrfs", "send", "--no-data"]
+        if parent is not None:
+            cmd.extend(["-p", self._normalize_path(str(parent.get_path()))])
+        cmd.append(self._normalize_path(str(snapshot.get_path())))
+
+        use_sudo = self.config.get("ssh_sudo", False)
+        try:
+            if use_sudo:
+                result = self._exec_remote_command_with_retry(
+                    cmd,
+                    max_retries=2,
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                )
+            else:
+                result = self._exec_remote_command(
+                    cmd,
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                )
+        except (TransientNetworkError, subprocess.TimeoutExpired):
+            # A transient SSH/timeout fault is NOT a stream-verification result: we could
+            # not reach the remote to run the test, which is a can't-check condition, not a
+            # corrupt/broken snapshot. Surface it as itself so it is never mislabelled a
+            # verification failure (and any future retry logic can act on its real type).
+            raise
+        except Exception as e:
+            raise VerifyError(f"Send stream test failed (remote): {e}") from e
+
+        if result.returncode != 0:
+            # stderr is bytes (stderr=PIPE), possibly empty; decode robustly and fall back
+            # to a clear message when the remote wrote nothing.
+            stderr = (result.stderr or b"").decode(errors="replace").strip() or (
+                "unknown error (remote btrfs send returned "
+                f"{result.returncode} with no stderr)"
+            )
+            raise VerifyError(f"Send stream test failed (remote): {stderr}")
+
+    def _subvolume_exists_at(self, absolute_path: str) -> bool:
+        """True when a real subvolume exists at EXACTLY ``absolute_path``.
+
+        The quiet core of ``_verify_snapshot_exists``, shared with the listing
+        path. A plain directory is deliberately not accepted: an interrupted
+        ``btrfs receive`` can leave one, and only ``btrfs subvolume show``
+        succeeding proves a real subvolume is there.
+
+        Elevation matches the rest of this endpoint: ``btrfs`` is the one binary
+        ``--ssh-sudo`` elevates, so this probe has exactly the privilege that
+        ``btrfs subvolume list`` had. A caller that got a listing can run this.
+        """
+        return self.subvolume_identity(absolute_path) is not None
+
+    def subvolume_identity(self, path: str) -> Optional[Dict[str, str]]:
+        """``{'uuid', 'received_uuid'}`` of the subvolume at exactly ``path`` ON THE
+        REMOTE, or None when they could not be read.
+
+        The remote form of the base probe: one ``btrfs subvolume show`` over
+        ssh, elevated exactly as every other btrfs command this endpoint runs
+        (``--ssh-sudo`` elevates btrfs and nothing else). None for every
+        failure -- not a subvolume, no privilege, an unreachable host -- and the
+        caller decides what "could not read" means: the listing enrichment
+        leaves the uuids empty, ``_subvolume_exists_at`` answers False, and the
+        post-receive artifact verdict reports ``unverifiable``, never
+        ``invalid``, because a probe that could not run has proven nothing.
+        """
+        use_sudo = self.config.get("ssh_sudo", False)
+        try:
+            if use_sudo:
+                result = self._exec_remote_command_with_retry(
+                    ["btrfs", "subvolume", "show", path],
+                    max_retries=2,
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            else:
+                result = self._exec_remote_command(
+                    ["btrfs", "subvolume", "show", path],
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+        except Exception as e:
+            logger.debug("subvolume show failed for %s: %s", path, e)
+            return None
+        if result.returncode != 0:
+            stderr = result.stderr or b""
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+            logger.debug(
+                "subvolume show failed for %s (rc %d): %s",
+                path,
+                result.returncode,
+                stderr.strip(),
+            )
+            return None
+        out = result.stdout or b""
+        if isinstance(out, bytes):
+            out = out.decode("utf-8", errors="replace")
+        return __util__.parse_subvolume_show(out)
+
+    def estimate_transfer_size(
+        self, snapshot: Any, parent: Any = None
+    ) -> Optional[int]:
+        """Bytes a full ``btrfs send`` of ``snapshot`` is expected to carry,
+        measured ON THE REMOTE where the snapshot lives; None when unknown.
+
+        An incremental send is not estimated (None, an indeterminate progress
+        bar), matching the local measurement: the delta is expensive to size
+        and usually fast to move. A full send is sized by
+        ``btrfs filesystem du -s --raw`` on the snapshot, run remotely under
+        this endpoint's elevation: its Total is the referenced data a full
+        stream carries. (The local measurement also consults ``subvolume
+        show`` for an ``Exclusive`` line first; btrfs-progs prints that field
+        as ``Usage exclusive`` and only with quotas enabled, and exclusive
+        bytes are not what a full send moves, so the branch is not mirrored
+        here.) The engine used to run the local measurement on this remote
+        path, which measured nothing and warned on every transfer from an
+        ssh:// source.
+        """
+        from btrfs_backup_ng.core.progress import _parse_size
+
+        if parent is not None:
+            return None
+        path = self._normalize_path(snapshot.get_path())
+        use_sudo = self.config.get("ssh_sudo", False)
+        cmd = ["btrfs", "filesystem", "du", "-s", "--raw", path]
+        try:
+            if use_sudo:
+                result = self._exec_remote_command_with_retry(
+                    cmd,
+                    max_retries=2,
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=120,
+                )
+            else:
+                result = self._exec_remote_command(
+                    cmd,
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=120,
+                )
+        except Exception as e:  # noqa: BLE001 - an estimate is advisory
+            logger.debug("Remote filesystem du failed for %s: %s", path, e)
+            return None
+        if result.returncode != 0:
+            return None
+        out = result.stdout or b""
+        text = out.decode("utf-8", errors="replace") if isinstance(out, bytes) else out
+        lines = text.strip().splitlines()
+        if len(lines) >= 2:
+            parts = lines[1].split()
+            if len(parts) >= 3:
+                parsed = _parse_size(parts[0])
+                if parsed:
+                    return parsed
+        return None
+
+    def _verify_snapshot_exists(self, dest_path: str, snapshot_name: str) -> bool:
+        """Verify a snapshot exists on the remote host at its exact path.
+
+        The received subvolume must exist at exactly ``{dest_path}/{snapshot_name}``.
+        Verification is deliberately scoped to that precise path rather than
+        searching the destination filesystem for a subvolume of the given name:
+        snapper snapshots are all named ``snapshot`` (the source subvolume's
+        basename), so a name-only search would match a same-named subvolume
+        elsewhere on the destination (e.g. a sibling ``.snapshots/<other>/snapshot``)
+        and report success for a transfer that actually failed. An exact-path check
+        is correct for native backups (whose names are unique anyway) and safe for
+        snapper.
+
+        Args:
+            dest_path: Remote directory the snapshot was received into
+            snapshot_name: Name of the received subvolume within dest_path
+
+        Returns:
+            True only if a real received subvolume exists at the exact expected
+            path (a bare directory is not accepted).
+        """
+        expected_path = f"{dest_path.rstrip('/')}/{snapshot_name}"
+        logger.debug(f"Verifying received snapshot at exact path: {expected_path}")
+        use_sudo = self.config.get("ssh_sudo", False)
+
+        def _run(cmd: List[str]) -> Any:
+            # _exec_remote_command* wrap the command for SSH (and sudo) internally.
+            if use_sudo:
+                return self._exec_remote_command_with_retry(
+                    cmd,
+                    max_retries=2,
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            return self._exec_remote_command(
+                cmd,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        try:
+            # Authoritative check: confirm a real *subvolume* exists at exactly the
+            # expected path (not merely a same-named subvolume elsewhere). A plain
+            # directory is deliberately NOT accepted: an interrupted or failed
+            # ``btrfs receive`` can leave a bare directory (or a half-applied,
+            # non-subvolume tree) at the destination, and a ``test -d`` check would
+            # report that partial as a valid backup. Only ``btrfs subvolume show``
+            # succeeding proves a real received subvolume is present.
+            show_result = _run(["btrfs", "subvolume", "show", expected_path])
+            if show_result.returncode == 0:
+                logger.debug(f"Snapshot verified via subvolume show: {expected_path}")
+                return True
+
+            logger.error(f"Snapshot not found at expected path: {expected_path}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error verifying snapshot: {e}")
+            logger.debug(f"Verification exception details: {e}", exc_info=True)
+            return False
+
+    def artifact_exists(self, dest_path: str, received_name: str) -> bool:
+        """Whether ``{dest_path}/{received_name}`` is already on the REMOTE.
+
+        Asked before a transfer begins, to establish whether the partial cleanup
+        on the failure path would be deleting its own work or somebody else's.
+        Answers True when it cannot tell: the failure being guarded against is
+        removing a backup that was not ours, so uncertainty resolves to leaving
+        it alone.
+        """
+        expected = f"{dest_path.rstrip('/')}/{received_name}"
+        try:
+            return (
+                self._exec_remote_command(
+                    ["test", "-e", expected], check=False
+                ).returncode
+                == 0
+            )
+        except Exception as e:  # noqa: BLE001 - see docstring
+            logger.debug("Could not determine whether %s pre-existed: %s", expected, e)
+            return True
+
+    def _cleanup_partial_subvolume(
+        self,
+        dest_path: str,
+        received_name: str,
+        *,
+        created_by_this_run: bool,
+    ) -> None:
+        """Remove a partial/failed received subvolume at its exact destination path.
+
+        Called after a transfer is judged failed so that a leftover partial cannot
+        later be mistaken for a valid backup (by verification or skip-detection) and
+        so a subsequent retry starts from a clean destination. Scoped strictly to
+        ``{dest_path}/{received_name}`` — never a filesystem-wide search — for the
+        same reason exact-path verification is: sibling snapshots must not be touched.
+
+        ``created_by_this_run`` is what makes the removal safe, and it is the
+        caller's to establish: being at the path proves only that something is
+        there, not that this transfer put it there. Skip-detection works by UUID
+        correspondence rather than by name, so a destination subvolume that merely
+        shares a name -- one another tool wrote, a second source machine using the
+        same snap_prefix, a restored copy -- is planned for transfer and would be
+        deleted here when that transfer failed.
+
+        REQUIRED, with no default. It briefly had one, which silently exempted
+        every caller inside this module -- six of them, on every ssh:// transfer
+        route -- while the guard read as applied. A parameter that can be omitted
+        on the path it protects is not a guard.
+
+        Best-effort: failures are logged and swallowed (the caller has already
+        decided the transfer failed).
+        """
+        if not created_by_this_run:
+            logger.warning(
+                "Not cleaning up %s on %s: it was already at that path before this "
+                "transfer started, so it is not this run's partial.",
+                received_name,
+                self.hostname,
+            )
+            return
+        expected_path = f"{dest_path.rstrip('/')}/{received_name}"
+        use_sudo = self.config.get("ssh_sudo", False)
+
+        def _run(cmd: List[str]) -> Any:
+            if use_sudo:
+                return self._exec_remote_command_with_retry(
+                    cmd,
+                    max_retries=2,
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            return self._exec_remote_command(
+                cmd,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        try:
+            # Only act if something is actually present at the exact path.
+            if _run(["test", "-e", expected_path]).returncode != 0:
+                return
+            logger.warning(
+                "Cleaning up partial/failed transfer artifact at %s", expected_path
+            )
+            # Prefer subvolume delete (handles the common partial-receive case);
+            # fall back to rm -rf for a plain directory left behind.
+            if _run(["btrfs", "subvolume", "delete", expected_path]).returncode != 0:
+                _run(["rm", "-rf", expected_path])
+        except Exception as e:
+            logger.debug(
+                "Partial-subvolume cleanup failed for %s: %s", expected_path, e
+            )
+
+    #: How much of a smoothing buffer to put between `btrfs send` and the
+    #: network. `btrfs send` emits in bursts, and without a buffer every pause on
+    #: the receiving side stalls the sender.
+    #:
+    #: A buffer only has to hold what the sender produces DURING a stall, so the
+    #: benefit saturates and then stops. Measured on real hardware, 100 MB from a
+    #: ~58 MB/s producer through a consumer that stalls periodically (best of 3):
+    #:
+    #:     buffer   0.4s stalls   1.2s stalls   pv resident
+    #:     none        3.58s         6.65s          2.6 MB
+    #:       8M        3.06s         6.27s         ~10 MB
+    #:      16M        2.51s         5.87s         ~18 MB
+    #:      32M        2.73s         5.48s         34.5 MB
+    #:      64M        2.76s         5.45s         ~66 MB
+    #:     128M        2.79s         5.52s        130.7 MB
+    #:
+    #: Buffering is clearly worth it -- roughly 25-30% -- but 128 MiB was never
+    #: the best figure in either profile, and pv reserves it UNCONDITIONALLY: a
+    #: transfer that never stalls still holds 130 MB resident. 32 MiB is within
+    #: noise of the best result in both profiles at a quarter of the memory,
+    #: which matters on the NAS and SBC hosts these backups often run on.
+    #:
+    #: Both buffer programs use the same figure so the choice of tool does not
+    #: change the memory footprint.
+    BUFFER_SIZE = "32M"
+
+    def _stream_compress_method(self) -> Optional[str]:
+        """The compression method for this transfer, or None.
+
+        Every transfer strategy has to ask the same question, and there are
+        several: the direct pipe, the password-sudo path, and the
+        shell pipeline. Wiring only one of them is how `compress` came to work
+        on some setups and silently do nothing on others.
+        """
+        method = self.config.get("compress") or "none"
+        if method == "none":
+            return None
+        from ..core.transfer import COMPRESSION_PROGRAMS
+
+        if method not in COMPRESSION_PROGRAMS:
+            # Every destination accepts the same set now, so reaching here means
+            # the name is simply not one this project knows -- worth saying
+            # plainly, because the result is a larger backup than was asked for.
+            logger.warning(
+                "Unknown compression method %r; this transfer will be "
+                "UNCOMPRESSED. Supported: %s.",
+                method,
+                ", ".join(sorted(COMPRESSION_PROGRAMS)),
+            )
+            return None
+        return str(method)
+
+    def _find_buffer_program(self) -> Tuple[Optional[str], Optional[str]]:
+        """Pick a program to buffer the transfer, preferring pv.
+
+        pv is preferred: it is more widely installed, more portable across
+        platforms, and has not carried the buffer-allocation quirks mbuffer has
+        historically had. mbuffer is kept as a fallback for hosts without pv.
+
+        Both are OPTIONAL. With neither installed the stream goes through a plain
+        pipe and the transfer works normally -- it just relies on the kernel pipe
+        buffer (~64 KiB) rather than a large one, so a bursty send over a slow
+        link may stall the sender more often.
+
+        pv must be given ``-B`` explicitly. Its default buffer is around 400 KiB,
+        so ``pv -q`` alone provides essentially no smoothing -- it was selected as
+        the "buffer program" while doing almost none of the buffering the caller
+        expects.
+
+        Returns:
+            A tuple of (program_name, command_string) or (None, None) if not found
+        """
+        use_simple_progress = self.config.get("simple_progress", True)
+
+        # Check for pv
+        if self._check_command_exists("pv"):
+            if use_simple_progress:
+                logger.debug(
+                    "Found pv - using it in simple mode (no progress indicators)"
+                )
+                # Use pv quietly without progress display in simple mode
+                return "pv", f"pv -q -B {self.BUFFER_SIZE}"
+            else:
+                logger.debug("Found pv - using it for transfer progress")
+                # Use pv with progress display (don't use -q for quiet, we want progress)
+                return "pv", f"pv -p -t -e -r -b -B {self.BUFFER_SIZE}"
+
+        # Check for mbuffer as fallback
+        if self._check_command_exists("mbuffer"):
+            logger.debug("Found mbuffer - using it for transfer buffering")
+            # -m matches pv's -B so the tool in use does not change how much
+            # memory a transfer takes. The previous 1G could OOM a small host.
+            return "mbuffer", f"mbuffer -q -s 128k -m {self.BUFFER_SIZE}"
+
+        # No buffer program found
+        logger.debug(
+            "Neither pv nor mbuffer found; transferring through a plain pipe. This "
+            "works normally -- a bursty send over a slow link may just stall more "
+            "often without a smoothing buffer."
+        )
+        return None, None
+
+    def _check_command_exists(self, command: str) -> bool:
+        """Check if a command exists in the PATH.
+
+        Args:
+            command: The command to check for
+
+        Returns:
+            True if command exists, False otherwise
+        """
+        try:
+            check_cmd = ["which", command]
+            result = subprocess.run(
+                check_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False
+            )
+            return result.returncode == 0
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return False
+
+    def _is_master_active(self) -> bool:
+        """Verify the OpenSSH master socket is alive and responding."""
+        control_path = str(self.ssh_manager.control_path)
+        ssh_user = self.config.get("username", "root")
+        remote_host = f"{ssh_user}@{self.hostname}"
+
+        check_cmd = [
+            "ssh",
+            "-o",
+            f"ControlPath={control_path}",
+            "-O",
+            "check",
+            remote_host,
+        ]
+
+        try:
+            result = subprocess.run(
+                check_cmd,
+                capture_output=True,
+                timeout=10,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    def _prime_local_sudo(self) -> bool:
+        """Prime local sudo credentials using sudo -v.
+
+        Prompts for password via stdin and caches credentials for subsequent
+        sudo commands. This avoids embedding passwords in command lines.
+
+        Returns:
+            True if sudo credentials were successfully cached, False otherwise
+        """
+        # Check if we already have passwordless sudo for btrfs
+        # Use btrfs --version instead of true since sudoers may only allow btrfs
+        try:
+            result = subprocess.run(
+                ["sudo", "-n", "btrfs", "--version"],
+                capture_output=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                logger.debug("Local passwordless sudo for btrfs available")
+                return True
+        except Exception:
+            pass
+
+        # Need to prompt for password
+        sudo_password = self._get_sudo_password()
+        if not sudo_password:
+            logger.error("No sudo password available for local priming")
+            return False
+
+        try:
+            # Use sudo -S -v to validate and cache credentials
+            # -S reads password from stdin, -v validates without running a command
+            result = subprocess.run(
+                ["sudo", "-S", "-v"],
+                input=(sudo_password + "\n").encode(),
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                logger.debug("Local sudo credentials cached successfully")
+                return True
+            else:
+                stderr = result.stderr.decode(errors="replace")
+                logger.error(f"Failed to cache local sudo credentials: {stderr}")
+                return False
+        except subprocess.TimeoutExpired:
+            logger.error("Timeout while priming local sudo credentials")
+            return False
+        except Exception as e:
+            logger.error(f"Error priming local sudo credentials: {e}")
+            return False
+
+    def _prime_remote_sudo(self) -> bool:
+        """Prime remote sudo credentials using sudo -v over SSH.
+
+        Uses the SSH ControlMaster connection to run sudo -v on the remote host,
+        caching credentials for subsequent sudo commands.
+
+        Returns:
+            True if remote sudo credentials were successfully cached, False otherwise
+        """
+        if not self._is_master_active():
+            logger.error("SSH master connection not active")
+            return False
+
+        # Check if remote has passwordless sudo for btrfs
+        # Use btrfs --version instead of true since sudoers may only allow btrfs
+        try:
+            result = self._exec_remote_command(
+                ["sudo", "-n", "btrfs", "--version"],
+                check=False,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                logger.debug("Remote passwordless sudo for btrfs available")
+                return True
+        except Exception:
+            pass
+
+        # Need to prompt for password
+        sudo_password = self._get_sudo_password()
+        if not sudo_password:
+            logger.error("No sudo password available for remote priming")
+            return False
+
+        # Build SSH command to run sudo -S -v on remote
+        control_path = str(self.ssh_manager.control_path)
+        ssh_user = self.config.get("username", "root")
+        ssh_port = self.config.get("port")
+        remote_host = f"{ssh_user}@{self.hostname}"
+
+        ssh_cmd = [
+            "ssh",
+            "-o",
+            f"ControlPath={control_path}",
+            "-o",
+            "BatchMode=no",
+        ]
+        if ssh_port:
+            ssh_cmd.extend(["-p", str(ssh_port)])
+        ssh_cmd.extend([remote_host, "sudo", "-S", "-v"])
+
+        try:
+            result = subprocess.run(
+                ssh_cmd,
+                input=(sudo_password + "\n").encode(),
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                logger.debug("Remote sudo credentials cached successfully")
+                return True
+            else:
+                stderr = result.stderr.decode(errors="replace")
+                logger.error(f"Failed to cache remote sudo credentials: {stderr}")
+                return False
+        except subprocess.TimeoutExpired:
+            logger.error("Timeout while priming remote sudo credentials")
+            return False
+        except Exception as e:
+            logger.error(f"Error priming remote sudo credentials: {e}")
+            return False
+
+    def _estimate_snapshot_size(
+        self, snapshot_path: str, parent_path: Optional[str] = None
+    ) -> Optional[int]:
+        """Estimate the size of a snapshot transfer for progress display.
+
+        For full transfers: Uses btrfs subvolume show to get exclusive data size.
+        For incremental transfers: Returns None (indeterminate) since estimating
+        the delta accurately is expensive and the actual transfer is usually fast.
+
+        Args:
+            snapshot_path: Path to the snapshot
+            parent_path: Optional parent snapshot path for incremental transfers
+
+        Returns:
+            Estimated size in bytes, or None if unable to determine or incremental
+        """
+        # For incremental transfers, return None (indeterminate progress)
+        # The delta size is hard to estimate accurately without doing the actual send
+        if parent_path and os.path.exists(parent_path):
+            logger.debug(
+                "Incremental transfer detected - using indeterminate progress bar"
+            )
+            return None
+
+        # Try btrfs subvolume show first for full transfers
+        try:
+            result = subprocess.run(
+                ["sudo", "btrfs", "subvolume", "show", snapshot_path],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                # Parse "Exclusive" line for data size
+                for line in result.stdout.splitlines():
+                    if "Exclusive" in line and "Exclusive" not in line.split(":")[
+                        0
+                    ].strip().replace(" ", ""):
+                        continue
+                    if line.strip().startswith("Exclusive"):
+                        # Format: "Exclusive: 1.23GiB" or similar
+                        size_str = line.split(":")[-1].strip()
+                        return self._parse_size_string(size_str)
+        except Exception as e:
+            logger.debug(f"btrfs subvolume show failed: {e}")
+
+        # Fallback to du
+        try:
+            result = subprocess.run(
+                ["sudo", "du", "-sb", snapshot_path],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if result.returncode == 0:
+                size_str = result.stdout.split()[0]
+                return int(size_str)
+        except Exception as e:
+            logger.debug(f"du failed: {e}")
+
+        return None
+
+    def _parse_size_string(self, size_str: str) -> Optional[int]:
+        """Parse a human-readable size string to bytes.
+
+        Args:
+            size_str: Size string like "1.23GiB", "500MiB", "1024KiB"
+
+        Returns:
+            Size in bytes, or None if parsing fails
+        """
+        size_str = size_str.strip()
+        multipliers = {
+            "B": 1,
+            "KiB": 1024,
+            "MiB": 1024**2,
+            "GiB": 1024**3,
+            "TiB": 1024**4,
+            "KB": 1000,
+            "MB": 1000**2,
+            "GB": 1000**3,
+            "TB": 1000**4,
+            "K": 1024,
+            "M": 1024**2,
+            "G": 1024**3,
+            "T": 1024**4,
+        }
+
+        for suffix, multiplier in sorted(multipliers.items(), key=lambda x: -len(x[0])):
+            if size_str.endswith(suffix):
+                try:
+                    num = float(size_str[: -len(suffix)].strip())
+                    return int(num * multiplier)
+                except ValueError:
+                    continue
+
+        # Try parsing as plain number
+        try:
+            return int(float(size_str))
+        except ValueError:
+            return None
+
+    def _do_piped_transfer(
+        self,
+        source_path: str,
+        dest_path: str,
+        snapshot_name: str,
+        parent_path: Optional[str] = None,
+        show_progress: bool = False,
+    ) -> bool:
+        """Execute btrfs send | ssh btrfs receive transfer with progress.
+
+        Uses Paramiko for password-based sudo (secure stdin handling),
+        or falls back to shell pipeline for passwordless sudo.
+
+        Args:
+            source_path: Path to the source snapshot
+            dest_path: Destination path on remote
+            snapshot_name: Name of the snapshot being transferred
+            parent_path: Optional parent snapshot for incremental transfer
+            show_progress: Whether to show progress bars during transfer
+
+        Returns:
+            True if transfer succeeded, False otherwise
+        """
+        use_sudo = self.config.get("ssh_sudo", False)
+        passwordless_available = self.config.get("passwordless_sudo_available", False)
+        sudo_password = self._cached_sudo_password
+
+        # If we need password-based sudo but don't have a password, try to get one now
+        if use_sudo and not passwordless_available and not sudo_password:
+            logger.debug("No cached password, prompting for sudo password...")
+            sudo_password = self._get_sudo_password()
+            if sudo_password:
+                self._cached_sudo_password = sudo_password
+            else:
+                logger.error("Password-based sudo required but no password provided")
+                return False
+
+        # One route for every case: passwordless sudo, no sudo at all, and
+        # password sudo, which used to have a second implementation on top of
+        # paramiko. Measured .203 -> .70 against a password-required sudo with
+        # key-based login: transfer, compressed transfer and restore all
+        # byte-identical, a wrong password failing non-zero with nothing written,
+        # and the two implementations agreeing exactly. So the second one went.
+        return self._do_shell_pipeline_transfer(
+            source_path=source_path,
+            dest_path=dest_path,
+            snapshot_name=snapshot_name,
+            parent_path=parent_path,
+            password_sudo=bool(use_sudo) and not passwordless_available,
+            show_progress=show_progress,
+        )
+
+    def _do_shell_pipeline_transfer(
+        self,
+        source_path: str,
+        dest_path: str,
+        snapshot_name: str,
+        parent_path: Optional[str] = None,
+        show_progress: bool = False,
+        password_sudo: bool = False,
+    ) -> bool:
+        """Execute transfer using a shell pipeline.
+
+        Args:
+            source_path: Path to the source snapshot
+            dest_path: Destination path on remote
+            snapshot_name: Name of the snapshot being transferred
+            parent_path: Optional parent snapshot for incremental transfer
+            show_progress: Whether to show progress bars during transfer
+
+        Returns:
+            True if transfer succeeded, False otherwise
+        """
+        # Recorded BEFORE the transfer: once bytes have been written, a partial
+        # this run left and a backup that was already at that path are the same
+        # observation, and the failure path below deletes by path.
+        received_name = Path(source_path).name
+        artifact_preexisted = self.artifact_exists(dest_path, received_name)
+
+        import sys
+
+        control_path = str(self.ssh_manager.control_path)
+        ssh_user = self.config.get("username", "root")
+        ssh_port = self.config.get("port")
+        remote_host = f"{ssh_user}@{self.hostname}"
+        use_sudo = self.config.get("ssh_sudo", False)
+
+        # Estimate snapshot size for progress display (None for incremental)
+        estimated_size = self._estimate_snapshot_size(source_path, parent_path)
+        is_incremental = parent_path and os.path.exists(parent_path)
+
+        # Auto-enable progress for full transfers (they can take a long time)
+        if not is_incremental and not show_progress:
+            show_progress = True
+            logger.debug("Auto-enabling progress for full transfer")
+
+        if estimated_size:
+            size_mb = estimated_size / (1024 * 1024)
+            logger.info(f"Estimated snapshot size: {size_mb:.1f} MiB")
+        elif is_incremental:
+            logger.info(
+                "Incremental transfer - size will be determined during transfer"
+            )
+
+        # Build send command
+        send_parts = ["sudo", "btrfs", "send"]
+        if is_incremental and parent_path is not None:
+            send_parts.extend(["-p", shlex.quote(parent_path)])
+            logger.info(f"Using parent: {os.path.basename(parent_path)}")
+        send_parts.append(shlex.quote(source_path))
+        send_cmd = " ".join(send_parts)
+
+        # Build pv command for progress (only if show_progress is enabled).
+        # -B matches _find_buffer_program: pv's default buffer is around 400 KiB,
+        # so without it this pv smooths almost nothing while the other path's
+        # does. One figure, wherever pv is invoked.
+        if show_progress:
+            has_pv = self._check_command_exists("pv")
+            if has_pv:
+                if estimated_size:
+                    pv_cmd = (
+                        f"pv -f -p -t -e -r -b -B {self.BUFFER_SIZE} "
+                        f"-s {estimated_size}"
+                    )
+                else:
+                    pv_cmd = f"pv -f -p -t -e -r -b -B {self.BUFFER_SIZE}"
+            else:
+                pv_cmd = "cat"
+                logger.warning("pv not found - progress display unavailable")
+        else:
+            pv_cmd = "cat"
+
+        # Build SSH command
+        ssh_parts = ["ssh", "-o", f"ControlPath={shlex.quote(control_path)}"]
+        ssh_parts.extend(["-o", "BatchMode=yes"])
+        ssh_parts.append("-T")
+        if ssh_port:
+            ssh_parts.extend(["-p", str(ssh_port)])
+        # Quoted because ssh_parts is joined into ONE string and run with
+        # shell=True below; validated_ssh_host already refuses a host that
+        # could exploit this, and quoting means the shell path does not
+        # depend on that being the only guard.
+        ssh_parts.append(shlex.quote(remote_host))
+
+        # Build remote command with orphan protection.
+        # _build_receive_command escapes the destination itself; do not pre-quote.
+        # The extra shlex.quote below is for the LOCAL bash pipeline, not the remote.
+        #
+        # This path is reached for password-based sudo too -- it is now the only
+        # implementation of it, the paramiko one having been removed.
+        # It used to hardcode password_on_stdin=False, emitting `sudo -n` at a
+        # remote that wants a password: sudo refused, the receive died, and the
+        # operator saw `zstd: Broken pipe` from the local end of the pipeline
+        # with nothing naming the real cause.
+        # The CALLER states whether a password is needed rather than this method
+        # guessing from config. `passwordless_sudo_available` is only populated
+        # once diagnostics have run, so re-deriving it here made every caller
+        # that had not run them look like a password remote and demand a
+        # password where `sudo -n` had always worked.
+        needs_password = bool(use_sudo) and password_sudo
+        sudo_password = self._get_sudo_password() if needs_password else None
+        if needs_password and not sudo_password:
+            logger.error(
+                "This remote's sudo requires a password and none is available. "
+                "Set BTRFS_BACKUP_SUDO_PASSWORD, or grant the remote user "
+                "passwordless sudo for /usr/bin/btrfs."
+            )
+            return False
+
+        compress_method = self._stream_compress_method()
+        remote_cmd = _build_receive_command(
+            dest_path,
+            use_sudo=use_sudo,
+            password_on_stdin=needs_password,
+            decompress=compress_method,
+        )
+        ssh_parts.append(shlex.quote(remote_cmd))
+        ssh_cmd = " ".join(ssh_parts)
+
+        # Compression, when configured, sits between the progress meter and ssh
+        # so only compressed bytes cross the wire. _build_receive_command puts
+        # the matching decompressor on the remote side.
+        if compress_method:
+            from ..core.transfer import COMPRESSION_PROGRAMS
+
+            compressor = " ".join(
+                shlex.quote(part)
+                for part in COMPRESSION_PROGRAMS[compress_method]["compress"]
+            )
+            logger.info(
+                "Compressing the transfer with %s (decompressed on the remote "
+                "before btrfs receive)",
+                compress_method,
+            )
+            stream = f"{send_cmd} | {pv_cmd} | {compressor}"
+        else:
+            stream = f"{send_cmd} | {pv_cmd}"
+
+        if needs_password:
+            # `sudo -S` reads the password from the first line of ITS stdin, and
+            # its stdin is whatever crosses the wire. The line therefore has to be
+            # OUTSIDE the compression: prepended to the compressed stream, not fed
+            # through the compressor, or the remote sudo would be handed
+            # compressed bytes where it expects a password and the operator would
+            # be told the password was wrong.
+            #
+            # The password reaches the shell through the environment rather than
+            # the command line, so it does not appear in `ps` for other users.
+            full_pipeline = (
+                f'{{ printf "%s\\n" "$BTRFS_BACKUP_SUDO_PW"; {stream}; }} | {ssh_cmd}'
+            )
+        else:
+            full_pipeline = f"{stream} | {ssh_cmd}"
+
+        logger.info(f"Transferring {snapshot_name} to {self.hostname}:{dest_path}")
+        logger.debug(f"Pipeline: {full_pipeline}")
+
+        # Run the pipeline under bash with `pipefail` so a failure of `btrfs send`
+        # or `pv` fails the whole pipeline. Without pipefail the shell reports only
+        # the exit status of the last stage (the `ssh`/receive), which masks an
+        # upstream send failure and yields a truncated/empty backup reported as
+        # success. Degrade to plain sh (with a warning) only if bash is absent.
+        bash_path = shutil.which("bash")
+        # The password travels in the environment of this one subprocess, never
+        # in an argument vector: /proc/<pid>/environ is readable only by its own
+        # user, whereas /proc/<pid>/cmdline is world-readable, so a command line
+        # would show the password to every user on the machine.
+        pipeline_env = dict(os.environ)
+        if needs_password and sudo_password:
+            pipeline_env["BTRFS_BACKUP_SUDO_PW"] = sudo_password
+        try:
+            if bash_path:
+                proc = track_child(
+                    subprocess.Popen(
+                        "set -o pipefail; " + full_pipeline,
+                        shell=True,
+                        executable=bash_path,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        env=pipeline_env,
+                    )
+                )
+            else:
+                logger.warning(
+                    "bash not found; running transfer pipeline without pipefail "
+                    "(a btrfs send or pv failure may be masked by ssh's exit code)"
+                )
+                proc = track_child(
+                    subprocess.Popen(
+                        full_pipeline,
+                        shell=True,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        env=pipeline_env,
+                    )
+                )
+
+            stderr_lines: List[str] = []
+
+            def stream_stderr() -> None:
+                stderr_stream = proc.stderr
+                if stderr_stream is not None:
+                    for chunk in iter(lambda: stderr_stream.read(80), b""):
+                        if chunk:
+                            text = chunk.decode(errors="replace")
+                            sys.stderr.write(text)
+                            sys.stderr.flush()
+                            stderr_lines.append(text)
+
+            stderr_thread = threading.Thread(target=stream_stderr, daemon=True)
+            stderr_thread.start()
+
+            # This path runs whenever ssh_sudo is set without passwordless sudo.
+            # It used to be a bare proc.wait(): no stall check, no wall clock, no
+            # bound of any kind, so a remote that wedged mid-apply hung the client
+            # forever -- while the README promised a fallback limit would apply.
+            # wait_with_progress is the same primitive the other receive paths
+            # use and is a drop-in for the blocking call: it gives up when bytes
+            # stop moving, and falls back to a wall limit when progress cannot be
+            # measured at all.
+            from ..core.transfer import wait_with_progress
+
+            try:
+                wait_with_progress(
+                    proc,
+                    stall_pids=[proc.pid],
+                    stall_timeout=int(
+                        self.config.get("transfer_stall_timeout", STALL_TIMEOUT_SECONDS)
+                    ),
+                    description="ssh sudo pipeline transfer",
+                )
+            except subprocess.TimeoutExpired:
+                logger.error(
+                    "Transfer stopped making progress and was ended; the remote "
+                    "receive may have wedged mid-apply."
+                )
+                proc.kill()
+                proc.wait()
+            stderr_thread.join(timeout=5)
+
+            # received_name (the source basename: == snapshot_name for native,
+            # "snapshot" for snapper) was resolved before the transfer, together
+            # with whether anything already occupied that destination path.
+            if proc.returncode != 0:
+                stderr_output = "".join(stderr_lines)
+                logger.error(f"Transfer failed (exit {proc.returncode})")
+                if stderr_output:
+                    logger.error(f"Error output: {stderr_output}")
+                self._cleanup_partial_subvolume(
+                    dest_path,
+                    received_name,
+                    created_by_this_run=not artifact_preexisted,
+                )
+                return False
+
+            logger.info("Transfer completed successfully")
+
+            # The pipeline exited 0 (pipefail), so the receive succeeded. A failed
+            # verification here is inconclusive: report failure but do NOT delete
+            # the received subvolume (it may be a good backup and only the verify
+            # step failed).
+            if self._verify_snapshot_exists(dest_path, received_name):
+                logger.info(f"Snapshot {received_name} verified on remote")
+                return True
+            else:
+                logger.error(
+                    "Transfer verification inconclusive - leaving received "
+                    "subvolume in place at %s for reconciliation",
+                    dest_path,
+                )
+                return False
+
+        except Exception as e:
+            logger.error(f"Transfer failed with exception: {e}")
+            return False
+
+    def _try_sudo_cached_transfer(
+        self,
+        source_path: str,
+        dest_path: str,
+        snapshot_name: str,
+        parent_path: Optional[str] = None,
+        show_progress: bool = False,
+    ) -> bool:
+        """Transfer using pre-fetched sudo password with pv for progress.
+
+        This method:
+        1. Pre-fetches sudo password via getpass (stored securely in memory)
+        2. Primes local sudo credentials
+        3. Primes remote sudo credentials via SSH
+        4. Runs transfer: sudo btrfs send | pv | ssh 'sudo btrfs receive'
+
+        Password is passed via environment variable to shell (not in cmdline),
+        then injected into stdin for sudo -S on the remote side.
+
+        Args:
+            source_path: Path to the source snapshot
+            dest_path: Destination path on remote
+            snapshot_name: Name of the snapshot being transferred
+            parent_path: Optional parent snapshot for incremental transfer
+            show_progress: Whether to show progress bars during transfer
+
+        Returns:
+            True if transfer succeeded, False otherwise
+        """
+        # Verify SSH master connection is active
+        if not self._is_master_active():
+            logger.error("SSH master connection is down")
+            try:
+                self.ssh_manager.stop_master()
+                self.ssh_manager.start_master()
+                if not self._is_master_active():
+                    logger.error("Failed to re-establish SSH master connection")
+                    return False
+                logger.info("SSH master connection re-established")
+            except Exception as e:
+                logger.error(f"Failed to restart SSH master: {e}")
+                return False
+
+        # Step 0: Pre-fetch sudo password upfront (before any transfers)
+        if not self._cached_sudo_password:
+            logger.info("Collecting sudo password for transfer...")
+            password = self._get_sudo_password()
+            if not password:
+                logger.error(
+                    "No sudo password provided - cannot proceed with password-based sudo"
+                )
+                return False
+            self._cached_sudo_password = password
+            logger.debug("Sudo password collected and cached securely")
+
+        # Step 1: Prime local sudo credentials
+        logger.info("Priming local sudo credentials...")
+        if not self._prime_local_sudo():
+            logger.error("Failed to prime local sudo credentials")
+            return False
+
+        # Step 2: Prime remote sudo credentials
+        logger.info("Priming remote sudo credentials...")
+        if not self._prime_remote_sudo():
+            logger.error("Failed to prime remote sudo credentials")
+            return False
+
+        # Step 3: Run the actual transfer with pv for progress
+        logger.info(f"Starting transfer of {snapshot_name}...")
+        return self._do_piped_transfer(
+            source_path=source_path,
+            dest_path=dest_path,
+            snapshot_name=snapshot_name,
+            parent_path=parent_path,
+            show_progress=show_progress,
+        )
+
+    def _try_direct_transfer(
+        self,
+        source_path: str,
+        dest_path: str,
+        snapshot_name: str,
+        parent_path: Optional[str] = None,
+        max_wait_time: int = DEFAULT_TRANSFER_TIMEOUT,
+        show_progress: bool = False,
+        **kwargs: Any,
+    ) -> bool:
+        """Direct SSH transfer for btrfs-backup-ng, using robust logic and logging."""
+        logger.debug("Entering _try_direct_transfer")
+        logger.debug(f"Source path: {source_path}")
+        logger.debug(f"Destination path: {dest_path}")
+        logger.debug(f"Snapshot name: {snapshot_name}")
+        logger.debug(f"Parent path: {parent_path}")
+        logger.debug(f"SSH sudo: {self.config.get('ssh_sudo', False)}")
+        logger.debug(f"Show progress: {show_progress}")
+
+        # `btrfs receive` names the received subvolume after the *source* subvolume's
+        # basename, not after snapshot_name. For native backups these are identical
+        # (the snapshot dir is named snapshot_name), but for snapper the source is
+        # <config>/.snapshots/<N>/snapshot, so the received subvol is always named
+        # "snapshot". Verification must look for this real name or it will wrongly
+        # report failure and delete a backup that transferred correctly.
+        received_name = Path(source_path).name
+        logger.debug(f"Received subvolume name (for verification): {received_name}")
+        # Recorded BEFORE the transfer, for the reason above.
+        artifact_preexisted = self.artifact_exists(dest_path, received_name)
+
+        # Check if source path exists
+        if not os.path.exists(source_path):
+            logger.error(f"Source path does not exist: {source_path}")
+            return False
+
+        # Run pre-transfer diagnostics. NOT force_refresh: send_receive has just
+        # refreshed this exact cache key on the way in, so this reads a verdict
+        # seconds old. Refreshing again would pay for all eight probes twice per
+        # snapshot to answer the same question.
+        logger.info("Verifying SSH connectivity and filesystem readiness...")
+        diagnostics = self._run_diagnostics(dest_path)
+        if not all(
+            [
+                diagnostics["ssh_connection"],
+                diagnostics["btrfs_command"],
+                diagnostics["write_permissions"],
+                diagnostics["btrfs_filesystem"],
+            ]
+        ):
+            logger.error("Pre-transfer diagnostics failed")
+            return False
+
+        # Use invoke transfer if ssh_sudo and no passwordless sudo
+        if self.config.get("ssh_sudo", False) and not diagnostics.get(
+            "passwordless_sudo", False
+        ):
+            logger.info("Using sudo credential caching for password-based sudo")
+            return self._try_sudo_cached_transfer(
+                source_path=source_path,
+                dest_path=dest_path,
+                snapshot_name=snapshot_name,
+                parent_path=parent_path,
+                show_progress=show_progress,
+            )
+
+        # Find buffer program for progress display and reliability
+        buffer_name, buffer_cmd = self._find_buffer_program()
+
+        # Get the source snapshot object to use proper send method
+
+        # Find the source endpoint (should be passed in or accessible)
+        # For now, we'll create a minimal snapshot object to use the source endpoint's send method
+        try:
+            # Create a snapshot object that represents our source
+            # We need to get this from the source path - this is a limitation of the current design
+            # For now, we'll use the traditional approach but with better process management
+
+            # Determine parent for incremental transfer
+            if parent_path and os.path.exists(parent_path):
+                logger.info(f"Using incremental transfer with parent: {parent_path}")
+                # We'll handle incremental logic in the actual send call
+            else:
+                logger.info("Using full transfer")
+        except Exception as e:
+            logger.error(f"Error setting up transfer parameters: {e}")
+            return False
+
+        try:
+            # Build the proper btrfs send command
+            logger.info(f"Starting transfer from {source_path}...")
+            start_time = time.time()
+
+            # Create the btrfs send command
+            send_cmd = ["btrfs", "send", *self.btrfs_flags]
+            if parent_path and os.path.exists(parent_path):
+                send_cmd.extend(["-p", parent_path])
+                logger.debug(f"Using incremental send with parent: {parent_path}")
+            send_cmd.append(source_path)
+
+            # `btrfs send` reads the subvolume tree and needs root, so a non-root
+            # run has to elevate exactly as every other local btrfs call in this
+            # codebase does. Without this, no ssh:// backup worked as an ordinary
+            # user at all -- measured, the send died with
+            # "ERROR: cannot open '/home'" before a byte moved, whatever else was
+            # configured. `sudo -n` is what the documented sudoers grants
+            # (NOPASSWD: /usr/bin/btrfs); running as root skips it entirely.
+            if os.geteuid() != 0:
+                send_cmd = ["sudo", "-n"] + send_cmd
+
+            logger.debug(f"Local send command: {' '.join(send_cmd)}")
+
+            # Start the local btrfs send process
+            send_process = track_child(
+                subprocess.Popen(
+                    send_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0
+                )
+            )
+            tail_stderr(
+                send_process,
+                log_as="btrfs send" if self.config.get("btrfs_debug") else None,
+            )
+
+            # Stages, in THIS path's order: buffer first, then compress. Built by
+            # the shared chainer rather than by hand -- three hand-written copies
+            # of this construction is how the same descriptor leak came to exist
+            # in all three, and chain_stages releases each pipe as it hands it on.
+            def _buffer(stdin):
+                if not buffer_cmd:
+                    return None
+                logger.debug(f"Using {buffer_name} to improve transfer reliability")
+                return track_child(
+                    subprocess.Popen(
+                        buffer_cmd.split(),
+                        stdin=stdin,
+                        stdout=subprocess.PIPE,
+                        bufsize=0,
+                    )
+                )
+
+            # Stream compression: compress BEFORE the wire, decompress after it.
+            # The decompressor is added to the remote command by _btrfs_receive,
+            # so the two halves are always configured from the same value -- the
+            # missing half is what made this option a no-op for ssh:// targets.
+            # Nothing changes when compression is off.
+            compress_method = self._stream_compress_method()
+
+            def _compress(stdin):
+                if not compress_method:
+                    return None
+                from ..core.transfer import COMPRESSION_PROGRAMS
+
+                logger.info(
+                    "Compressing the transfer with %s (decompressed on the "
+                    "remote before btrfs receive)",
+                    compress_method,
+                )
+                return track_child(
+                    subprocess.Popen(
+                        COMPRESSION_PROGRAMS[compress_method]["compress"],
+                        stdin=stdin,
+                        stdout=subprocess.PIPE,
+                        bufsize=0,
+                    )
+                )
+
+            from ..core.transfer import chain_stages
+
+            pipe_output, stage_list = chain_stages(
+                send_process.stdout,
+                [("buffer", _buffer), ("compress", _compress)],
+            )
+            staged = dict(stage_list)
+            buffer_process = staged.get("buffer")
+            compress_process = staged.get("compress")
+
+            # Start the remote receive process
+            logger.debug("Starting remote btrfs receive process")
+            # Pass the method that was actually used, not the configured one:
+            # if compression was skipped, the remote must not decompress.
+            receive_process = self._btrfs_receive(
+                dest_path, pipe_output, decompress=compress_method
+            )
+
+            if not receive_process:
+                logger.error("Failed to start remote receive process")
+                return False
+
+            # Use the new enhanced monitoring system
+            processes = {
+                "send": send_process,
+                "receive": receive_process,
+                "buffer": buffer_process,
+                # Monitors read send/receive and .get("buffer"); this is carried
+                # for cleanup and for the exit-status check below. "It exits on
+                # EOF when the send finishes" is only the HAPPY path: a
+                # compressor that dies mid-stream truncates the backup, and its
+                # status has to be looked at rather than assumed.
+                "compress": compress_process,
+            }
+
+            # Choose monitoring system based on configuration
+            use_simple_progress = self.config.get("simple_progress", True)
+            if use_simple_progress:
+                logger.debug(
+                    "SYSTEM: Using simplified monitoring system for basic process tracking (default)..."
+                )
+                transfer_succeeded = self._simple_transfer_monitor(
+                    processes=processes,
+                    start_time=start_time,
+                    dest_path=dest_path,
+                    snapshot_name=snapshot_name,
+                    max_wait_time=max_wait_time,
+                    received_name=received_name,
+                )
+            else:
+                logger.debug(
+                    "SYSTEM: Using enhanced monitoring system for real-time progress..."
+                )
+                transfer_succeeded = self._monitor_transfer_progress(
+                    processes=processes,
+                    start_time=start_time,
+                    dest_path=dest_path,
+                    snapshot_name=snapshot_name,
+                    max_wait_time=max_wait_time,
+                    received_name=received_name,
+                )
+
+            # The monitor is authoritative: it has already required that send and
+            # receive both exited 0 AND that the received subvolume verifies, or it
+            # returned False (timeout, nonzero exit, or missing subvolume). Success
+            # is NOT re-derived from path existence here — doing so was the original
+            # false-success bug (a partial/failed receive that left a directory was
+            # reported as a valid backup).
+
+            # A compressor that failed truncates the stream, and a truncated
+            # stream can still leave the monitor satisfied. Demote the result
+            # rather than report a backup that is missing its tail.
+            if compress_process is not None:
+                try:
+                    compress_process.wait(timeout=10)
+                except Exception:  # noqa: BLE001 - handled by the terminate loop below
+                    logger.warning("Compressor did not exit; terminating it")
+                    compress_process.kill()
+                if compress_process.returncode not in (0, None):
+                    logger.error(
+                        "Compressor %s exited %s; the stream sent was incomplete",
+                        compress_method,
+                        compress_process.returncode,
+                    )
+                    transfer_succeeded = False
+
+            # Clean up any lingering processes.
+            all_processes = [send_process, receive_process]
+            if buffer_process:
+                all_processes.append(buffer_process)
+            if compress_process:
+                all_processes.append(compress_process)
+            for proc in all_processes:
+                if proc.poll() is None:
+                    logger.debug("Terminating remaining process...")
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception:
+                        proc.kill()
+
+            elapsed_time = time.time() - start_time
+            logger.info(f"Transfer completed in {elapsed_time:.2f} seconds")
+
+            # Both processes are done. Finish their stderr tails whatever the
+            # outcome, so a run under btrfs_debug does not exit with the
+            # remote receive's lines still queued (core.transfer.finish_stderr).
+            finish_stderr(send_process, receive_process)
+
+            if transfer_succeeded:
+                logger.info("SUCCESS: TRANSFER VERIFICATION SUCCESSFUL")
+                return True
+
+            logger.error("FAILED: TRANSFER FAILED")
+            # Remove a partial ONLY when a process genuinely failed (nonzero exit or
+            # a timeout kill), which is exactly when a partial subvolume can exist.
+            # If the receive exited 0 but verification was merely inconclusive (e.g.
+            # a transient SSH/timeout on `btrfs subvolume show`), a GOOD received
+            # subvolume may be present -- deleting it would destroy a successful
+            # backup. In that case leave the artifact in place for a retry / the
+            # next run's skip-detection to reconcile.
+            recv_rc = receive_process.returncode
+            send_rc = send_process.returncode
+            receive_failed = recv_rc is not None and recv_rc != 0
+            send_failed = send_rc is not None and send_rc != 0
+            if receive_failed or send_failed:
+                self._cleanup_partial_subvolume(
+                    dest_path,
+                    received_name,
+                    created_by_this_run=not artifact_preexisted,
+                )
+            else:
+                logger.warning(
+                    "Receive completed but verification was inconclusive; leaving "
+                    "the received subvolume in place at %s for reconciliation",
+                    dest_path,
+                )
+            return False
+
+        except Exception as e:
+            logger.error(f"Error during transfer: {e}")
+            logger.debug(f"Full error details: {e}", exc_info=True)
+            return False
+
+    def _receive_destination(self, source_path: Any) -> str:
+        """The subvolume path a receive of ``source_path`` will create here.
+
+        ``btrfs receive`` names the received subvolume after the SOURCE
+        basename, not after the snapshot name -- for snapper that is always
+        "snapshot", under ``.snapshots/<n>/``. This mirrors the same derivation
+        the transfer and verification paths already use, so the lock names the
+        thing that actually collides.
+        """
+        dest = str(self._normalize_path(self.config["path"])).rstrip("/")
+        return f"{dest}/{Path(str(source_path)).name}"
+
+    def _require_remote_destination(self, dest_path) -> bool:
+        """Refuse -- never create -- a missing remote destination.
+
+        Returns True when the destination directory exists on the remote.
+        On refusal, ``_last_transfer_error`` carries the diagnosis INCLUDING
+        the remedy, because a refusal that does not name the fix merely
+        relocates the confusion. The probe is a plain, unelevated ``test -d``
+        on purpose: the documented sudoers policy for ssh:// scopes NOPASSWD
+        to /usr/bin/btrfs alone, so elevating a file utility here would fail
+        against exactly the policy the README recommends -- hence the message
+        says "does not exist (or cannot be read)" rather than claiming more
+        than the probe can know.
+        """
+        normalized_path = self._normalize_path(dest_path)
+        self._last_transfer_error: Optional[str]
+        try:
+            result = self._exec_remote_command(
+                ["test", "-d", normalized_path], check=False
+            )
+        except Exception as e:  # noqa: BLE001 - a probe failure must not raise here
+            self._last_transfer_error = (
+                f"Could not check the remote destination {normalized_path}: {e}"
+            )
+            logger.error("%s", self._last_transfer_error)
+            return False
+        if result.returncode != 0 and result.returncode != 1:
+            # `test -d` answers with 1; any other code (255 = the ssh
+            # transport) is not a verdict about the directory. Refuse, but
+            # with the failure's own identity.
+            stderr = (
+                result.stderr.decode("utf-8", errors="replace")
+                if getattr(result, "stderr", None)
+                else ""
+            )
+            self._last_transfer_error = (
+                f"Could not check the remote destination {normalized_path}: "
+                f"the probe exited {result.returncode}. {stderr}".strip()
+            )
+            logger.error("%s", self._last_transfer_error)
+            return False
+        if result.returncode != 0:
+            user = self.config.get("username")
+            host = f"{user}@{self.hostname}" if user else str(self.hostname)
+            self._last_transfer_error = (
+                f"Destination {normalized_path} does not exist on {host} (or "
+                "cannot be read by that user). btrfs-backup-ng does not create "
+                "a configured destination: if it lives on a removable or "
+                "network filesystem, it is most likely not mounted. Mount it, "
+                "check the path for a typo, or create it yourself: "
+                f"ssh {host} 'mkdir -p {normalized_path}'. Nothing was created."
+            )
+            logger.error("%s", self._last_transfer_error)
+            return False
+        return True
+
+    def send_receive(
+        self,
+        snapshot: "__util__.Snapshot",
+        parent: Optional["__util__.Snapshot"] = None,
+        clones: Optional[List["__util__.Snapshot"]] = None,
+        timeout: int = DEFAULT_TRANSFER_TIMEOUT,
+        show_progress: bool = False,
+        retry_policy: Optional[RetryPolicy] = None,
+    ) -> bool:
+        """Perform direct SSH pipe transfer with verification and retry.
+
+        This method implements a direct SSH pipe for btrfs send/receive operations,
+        providing better reliability and verification than traditional methods.
+        Transient network errors are automatically retried with exponential backoff.
+
+        Args:
+            snapshot: The snapshot object to transfer
+            parent: Optional parent snapshot for incremental transfers
+            clones: Optional clones for the transfer (not currently used)
+            timeout: Timeout in seconds for the transfer operation
+            show_progress: Whether to show progress bars during transfer
+            retry_policy: Optional retry policy (defaults to DEFAULT_TRANSFER_POLICY)
+
+        Returns:
+            bool: True if transfer was successful and verified, False otherwise
+        """
+        logger.debug("Starting direct SSH pipe transfer for %s", snapshot)
+
+        # Reset the per-transfer diagnostic. A failing monitor records the send/
+        # receive stderr here so _do_direct_pipe_transfer can surface the actionable
+        # cause in the raised error (not just a separate ERROR log line). Reset once
+        # up front; across retries it holds the LAST attempt's cause.
+        self._last_transfer_error = None
+
+        # Get snapshot details
+        snapshot_path = str(snapshot.get_path())
+        snapshot_name = snapshot.get_name()
+        dest_path = self.config["path"]
+
+        logger.debug("Source snapshot path: %s", snapshot_path)
+        logger.debug("Destination path: %s", dest_path)
+        logger.debug("Snapshot name: %s", snapshot_name)
+
+        # Check if parent is provided for incremental transfers
+        parent_path = None
+        if parent:
+            parent_path = str(parent.get_path())
+            logger.debug("Parent snapshot path: %s", parent_path)
+
+        # The destination is NOT created here (34904c6, extended to remote):
+        # an unmounted remote NFS share or secondary mount would take the
+        # backup onto the remote ROOT filesystem, exactly the local failure
+        # that rule closed. This block used to run `mkdir -p` on the remote,
+        # so a fresh or vanished destination was silently invented at the
+        # moment of the first transfer. It now refuses, naming the remedy.
+        if not self._require_remote_destination(dest_path):
+            return False
+
+        # Run diagnostics to ensure everything is ready.
+        #
+        # force_refresh, because this is the gate that decides whether to start
+        # moving data. The cache holds a verdict for 300s, and force_refresh
+        # existed with no caller anywhere -- so "verifying SSH connectivity and
+        # filesystem readiness" passed for five minutes after the host went away,
+        # the destination was unmounted, or the remote filesystem went read-only.
+        #
+        # It is worse than a stale pass: the cached value is also written back to
+        # config["passwordless_sudo_available"], which _build_remote_command reads
+        # for EVERY remote command, and the sudo branch below is chosen by the
+        # same stale boolean -- a stale True keeps the run on the direct path and
+        # skips _try_sudo_cached_transfer, the one route that checks the transport
+        # is still alive.
+        #
+        # The cost is eight probes once per snapshot over an already-multiplexed
+        # connection, and _try_direct_transfer's own call below then reads what
+        # this just wrote.
+        logger.debug("Verifying pre-transfer readiness")
+        diagnostics = self._run_diagnostics(dest_path, force_refresh=True)
+        if not all(
+            [
+                diagnostics["ssh_connection"],
+                diagnostics["btrfs_command"],
+                diagnostics["write_permissions"],
+                diagnostics["btrfs_filesystem"],
+            ]
+        ):
+            logger.error("Pre-transfer diagnostics failed")
+            return False
+
+        # The diagnostics above take seconds; a stop requested meanwhile still
+        # starts no stream.
+        if lifecycle.stopped_before(f"the transfer of {snapshot_name}"):
+            return False
+
+        # Use retry framework for the actual transfer
+        policy = retry_policy or DEFAULT_TRANSFER_POLICY
+
+        with RetryContext(policy) as ctx:
+            while not ctx.exhausted:
+                try:
+                    success = self._try_direct_transfer(
+                        source_path=snapshot_path,
+                        dest_path=dest_path,
+                        snapshot_name=snapshot_name,
+                        parent_path=parent_path,
+                        max_wait_time=timeout,
+                        show_progress=show_progress,
+                    )
+
+                    if success:
+                        logger.debug("Direct SSH pipe transfer completed successfully")
+                        ctx.succeed(True)
+                        return True
+                    else:
+                        # Transfer returned False - treat as transient error for retry
+                        error = TransientNetworkError(
+                            f"Transfer failed for {snapshot_name}",
+                            suggested_action="Check network connectivity and retry",
+                        )
+                        if not ctx.record_failure(error):
+                            if lifecycle.stop_requested():
+                                break  # not retried after an interrupt; said below
+                            logger.error(
+                                "Transfer failed after %d attempts", ctx.attempt_number
+                            )
+                            return False
+                        logger.warning(
+                            "Transfer attempt %d failed, retrying in %.1fs...",
+                            ctx.attempt_number,
+                            policy.calculate_delay(ctx.attempt_number - 1),
+                        )
+                        ctx.wait()
+
+                except Exception as e:
+                    # Classify the error to determine if it's retryable
+                    classified = classify_error(e)
+                    if not ctx.record_failure(classified):
+                        if classified.is_retryable and lifecycle.stop_requested():
+                            break  # not retried after an interrupt; said below
+                        if classified.is_retryable:
+                            logger.error(
+                                "Transfer failed after %d attempts: %s",
+                                ctx.attempt_number,
+                                classified.message,
+                            )
+                        else:
+                            logger.error(
+                                "Non-retryable error during transfer: %s",
+                                classified.message,
+                            )
+                            logger.info(
+                                "Suggested action: %s", classified.suggested_action
+                            )
+                        return False
+
+                    logger.warning(
+                        "Retryable error on attempt %d: %s",
+                        ctx.attempt_number,
+                        classified.message,
+                    )
+                    ctx.wait()
+
+        # After Ctrl-C (or a fatal signal) the failed attempt is not repeated:
+        # a terminal's Ctrl-C kills this transfer's children too, and sending
+        # the whole snapshot again is new work the operator has just refused.
+        if lifecycle.stop_requested():
+            logger.error(
+                "Transfer of %s failed; not retrying: the run was interrupted.",
+                snapshot_name,
+            )
+            return False
+
+        # All retries exhausted
+        logger.error(
+            "Transfer failed after exhausting all %d attempts", policy.max_attempts
+        )
+        return False
+
+    def receive_chunked(
+        self,
+        chunk_reader: Any,
+        manifest: Any,
+        show_progress: bool = False,
+        timeout: int = DEFAULT_TRANSFER_TIMEOUT,
+    ) -> bool:
+        """Receive a chunked transfer with verification.
+
+        This method receives pre-chunked data from a ChunkedStreamReader,
+        streaming it through SSH to btrfs receive on the remote host.
+        Each chunk is verified via checksum before being sent.
+
+        Args:
+            chunk_reader: ChunkedStreamReader instance providing chunk data
+            manifest: TransferManifest with chunk information
+            show_progress: Whether to show progress during transfer
+            timeout: Timeout in seconds for the transfer operation
+
+        Returns:
+            bool: True if transfer was successful, False otherwise
+        """
+
+        # Compression is not applied on the chunked path. It writes the sudo
+        # password and then chunk bytes into the same stdin from a Python loop,
+        # so a compressor cannot simply be spliced in without the password going
+        # through it too. Say so rather than accepting the option and quietly
+        # sending the stream uncompressed -- the feature is not removed, it is
+        # not wired here yet.
+        if self._stream_compress_method():
+            logger.warning(
+                "compress=%r is not applied to chunked transfers; this stream "
+                "will be sent uncompressed. The ordinary (non-chunked) ssh "
+                "transfer does compress.",
+                self.config.get("compress"),
+            )
+
+        logger.info(
+            "Starting chunked SSH receive for %s (%d chunks)",
+            manifest.snapshot_name,
+            manifest.chunk_count,
+        )
+
+        dest_path = self._normalize_path(self.config["path"])
+        # btrfs receive names the received subvolume after the source basename
+        # (== snapshot_name for native, "snapshot" for snapper). Compute it up front
+        # so partial-cleanup on the failure paths can target the exact path.
+        received_name = Path(manifest.snapshot_path).name
+        # Recorded BEFORE the receive, for the reason above.
+        artifact_preexisted = self.artifact_exists(dest_path, received_name)
+        use_sudo = self.config.get("ssh_sudo", False)
+        passwordless = self.config.get("passwordless", False) or self.config.get(
+            "passwordless_sudo_available", False
+        )
+
+        # Build the receive command. _build_receive_command escapes the
+        # destination itself and quotes the whole remote script as one argument,
+        # so a path with a space or shell metacharacter is safe here.
+        receive_cmd = _build_receive_command(
+            dest_path=dest_path,
+            use_sudo=use_sudo,
+            password_on_stdin=use_sudo and not passwordless,
+        )
+
+        # Build SSH command
+        ssh_base = self.ssh_manager.get_ssh_base_cmd(force_tty=False)
+        ssh_cmd = ssh_base + [receive_cmd]
+
+        logger.debug("SSH chunked receive command: %s", " ".join(ssh_cmd))
+
+        # Start the receive process
+        try:
+            # stdout is not read anywhere on this path; a pipe nobody reads is
+            # a second place the receive could block, and a file descriptor
+            # that was left open until garbage collection.
+            receive_process = track_child(
+                subprocess.Popen(
+                    ssh_cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                )
+            )
+        except Exception as e:
+            logger.error("Failed to start SSH receive process: %s", e)
+            return False
+        # The remote receive's stderr comes back over ssh. It is drained as it
+        # arrives (core.transfer.StderrTail) and read through stderr_text below;
+        # it used to be read only after the process had exited, so a receive
+        # that said more than the 64 KiB pipe holds -- -vv under btrfs_debug is
+        # a line per file operation -- blocked on stderr while this side waited
+        # for it to take the next chunk.
+        tail_stderr(
+            receive_process,
+            log_as="remote btrfs receive" if self.config.get("btrfs_debug") else None,
+        )
+
+        # If sudo with password is needed, send it first
+        if use_sudo and not passwordless:
+            sudo_password = self._get_sudo_password()
+            if sudo_password and receive_process.stdin:
+                receive_process.stdin.write((sudo_password + "\n").encode())
+                receive_process.stdin.flush()
+
+        start_time = time.time()
+        chunks_sent = 0
+        bytes_sent = 0
+
+        try:
+            # Stream chunks through SSH
+            for chunk_data in chunk_reader.read_chunks():
+                if receive_process.stdin is None:
+                    raise IOError("Receive process stdin closed unexpectedly")
+
+                # Check if process is still alive
+                if receive_process.poll() is not None:
+                    stderr = stderr_text(receive_process)
+                    logger.error(
+                        "SSH receive process died at chunk %d: %s",
+                        chunks_sent,
+                        stderr,
+                    )
+                    self._cleanup_partial_subvolume(
+                        dest_path,
+                        received_name,
+                        created_by_this_run=not artifact_preexisted,
+                    )
+                    return False
+
+                # Write chunk data
+                receive_process.stdin.write(chunk_data)
+                receive_process.stdin.flush()
+
+                chunks_sent += 1
+                bytes_sent += len(chunk_data)
+
+                if show_progress:
+                    elapsed = time.time() - start_time
+                    rate_mb = (
+                        (bytes_sent / (1024 * 1024)) / elapsed if elapsed > 0 else 0
+                    )
+                    logger.info(
+                        "Chunk %d/%d transferred (%.1f MB, %.1f MB/s)",
+                        chunks_sent,
+                        manifest.chunk_count,
+                        bytes_sent / (1024 * 1024),
+                        rate_mb,
+                    )
+
+            # Close stdin to signal end of stream
+            if receive_process.stdin:
+                receive_process.stdin.close()
+
+            # Wait for receive to complete
+            try:
+                # Poll rather than block, so the wait can also measure whether
+                # the transfer is actually moving.
+                from ..core.transfer import wait_with_progress
+
+                return_code = wait_with_progress(
+                    receive_process,
+                    stall_pids=[receive_process.pid],
+                    stall_timeout=int(
+                        self.config.get("transfer_stall_timeout", STALL_TIMEOUT_SECONDS)
+                    ),
+                    wall_timeout=timeout,
+                    description="ssh receive",
+                )
+            except subprocess.TimeoutExpired:
+                logger.error("Timeout waiting for SSH receive to complete")
+                receive_process.kill()
+                self._cleanup_partial_subvolume(
+                    dest_path,
+                    received_name,
+                    created_by_this_run=not artifact_preexisted,
+                )
+                return False
+
+            if return_code != 0:
+                stderr = stderr_text(receive_process)
+                logger.error(
+                    "SSH btrfs receive failed with code %d: %s",
+                    return_code,
+                    stderr,
+                )
+                self._cleanup_partial_subvolume(
+                    dest_path,
+                    received_name,
+                    created_by_this_run=not artifact_preexisted,
+                )
+                return False
+
+            elapsed = time.time() - start_time
+            rate_mb = (bytes_sent / (1024 * 1024)) / elapsed if elapsed > 0 else 0
+            logger.info(
+                "Chunked transfer complete: %d chunks, %.1f MB in %.1fs (%.1f MB/s)",
+                chunks_sent,
+                bytes_sent / (1024 * 1024),
+                elapsed,
+                rate_mb,
+            )
+
+            # Secondary confirmation only after the receive exited 0. Because the
+            # receive succeeded, a failed verification is inconclusive: report
+            # failure but do NOT delete the received subvolume (it may be a good
+            # backup and only the verify step failed).
+            if self._verify_snapshot_exists(dest_path, received_name):
+                logger.info("Snapshot verified on remote host")
+                return True
+            else:
+                logger.error(
+                    "Chunked transfer verification inconclusive - leaving received "
+                    "subvolume in place at %s for reconciliation",
+                    dest_path,
+                )
+                return False
+
+        except Exception as e:
+            logger.error("Error during chunked SSH transfer: %s", e)
+            try:
+                receive_process.kill()
+            except Exception:
+                pass
+            # The stream did not complete normally: remove any partial subvolume.
+            self._cleanup_partial_subvolume(
+                dest_path,
+                received_name,
+                created_by_this_run=not artifact_preexisted,
+            )
+            return False
+
+    def _unbounded_tail_expired(
+        self, send_exit_time: Optional[float], max_wait_time: int, now: float
+    ) -> bool:
+        """Whether an unbounded post-send tail has outlived its fallback limit.
+
+        Once the local send exits, no bytes move on this side, so the stall check
+        is deliberately disarmed -- the remote is applying what it already
+        received, and killing it there would destroy a transfer about to succeed.
+        Both monitor loops described that tail as covered by the wall clock, but
+        `transfer_timeout` defaults to 0, which means NO wall clock. On a default
+        configuration nothing bounded the tail at all, so a remote wedged
+        mid-apply hung the run forever (issue #107).
+
+        The fallback is the same generous limit an unmeasurable transfer gets,
+        for the same reason: guard by measurement where possible, by clock where
+        not. An operator wanting a tighter deadline sets `transfer_timeout`.
+        """
+        return (
+            send_exit_time is not None
+            and max_wait_time <= 0
+            and now - send_exit_time >= UNMEASURABLE_FALLBACK_TIMEOUT
+        )
+
+    def _tail_timeout_error(self, waited: float) -> str:
+        return (
+            f"the local send finished but the remote never completed applying "
+            f"the stream after {waited:.0f}s, so the transfer was terminated. "
+            f"This is btrfs-backup-ng's fallback limit for an unbounded tail, "
+            f"NOT an ssh timeout. Set transfer_timeout to impose your own "
+            f"deadline."
+        )
+
+    def _monitor_transfer_progress(
+        self,
+        processes: Dict[str, Any],
+        start_time: float,
+        dest_path: str,
+        snapshot_name: str,
+        max_wait_time: int = DEFAULT_TRANSFER_TIMEOUT,
+        received_name: Optional[str] = None,
+    ) -> bool:
+        """Enhanced transfer monitoring with real-time progress feedback.
+
+        Args:
+            processes: Dict containing 'send', 'receive', and optionally 'buffer' processes
+            start_time: Transfer start time
+            dest_path: Destination path for verification
+            snapshot_name: Name of snapshot being transferred
+            max_wait_time: Maximum time to wait in seconds
+
+        Returns:
+            bool: True if transfer succeeded, False otherwise
+        """
+        logger.debug("Starting advanced transfer monitoring...")
+
+        send_process = processes["send"]
+        receive_process = processes["receive"]
+        buffer_process = processes.get("buffer")
+
+        # Type guards to ensure processes are not None
+        if send_process is None or receive_process is None:
+            logger.error("CRITICAL: Required processes are None")
+            return False
+
+        transfer_succeeded = False
+        last_status_time = start_time
+        last_verification_time = start_time
+        status_interval = 5  # Status updates every 5 seconds
+        verification_interval = 30  # Verify snapshot every 30 seconds
+
+        # Stall detection. The pids we can actually read are the ones running as
+        # us: the ssh process and the buffer. The local `btrfs send` runs under
+        # sudo, so its io file is root-owned and unreadable -- which is fine,
+        # because bytes leaving on the socket is the same evidence.
+        stall_pids = [
+            proc.pid
+            for proc in (send_process, receive_process, buffer_process)
+            if proc is not None
+        ]
+        stall_limit = int(
+            self.config.get("transfer_stall_timeout", STALL_TIMEOUT_SECONDS)
+        )
+        last_bytes = __util__.any_bytes_moved(stall_pids)
+        last_progress_time = start_time
+        #: When the local send exited, if it has; see _unbounded_tail_expired.
+        send_exit_time: Optional[float] = None
+        stall_detection = stall_limit > 0 and last_bytes is not None
+        if not stall_detection:
+            # Never silently downgrade to "no bytes moved": that would read as a
+            # stall and kill a healthy transfer. Say the check is off instead.
+            logger.debug(
+                "Stall detection unavailable (no readable /proc/<pid>/io for this "
+                "transfer); falling back to the wall-clock limit alone."
+            )
+
+        # `max_wait_time <= 0` means NO wall clock, not "zero seconds allowed".
+        # Read the other way it makes every transfer fail instantly, which is
+        # exactly what happened the first time the default became unlimited.
+        while max_wait_time <= 0 or time.time() - start_time < max_wait_time:
+            current_time = time.time()
+            elapsed = current_time - start_time
+
+            # Check process status
+            send_alive = send_process.poll() is None
+            receive_alive = receive_process.poll() is None
+            buffer_alive = buffer_process.poll() is None if buffer_process else True
+
+            # Only judge a stall while the SEND is still running. Once it has
+            # finished, the remote is applying what it already received and no
+            # bytes move on this side -- which is completion, not a stall, and
+            # killing it there would destroy a transfer that was about to
+            # succeed. A remote wedged MID-receive still blocks the send, so
+            # that case is caught; only the tail is exempt, and it is bounded by
+            # _unbounded_tail_expired rather than left to run forever.
+            if not send_alive and send_exit_time is None:
+                send_exit_time = current_time
+                if max_wait_time <= 0:
+                    logger.info(
+                        "Send finished; the remote is applying what it received. "
+                        "No wall-clock limit is configured, so this tail is "
+                        "guarded by a %ds fallback.",
+                        UNMEASURABLE_FALLBACK_TIMEOUT,
+                    )
+            if self._unbounded_tail_expired(
+                send_exit_time, max_wait_time, current_time
+            ):
+                assert send_exit_time is not None
+                self._last_transfer_error = self._tail_timeout_error(
+                    current_time - send_exit_time
+                )
+                logger.error("FAILED: %s", self._last_transfer_error)
+                for proc in (send_process, receive_process, buffer_process):
+                    if proc is not None and proc.poll() is None:
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=5)
+                        except Exception:
+                            proc.kill()
+                return False
+
+            if stall_detection and send_alive:
+                moved = __util__.any_bytes_moved(stall_pids)
+                if moved is None:
+                    # Everything we could read has exited; the exit-code checks
+                    # below decide the outcome, so stop asserting anything here.
+                    stall_detection = False
+                elif moved != last_bytes:
+                    last_bytes = moved
+                    last_progress_time = current_time
+                elif current_time - last_progress_time >= stall_limit:
+                    stalled_for = current_time - last_progress_time
+                    self._last_transfer_error = (
+                        f"the transfer moved no data for {stalled_for:.0f}s and was "
+                        f"terminated as stuck. This is btrfs-backup-ng's stall "
+                        f"limit, NOT an ssh timeout: the connection may have died "
+                        f"without closing, or the remote may be wedged. A slow "
+                        f"transfer that is still moving is never stopped by this."
+                    )
+                    logger.error("FAILED: %s", self._last_transfer_error)
+                    for proc in (send_process, receive_process, buffer_process):
+                        if proc is not None and proc.poll() is None:
+                            proc.terminate()
+                            try:
+                                proc.wait(timeout=5)
+                            except Exception:
+                                proc.kill()
+                    return False
+
+            # Check for critical failures
+            if not send_alive and send_process.returncode != 0:
+                logger.error(
+                    f"CRITICAL: Send process failed (exit code: {send_process.returncode})"
+                )
+                self._log_process_error(send_process, "send")
+                return False
+
+            # Regular status updates
+            if current_time - last_status_time >= status_interval:
+                self._log_transfer_status(
+                    elapsed, send_alive, receive_alive, buffer_alive, buffer_process
+                )
+                last_status_time = current_time
+
+            # Periodic progress note only. We deliberately do NOT check for the
+            # received subvolume here: while the receive process is still alive the
+            # subvolume may already exist on disk yet not be fully applied, so
+            # treating existence as completion would report success mid-stream
+            # (the existence check races the still-running receive).
+            if current_time - last_verification_time >= verification_interval:
+                logger.debug("STATUS: Transfer still in progress...")
+                last_verification_time = current_time
+
+            # Check if all processes finished
+            if (
+                not send_alive
+                and not receive_alive
+                and not (buffer_process and buffer_alive)
+            ):
+                logger.debug("STATUS: All processes completed")
+                break
+
+            time.sleep(0.5)  # Short sleep for responsive monitoring
+
+        # Timeout: at least one process is still running after max_wait_time. Kill
+        # everything and fail — a still-running receive has NOT completed.
+        procs = [send_process, receive_process] + (
+            [buffer_process] if buffer_process else []
+        )
+        if any(proc.poll() is None for proc in procs):
+            self._last_transfer_error = self._timeout_failure_reason(max_wait_time)
+            logger.error("FAILED: %s Terminating processes.", self._last_transfer_error)
+            for proc in procs:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception:
+                        proc.kill()
+            return False
+
+        # Exit codes are AUTHORITATIVE: send and receive must both have exited 0.
+        # A nonzero receive means the stream was not fully applied regardless of
+        # whether a (partial) subvolume exists at the path.
+        if send_process.returncode != 0:
+            logger.error(
+                f"FAILED: Send process failed (exit code: {send_process.returncode})"
+            )
+            self._last_transfer_error = self._log_process_error(send_process, "send")
+            return False
+        if receive_process.returncode != 0:
+            logger.error(
+                f"FAILED: Receive process failed (exit code: {receive_process.returncode})"
+            )
+            self._last_transfer_error = self._log_process_error(
+                receive_process, "receive"
+            )
+            return False
+
+        # Secondary confirmation only AFTER both processes exited 0.
+        logger.debug(
+            "COMPLETE: Transfer processes finished cleanly, performing final verification..."
+        )
+        try:
+            transfer_succeeded = self._verify_snapshot_exists(
+                dest_path, received_name or snapshot_name
+            )
+            if transfer_succeeded:
+                elapsed_final = time.time() - start_time
+                logger.info(
+                    f"SUCCESS: Transfer completed successfully in {elapsed_final:.1f}s"
+                )
+            else:
+                logger.error(
+                    "FAILED: Transfer failed - snapshot not found on remote host"
+                )
+        except Exception as e:
+            logger.error(f"ERROR: Final verification failed: {e}")
+            transfer_succeeded = False
+
+        return transfer_succeeded
+
+    def _log_transfer_status(
+        self,
+        elapsed: float,
+        send_alive: bool,
+        receive_alive: bool,
+        buffer_alive: bool,
+        buffer_process: Any,
+    ) -> None:
+        """Log detailed transfer status with professional indicators."""
+        minutes = elapsed / 60
+
+        logger.debug(f"STATUS: Transfer Progress ({elapsed:.1f}s / {minutes:.1f}m)")
+        logger.debug(f"   Send: {'ACTIVE' if send_alive else 'COMPLETE'}")
+        logger.debug(f"   Receive: {'ACTIVE' if receive_alive else 'COMPLETE'}")
+
+        if buffer_process:
+            logger.debug(f"   Buffer: {'ACTIVE' if buffer_alive else 'COMPLETE'}")
+
+        # Show activity indicator
+        active_count = sum([send_alive, receive_alive, buffer_alive])
+        total_count = 2 + (1 if buffer_process else 0)
+        logger.debug(f"   Active Processes: {active_count}/{total_count}")
+
+        if elapsed > 60:  # After 1 minute
+            logger.debug("   STATUS: Transfer progressing normally...")
+
+    def _timeout_failure_reason(self, limit: float) -> str:
+        """Why the transfer was killed, in words that name the culprit.
+
+        Both monitors used to log "Transfer timed out" and return, without
+        recording a reason anywhere the run summary or the transaction log
+        would find it. The operator saw a generic failure, so the obvious
+        suspect was an ssh idle or keepalive timeout -- which commonly defaults
+        to an hour too, and sends people into sshd_config for an afternoon.
+        Reported by mjg in #93, who did exactly that before finding it was ours.
+
+        A limit we impose has to say so, say what it was, and say that being
+        slow is not the same as being stuck.
+        """
+        return (
+            f"btrfs-backup-ng's own transfer timeout of {limit:.0f}s elapsed while "
+            f"the transfer was still running, so it was terminated and the backup "
+            f"is incomplete. This is a btrfs-backup-ng limit, NOT an ssh idle or "
+            f"keepalive timeout: a large first transfer over a slow link can pass "
+            f"it while working perfectly."
+        )
+
+    def _log_process_error(self, process: Any, process_name: str) -> Optional[str]:
+        """Log a failed process's stderr and RETURN it (stripped), or None.
+
+        Returning the text lets the caller thread the actionable cause into the
+        raised transfer error instead of leaving it only in a separate log line."""
+        try:
+            stderr_data = stderr_text(process)
+            if stderr_data.strip():
+                logger.error(f"{process_name} process stderr: {stderr_data}")
+                return stderr_data.strip()
+        except Exception as e:
+            logger.debug(f"Could not read stderr from {process_name} process: {e}")
+        return None
+
+    def _simple_transfer_monitor(
+        self,
+        processes: Dict[str, Any],
+        start_time: float,
+        dest_path: str,
+        snapshot_name: str,
+        max_wait_time: int = DEFAULT_TRANSFER_TIMEOUT,
+        received_name: Optional[str] = None,
+    ) -> bool:
+        """Simplified transfer monitoring with basic process tracking.
+
+        This method provides basic process monitoring that just tracks process completion
+        and exit codes without the complex threading and real-time progress monitoring.
+
+        Args:
+            processes: Dict containing 'send', 'receive', and optionally 'buffer' processes
+            start_time: Transfer start time
+            dest_path: Destination path for verification
+            snapshot_name: Name of snapshot being transferred
+            max_wait_time: Maximum time to wait in seconds
+
+        Returns:
+            bool: True if transfer succeeded, False otherwise
+        """
+        logger.debug("Using simplified transfer monitoring...")
+
+        send_process = processes["send"]
+        receive_process = processes["receive"]
+        buffer_process = processes.get("buffer")
+
+        # Type guards to ensure processes are not None
+        if send_process is None or receive_process is None:
+            logger.error("CRITICAL: Required processes are None")
+            return False
+
+        # Wait for processes to complete
+        processes_to_wait = [send_process, receive_process]
+        if buffer_process:
+            processes_to_wait.append(buffer_process)
+
+        logger.debug("STATUS: Waiting for transfer processes to complete...")
+
+        # The same stall check the other monitor runs. Wiring only one of two
+        # monitors is how a guard comes to protect the setup it was developed
+        # against and nothing else -- this file already has a test class named
+        # for that failure.
+        stall_pids = [proc.pid for proc in processes_to_wait]
+        stall_limit = int(
+            self.config.get("transfer_stall_timeout", STALL_TIMEOUT_SECONDS)
+        )
+        last_bytes = __util__.any_bytes_moved(stall_pids)
+        last_progress_time = start_time
+        #: When the local send exited, if it has; see _unbounded_tail_expired.
+        send_exit_time: Optional[float] = None
+        stall_detection = stall_limit > 0 and last_bytes is not None
+
+        # Simple polling loop with timeout
+        # `max_wait_time <= 0` means NO wall clock, not "zero seconds allowed".
+        # Read the other way it makes every transfer fail instantly, which is
+        # exactly what happened the first time the default became unlimited.
+        while max_wait_time <= 0 or time.time() - start_time < max_wait_time:
+            all_finished = True
+
+            for proc in processes_to_wait:
+                if proc.poll() is None:  # Still running
+                    all_finished = False
+                    break
+
+            if all_finished:
+                break
+
+            # Judged only while the SEND is alive: after it finishes the remote
+            # is applying what it already has, which is completion, not a stall.
+            # The tail that follows is bounded by _unbounded_tail_expired.
+            tail_now = time.time()
+            if send_process.poll() is not None and send_exit_time is None:
+                send_exit_time = tail_now
+                if max_wait_time <= 0:
+                    logger.info(
+                        "Send finished; the remote is applying what it received. "
+                        "No wall-clock limit is configured, so this tail is "
+                        "guarded by a %ds fallback.",
+                        UNMEASURABLE_FALLBACK_TIMEOUT,
+                    )
+            if self._unbounded_tail_expired(send_exit_time, max_wait_time, tail_now):
+                assert send_exit_time is not None
+                self._last_transfer_error = self._tail_timeout_error(
+                    tail_now - send_exit_time
+                )
+                logger.error("FAILED: %s", self._last_transfer_error)
+                for proc in processes_to_wait:
+                    if proc.poll() is None:
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=5)
+                        except Exception:
+                            proc.kill()
+                return False
+
+            if stall_detection and send_process.poll() is None:
+                now = time.time()
+                moved = __util__.any_bytes_moved(stall_pids)
+                if moved is None:
+                    stall_detection = False
+                elif moved != last_bytes:
+                    last_bytes = moved
+                    last_progress_time = now
+                elif now - last_progress_time >= stall_limit:
+                    self._last_transfer_error = (
+                        f"the transfer moved no data for {now - last_progress_time:.0f}s "
+                        f"and was terminated as stuck. This is btrfs-backup-ng's stall "
+                        f"limit, NOT an ssh timeout. A slow transfer that is still "
+                        f"moving is never stopped by this."
+                    )
+                    logger.error("FAILED: %s", self._last_transfer_error)
+                    for proc in processes_to_wait:
+                        if proc.poll() is None:
+                            proc.terminate()
+                            try:
+                                proc.wait(timeout=5)
+                            except Exception:
+                                proc.kill()
+                    return False
+
+            # Log status every 30 seconds
+            elapsed = time.time() - start_time
+            if int(elapsed) % 30 == 0:
+                active_count = sum(
+                    1 for proc in processes_to_wait if proc.poll() is None
+                )
+                logger.debug(
+                    f"STATUS: Transfer in progress... ({elapsed:.0f}s elapsed, {active_count} processes active)"
+                )
+
+            time.sleep(1)
+
+        # Check results
+        elapsed_final = time.time() - start_time
+
+        # Timeout: the loop exited with at least one process still running. Kill
+        # everything and fail — a still-running receive has NOT completed, and
+        # accepting it here (on path existence) is exactly the false-success bug.
+        if any(proc.poll() is None for proc in processes_to_wait):
+            self._last_transfer_error = self._timeout_failure_reason(max_wait_time)
+            logger.error(
+                "FAILED: %s Ran for %.1fs. Terminating processes.",
+                self._last_transfer_error,
+                elapsed_final,
+            )
+            for proc in processes_to_wait:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception:
+                        proc.kill()
+            return False
+
+        # Check send process
+        send_code = send_process.returncode
+        if send_code != 0:
+            logger.error(f"FAILED: Send process failed with exit code {send_code}")
+            self._last_transfer_error = self._log_simple_process_error(
+                send_process, "send"
+            )
+            return False
+
+        logger.info("SUCCESS: Send process completed successfully")
+
+        # Check receive process. The receive exit code is AUTHORITATIVE: a nonzero
+        # `btrfs receive` means the stream was not fully applied, so the transfer
+        # failed regardless of whether a (partial) subvolume exists at the path.
+        receive_code = receive_process.returncode
+        if receive_code != 0:
+            logger.error(
+                f"FAILED: Receive process failed with exit code {receive_code}"
+            )
+            self._last_transfer_error = self._log_simple_process_error(
+                receive_process, "receive"
+            )
+            return False
+        logger.info("SUCCESS: Receive process completed successfully")
+
+        # Buffer process: a truncated stream would already have failed the receive
+        # above, so a nonzero buffer exit on an otherwise-clean transfer is not
+        # treated as fatal (only surfaced) to avoid rejecting a good backup.
+        if buffer_process:
+            buffer_code = buffer_process.returncode
+            if buffer_code != 0:
+                logger.warning(f"WARNING: Buffer process exit code: {buffer_code}")
+            else:
+                logger.info("SUCCESS: Buffer process completed successfully")
+
+        # Secondary confirmation only AFTER send+receive both exited 0.
+        logger.debug("STATUS: Performing final verification...")
+        try:
+            if self._verify_snapshot_exists(dest_path, received_name or snapshot_name):
+                logger.info(
+                    f"SUCCESS: Transfer completed successfully in {elapsed_final:.1f}s"
+                )
+                return True
+            else:
+                logger.error(
+                    "FAILED: Transfer failed - snapshot not found on remote host"
+                )
+                return False
+        except Exception as e:
+            logger.error(f"ERROR: Final verification failed: {e}")
+            return False
+
+    def _log_simple_process_error(
+        self, process: Any, process_name: str
+    ) -> Optional[str]:
+        """Log a failed process's stderr and RETURN it (stripped), or None.
+
+        Simple-monitor twin of ``_log_process_error``; returning the text lets the
+        caller surface the actionable cause in the raised transfer error."""
+        try:
+            stderr_data = stderr_text(process)
+            if stderr_data.strip():
+                logger.error(f"{process_name} process stderr: {stderr_data}")
+                return stderr_data.strip()
+        except Exception as e:
+            logger.debug(f"Could not read stderr from {process_name} process: {e}")
+        return None

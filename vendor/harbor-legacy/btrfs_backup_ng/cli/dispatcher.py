@@ -1,0 +1,2179 @@
+"""CLI dispatcher with legacy mode detection.
+
+This module handles routing between the new subcommand-based CLI
+and legacy positional argument mode for backwards compatibility.
+"""
+
+import argparse
+import sys
+from typing import Callable
+
+from .. import __util__, lifecycle
+from ..__logger__ import logger
+from .common import (
+    add_fs_checks_args,
+    add_progress_args,
+    add_remote_lock_arg,
+    add_ssh_hostkey_arg,
+    add_verbosity_args,
+)
+
+# Known subcommands for the new CLI
+SUBCOMMANDS = frozenset(
+    {
+        "run",
+        "snapshot",
+        "transfer",
+        "transfers",
+        "prune",
+        "list",
+        "status",
+        "config",
+        "install",
+        "uninstall",
+        "restore",
+        "verify",
+        "estimate",
+        "completions",
+        "manpages",
+        "doctor",
+        "snapper",
+        "raw",
+    }
+)
+
+
+def is_legacy_mode(argv: list[str]) -> bool:
+    """Detect if arguments indicate legacy CLI mode.
+
+    Legacy mode is when the first argument looks like a path rather
+    than a subcommand. This allows backwards compatibility with:
+        btrfs-backup-ng /source /dest
+
+    Args:
+        argv: Command line arguments (without program name)
+
+    Returns:
+        True if legacy mode should be used
+    """
+    if not argv:
+        return False
+
+    first = argv[0]
+
+    # Explicit subcommand - not legacy
+    if first in SUBCOMMANDS:
+        return False
+
+    # Help/version flags - not legacy
+    if first in {"-h", "--help", "-V", "--version"}:
+        return False
+
+    # Absolute or relative path - legacy mode
+    if first.startswith("/") or first.startswith("./") or first.startswith("../"):
+        return True
+
+    # Contains path separator but not URL scheme - legacy mode
+    if "/" in first and "://" not in first:
+        return True
+
+    # Starts with common option flags - not legacy (let parser handle)
+    if first.startswith("-"):
+        return False
+
+    # Default: assume new mode (will error if invalid subcommand)
+    return False
+
+
+def _compression_choices() -> list[str]:
+    """Every method some target can actually run, from the authoritative tables.
+
+    The two transports run different programs: a btrfs target (local, ssh://)
+    uses core.transfer.COMPRESSION_PROGRAMS, a raw target uses
+    endpoint.raw_metadata.COMPRESSION_CONFIG, and the sets are not the same --
+    lzop is btrfs-only, xz/lzo/bzip2/pbzip2 are raw-only. Hard-coding one set
+    here made valid configurations unreachable from the command line
+    (`--compress xz` for a raw target) while offering one the raw endpoint
+    rejects. Whether a given method suits the given target is decided by that
+    target, which reports the set it accepts.
+    """
+    from ..core.transfer import COMPRESSION_PROGRAMS
+    from ..endpoint.raw_metadata import COMPRESSION_CONFIG
+
+    return ["none", *sorted(set(COMPRESSION_PROGRAMS) | set(COMPRESSION_CONFIG))]
+
+
+def _keep_global_options_across_subcommands(
+    parser: argparse.ArgumentParser,
+) -> None:
+    """Stop a subcommand's own copy of a global option from erasing the global one.
+
+    argparse parses a subcommand into a fresh namespace and then copies every key
+    of it onto the parent namespace, so a subparser that also defines ``--config``
+    writes its own default over the value ``-c`` already supplied ahead of the
+    subcommand: ``btrfs-backup-ng -c FILE restore`` silently loses FILE.
+
+    Suppressing the subparser default leaves the attribute unset when the flag is
+    absent, so the global value survives, while a flag given after the subcommand
+    still takes precedence.
+
+    Only options that mean the same thing are carried over, and sameness is judged
+    by metavar, which is the deliberate signal of what a value is.  Several
+    subcommands reuse the name for something else entirely:
+
+        -c FILE   the configuration file            (global, restore, estimate)
+        -c NAME   a snapper config such as ``root`` (snapper list/status/...)
+
+    Carrying a value across that boundary would hand a file path to code expecting
+    a snapper config name.  Positionals are never touched for the same reason --
+    ``snapper backup`` and ``snapper restore`` take the snapper config name that
+    way.  Help text is deliberately not consulted: rewording it must not change
+    what the command line does.
+    """
+    global_options = {
+        action.dest: action
+        for action in parser._actions
+        if action.option_strings and action.dest not in ("help", argparse.SUPPRESS)
+    }
+
+    def walk(current: argparse.ArgumentParser) -> None:
+        for action in current._actions:
+            if not isinstance(action, argparse._SubParsersAction):
+                continue
+            for subparser in action.choices.values():
+                for sub_action in subparser._actions:
+                    global_action = global_options.get(sub_action.dest)
+                    if (
+                        global_action is not None
+                        and sub_action.option_strings
+                        and sub_action.metavar == global_action.metavar
+                    ):
+                        sub_action.default = argparse.SUPPRESS
+                walk(subparser)
+
+    walk(parser)
+
+
+def create_subcommand_parser() -> argparse.ArgumentParser:
+    """Create the main argument parser with subcommands."""
+    parser = argparse.ArgumentParser(
+        prog="btrfs-backup-ng",
+        description="Automated btrfs backup management with incremental transfers",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    add_verbosity_args(parser)
+
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="store_true",
+        help="Show version and exit",
+    )
+
+    parser.add_argument(
+        "-c",
+        "--config",
+        metavar="FILE",
+        help="Path to configuration file",
+    )
+
+    subparsers = parser.add_subparsers(
+        dest="command",
+        title="commands",
+        description="Available commands (use 'command --help' for details)",
+    )
+
+    # run command
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Execute all configured backup jobs",
+        description="Snapshot, transfer, and prune according to configuration",
+    )
+    run_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without making changes",
+    )
+    run_parser.add_argument(
+        "--parallel-volumes",
+        type=int,
+        metavar="N",
+        help="Max concurrent volume backups (overrides config)",
+    )
+    run_parser.add_argument(
+        "--parallel-targets",
+        type=int,
+        metavar="N",
+        help="Max concurrent target transfers per volume (overrides config)",
+    )
+    run_parser.add_argument(
+        "--compress",
+        metavar="METHOD",
+        choices=_compression_choices(),
+        help="Compression method for transfers (overrides config)",
+    )
+    run_parser.add_argument(
+        "--rate-limit",
+        metavar="RATE",
+        help="Bandwidth limit (e.g., '10M', '1G') (overrides config)",
+    )
+    run_parser.add_argument(
+        "--newest-only",
+        action="store_true",
+        help=(
+            "Transfer only the snapshot just created, leaving any earlier "
+            "un-transferred ones behind (the behaviour before 0.9.7)"
+        ),
+    )
+    run_parser.add_argument(
+        "--no-check-space",
+        action="store_true",
+        help="Disable pre-flight space availability check",
+    )
+    run_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Proceed with transfers even if space check fails",
+    )
+    run_parser.add_argument(
+        "--safety-margin",
+        metavar="PERCENT",
+        type=float,
+        default=10.0,
+        help="Safety margin percentage for space check (default: 10%%)",
+    )
+    add_progress_args(run_parser)
+
+    # snapshot command
+    snapshot_parser = subparsers.add_parser(
+        "snapshot",
+        help="Create snapshots only",
+        description="Take snapshots without transferring to targets",
+    )
+    snapshot_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without making changes",
+    )
+    snapshot_parser.add_argument(
+        "--volume",
+        metavar="PATH",
+        action="append",
+        help="Only snapshot specific volume(s)",
+    )
+
+    # transfer command
+    transfer_parser = subparsers.add_parser(
+        "transfer",
+        help="Transfer existing snapshots to targets",
+        description="Transfer snapshots without creating new ones",
+    )
+    transfer_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without making changes",
+    )
+    transfer_parser.add_argument(
+        "--volume",
+        metavar="PATH",
+        action="append",
+        help="Only transfer specific volume(s)",
+    )
+    transfer_parser.add_argument(
+        "--compress",
+        metavar="METHOD",
+        choices=_compression_choices(),
+        help="Compression method for transfers (overrides config)",
+    )
+    transfer_parser.add_argument(
+        "--rate-limit",
+        metavar="RATE",
+        help="Bandwidth limit (e.g., '10M', '1G') (overrides config)",
+    )
+    transfer_parser.add_argument(
+        "--no-check-space",
+        action="store_true",
+        help="Disable pre-flight space availability check",
+    )
+    transfer_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Proceed with transfers even if space check fails",
+    )
+    transfer_parser.add_argument(
+        "--safety-margin",
+        metavar="PERCENT",
+        type=float,
+        default=10.0,
+        help="Safety margin percentage for space check (default: 10%%)",
+    )
+    add_progress_args(transfer_parser)
+
+    # prune command
+    prune_parser = subparsers.add_parser(
+        "prune",
+        help="Apply retention policies",
+        description="Clean up old snapshots and backups according to retention settings",
+    )
+    prune_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be deleted without making changes",
+    )
+    prune_parser.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Skip the interactive confirmation prompt (for automation)",
+    )
+    prune_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow pruning under a degenerate policy that would keep only the latest snapshot",
+    )
+
+    # list command
+    list_parser = subparsers.add_parser(
+        "list",
+        help="Show snapshots and backups",
+        description="List all snapshots across configured volumes and targets",
+    )
+    list_parser.add_argument(
+        "--volume",
+        metavar="PATH",
+        action="append",
+        help="Only list specific volume(s)",
+    )
+    list_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format",
+    )
+
+    # status command
+    status_parser = subparsers.add_parser(
+        "status",
+        help="Show job status and statistics",
+        description="Display last run times, snapshot counts, and health status",
+    )
+    status_parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default: text)",
+    )
+    status_parser.add_argument(
+        "-t",
+        "--transactions",
+        action="store_true",
+        help="Show recent transaction history",
+    )
+    status_parser.add_argument(
+        "-n",
+        "--limit",
+        type=int,
+        default=10,
+        metavar="N",
+        help="Number of transactions to show (default: 10)",
+    )
+
+    # config command with subcommands
+    config_parser = subparsers.add_parser(
+        "config",
+        help="Configuration management",
+        description="Validate, initialize, or import configuration",
+    )
+    config_subs = config_parser.add_subparsers(dest="config_action")
+
+    config_subs.add_parser(
+        "validate",
+        help="Validate configuration file",
+        description=(
+            "Validate a configuration file and check, locally, whether this "
+            "machine could run it.\n\n"
+            "Exit status:\n"
+            "  0  the file is valid and its volumes are usable here\n"
+            "  1  the file itself is invalid and must be edited\n"
+            "  2  the file is valid, but this machine cannot back up these "
+            "volumes\n     (the normal result when editing another host's "
+            "config, or in CI)\n\n"
+            "Remote targets are not probed; use `doctor` for that."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    init_parser = config_subs.add_parser(
+        "init",
+        help="Generate example configuration",
+    )
+    init_parser.add_argument(
+        "-i",
+        "--interactive",
+        action="store_true",
+        help="Run interactive configuration wizard",
+    )
+    init_parser.add_argument(
+        "-o",
+        "--output",
+        metavar="FILE",
+        help="Output file (default: stdout)",
+    )
+    init_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite the output file if it already exists",
+    )
+
+    import_parser = config_subs.add_parser(
+        "import",
+        help="Import btrbk configuration",
+    )
+    import_parser.add_argument(
+        "btrbk_config",
+        metavar="FILE",
+        help="Path to btrbk.conf file",
+    )
+    import_parser.add_argument(
+        "-o",
+        "--output",
+        metavar="FILE",
+        help="Output file (default: stdout)",
+    )
+    import_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite the output file if it already exists",
+    )
+
+    detect_parser = config_subs.add_parser(
+        "detect",
+        help="Detect btrfs subvolumes on the system",
+        description="Scan for btrfs subvolumes and suggest backup configuration",
+    )
+    detect_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format for scripting",
+    )
+    detect_parser.add_argument(
+        "-w",
+        "--wizard",
+        action="store_true",
+        help="Launch interactive wizard with detected volumes",
+    )
+
+    migrate_parser = config_subs.add_parser(
+        "migrate-systemd",
+        help="Migrate systemd integration from btrbk",
+        description="Disable btrbk systemd timer and enable btrfs-backup-ng timer",
+    )
+    migrate_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without making changes",
+    )
+
+    # raw command with subcommands (inspect/maintain raw:// and raw+ssh:// targets)
+    raw_parser = subparsers.add_parser(
+        "raw",
+        help="Inspect and maintain raw-target backups",
+        description="Operate directly on a raw:// or raw+ssh:// backup target",
+    )
+    raw_subs = raw_parser.add_subparsers(dest="raw_action")
+    # V2 is an explicitly opt-in local/raw transfer engine. Keep the existing
+    # raw list/verify/encrypt and upstream experimental --use-chunked untouched.
+    v2_parser = raw_subs.add_parser(
+        "checkpoint-v2",
+        help="Checkpointed resumable raw backups (EXPERIMENTAL; do not use for DR yet)",
+    )
+    v2_actions = v2_parser.add_subparsers(dest="checkpoint_action", required=True)
+    start_v2 = v2_actions.add_parser("start", help="Start an explicit raw v2 job")
+    start_v2.add_argument("--target", required=True)
+    start_v2.add_argument("--source")
+    start_v2.add_argument(
+        "--source-mode",
+        choices=(
+            "path",
+            "latest-snapper",
+            "selected-snapper",
+            "create-snapper",
+            "latest-native",
+            "selected-native",
+            "create-native",
+        ),
+        default="path",
+    )
+    start_v2.add_argument("--name", required=True)
+    start_v2.add_argument("--profile-id", required=True)
+    start_v2.add_argument("--parent")
+    start_v2.add_argument("--checkpoint-size-mib", type=int, default=128)
+    start_v2.add_argument(
+        "--performance", choices=["balanced", "fast"], default="balanced"
+    )
+    start_v2.add_argument("--allow-local", action="store_true")
+    start_v2.add_argument("--experimental", action="store_true")
+    start_v2.add_argument("--state-dir")
+    start_v2.add_argument("--snapper-config")
+    start_v2.add_argument("--snapper-number", type=int)
+    start_v2.add_argument("--native-name")
+    v2_actions.add_parser(
+        "machine-inventory",
+        help="Read-only persistent Btrfs and EFI coverage inventory",
+    )
+    # Opt-in multi-subvolume set shares the v2 streaming/checkpoint engine.
+    for set_action in (
+        "set-start",
+        "set-resume",
+        "set-status",
+        "set-restore",
+        "set-rear-copy",
+        "set-rear-recover",
+        "set-rescue-iso",
+        "set-list",
+        "set-retention-plan",
+        "set-retention-apply",
+        "set-retention-resume",
+    ):
+        set_parser = v2_actions.add_parser(
+            set_action, help="Portable Btrfs-only multi-subvolume backup set"
+        )
+        set_parser.add_argument("--target", required=True)
+        set_parser.add_argument("--allow-local", action="store_true")
+        set_parser.add_argument("--state-dir")
+        set_parser.add_argument("--experimental", action="store_true")
+        if set_action == "set-start":
+            set_parser.add_argument("--max-incremental-depth", type=int, default=7)
+            set_parser.add_argument("--profile-id", required=True)
+            set_parser.add_argument(
+                "--snapshot-provider",
+                choices=("harbor", "snapper", "snapper-fresh"),
+                default="harbor",
+                help="Snapper-fresh: create readonly Snapper snapshots now; "
+                "Snapper: reuse latest existing; Harbor: create native captures. "
+                "Unmanaged Btrfs volumes use Harbor for both Snapper modes.",
+            )
+            set_parser.add_argument("--source", action="append")
+        elif set_action not in (
+            "set-list",
+            "set-retention-plan",
+            "set-retention-apply",
+            "set-retention-resume",
+        ):
+            set_parser.add_argument("--set-id", required=True)
+        if set_action in ("set-retention-plan", "set-retention-apply"):
+            set_parser.add_argument("--profile-id", required=True)
+            set_parser.add_argument("--min", default="1d")
+            for bucket, default in (
+                ("hourly", 0),
+                ("daily", 7),
+                ("weekly", 4),
+                ("monthly", 3),
+                ("yearly", 0),
+            ):
+                set_parser.add_argument(f"--{bucket}", type=int, default=default)
+            set_parser.add_argument("--keep", type=int, default=0)
+        if set_action == "set-retention-apply":
+            set_parser.add_argument("--expected-plan-sha256", required=True)
+            set_parser.add_argument("--confirm", action="store_true")
+        if set_action == "set-retention-resume":
+            set_parser.add_argument("--confirm", action="store_true")
+        if set_action in ("set-restore", "set-rear-copy"):
+            set_parser.add_argument("--staging", required=True)
+            set_parser.add_argument("--confirm", action="store_true")
+        if set_action in ("set-rear-recover", "set-rescue-iso"):
+            set_parser.add_argument("--confirm", action="store_true")
+    # SSH v2 is a restricted destination adapter over sealed checkpoint-v2
+    # files, never another Btrfs sender and never an arbitrary remote shell.
+    init_receiver = v2_actions.add_parser(
+        "ssh-receiver-init", help="Initialize a dedicated SSH receiver root locally"
+    )
+    init_receiver.add_argument("--root", required=True)
+    init_receiver.add_argument("--allow-local", action="store_true")
+    receiver = v2_actions.add_parser(
+        "ssh-receiver", help="Forced-command restricted SSH v2 receiver"
+    )
+    receiver.add_argument("--root", required=True)
+    mirror = v2_actions.add_parser(
+        "ssh-mirror", help="Resume copying a verified machine set to SSH receiver"
+    )
+    mirror.add_argument("--target", required=True)
+    mirror.add_argument("--set-id", required=True)
+    mirror.add_argument("--host", required=True)
+    mirror.add_argument("--user", required=True)
+    mirror.add_argument("--port", type=int, default=22)
+    mirror.add_argument("--identity-file", required=True)
+    mirror.add_argument("--known-hosts", required=True)
+    mirror.add_argument("--experimental", action="store_true")
+    mirror.add_argument("--allow-local", action="store_true")
+    scheduled_v2 = v2_actions.add_parser(
+        "schedule-run",
+        help="One installed profile source via v2; resume incomplete job first",
+    )
+    scheduled_v2.add_argument("--target", required=True)
+    scheduled_v2.add_argument("--profile-id", required=True)
+    scheduled_v2.add_argument("--source")
+    scheduled_v2.add_argument("--snapper-config")
+    scheduled_v2.add_argument("--name-prefix")
+    scheduled_v2.add_argument("--checkpoint-size-mib", type=int, default=128)
+    scheduled_v2.add_argument(
+        "--performance", choices=("balanced", "fast"), default="balanced"
+    )
+    scheduled_v2.add_argument("--state-dir")
+    scheduled_v2.add_argument("--allow-local", action="store_true")
+    scheduled_v2.add_argument("--experimental", action="store_true")
+    native_list_v2 = v2_actions.add_parser(
+        "native-list", help="Read-only inventory of Harbor-owned native Btrfs snapshots"
+    )
+    native_list_v2.add_argument("--source", required=True)
+    list_v2 = v2_actions.add_parser(
+        "list", help="List v2 transfers and their durable checkpoint state (read-only)"
+    )
+    list_v2.add_argument("--target", required=True)
+    resume_v2 = v2_actions.add_parser("resume", help="Resume an existing v2 partial")
+    resume_v2.add_argument("--target", required=True)
+    resume_v2.add_argument("--name", required=True)
+    resume_v2.add_argument("--transfer-id", required=True)
+    resume_v2.add_argument("--allow-local", action="store_true")
+    resume_v2.add_argument("--experimental", action="store_true")
+    resume_v2.add_argument("--state-dir")
+    status_v2 = v2_actions.add_parser(
+        "status", help="Inspect persistent checkpoint manifest"
+    )
+    status_v2.add_argument("--target", required=True)
+    status_v2.add_argument("--transfer-id", required=True)
+    for command_name in ("pause", "stop"):
+        control_v2 = v2_actions.add_parser(
+            command_name, help=f"Request {command_name} of a v2 transfer"
+        )
+        control_v2.add_argument("--transfer-id", required=True)
+        control_v2.add_argument("--state-dir")
+    discard_v2 = v2_actions.add_parser(
+        "discard", help="Explicitly discard an unfinished v2 partial"
+    )
+    discard_v2.add_argument("--target", required=True)
+    discard_v2.add_argument("--name", required=True)
+    discard_v2.add_argument("--transfer-id", required=True)
+    discard_v2.add_argument("--confirm", action="store_true")
+    discard_v2.add_argument("--allow-local", action="store_true")
+    discard_v2.add_argument("--state-dir")
+
+    raw_list_parser = raw_subs.add_parser(
+        "list",
+        help="List the backups a raw target holds",
+        description="Enumerate a raw target's backups via their .meta sidecars",
+    )
+    raw_list_parser.add_argument(
+        "target",
+        metavar="TARGET",
+        help="Raw target: raw://PATH, raw+ssh://[USER@]HOST/PATH, or a plain path",
+    )
+    raw_list_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format for scripting",
+    )
+    raw_list_parser.add_argument(
+        "--ssh-sudo",
+        action="store_true",
+        help="Use sudo for remote commands on a raw+ssh target",
+    )
+    raw_verify_parser = raw_subs.add_parser(
+        "verify",
+        help="Verify raw backups against their recorded checksums",
+        description="Recompute each stream's sha256 and compare to its .meta sidecar",
+    )
+    raw_verify_parser.add_argument(
+        "target",
+        metavar="TARGET",
+        help="Raw target: raw://PATH, raw+ssh://[USER@]HOST/PATH, or a plain path",
+    )
+    raw_verify_parser.add_argument(
+        "--snapshot",
+        metavar="NAME",
+        help="Verify only the named snapshot",
+    )
+    raw_verify_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format for scripting",
+    )
+    raw_verify_parser.add_argument(
+        "--ssh-sudo",
+        action="store_true",
+        help="Use sudo for remote commands on a raw+ssh target",
+    )
+    raw_backfill_parser = raw_subs.add_parser(
+        "backfill-metadata",
+        help="Write .meta sidecars for legacy streams that have none",
+        description="Reconstruct sidecars for pre-0.8.5 raw streams without one",
+    )
+    raw_backfill_parser.add_argument(
+        "target",
+        metavar="TARGET",
+        help="Raw target: raw://PATH, raw+ssh://[USER@]HOST/PATH, or a plain path",
+    )
+    raw_backfill_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show which streams would be backfilled without writing sidecars",
+    )
+    raw_backfill_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format for scripting",
+    )
+    raw_backfill_parser.add_argument(
+        "--ssh-sudo",
+        action="store_true",
+        help="Use sudo for remote commands on a raw+ssh target",
+    )
+    raw_encrypt_parser = raw_subs.add_parser(
+        "encrypt",
+        help="Encrypt plaintext raw streams in place (remediation)",
+        description="Encrypt raw backups written as plaintext; verify then optionally"
+        " remove the plaintext",
+    )
+    raw_encrypt_parser.add_argument(
+        "target",
+        metavar="TARGET",
+        help="Local raw target: raw://PATH or a plain path (not raw+ssh)",
+    )
+    raw_encrypt_parser.add_argument(
+        "--encrypt",
+        required=True,
+        choices=["gpg", "openssl_enc"],
+        help="Encryption method to apply",
+    )
+    raw_encrypt_parser.add_argument(
+        "--gpg-recipient",
+        metavar="KEYID",
+        help="GPG recipient key (required with --encrypt gpg)",
+    )
+    raw_encrypt_parser.add_argument(
+        "--gpg-keyring",
+        metavar="FILE",
+        help="Use a non-default GPG keyring for encrypt and the decrypt proof",
+    )
+    raw_encrypt_parser.add_argument(
+        "--openssl-cipher",
+        metavar="CIPHER",
+        help="OpenSSL cipher for --encrypt openssl_enc (default aes-256-cbc)",
+    )
+    raw_encrypt_parser.add_argument(
+        "--shred",
+        action="store_true",
+        help="Remove each plaintext file after a verified decrypt proof "
+        "(plain unlink; not a secure wipe on CoW/SSD)",
+    )
+    raw_encrypt_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Do not prompt before removing plaintext (for scripts; with --shred)",
+    )
+    raw_encrypt_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show which plaintext streams would be encrypted without changes",
+    )
+    raw_encrypt_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format for scripting",
+    )
+
+    # install command
+    install_parser = subparsers.add_parser(
+        "install",
+        help="Install systemd timer/service",
+        description="Generate and install systemd units for automated backups",
+    )
+    install_parser.add_argument(
+        "--timer",
+        choices=["hourly", "daily", "weekly"],
+        help="Use preset timer interval",
+    )
+    install_parser.add_argument(
+        "--oncalendar",
+        metavar="SPEC",
+        help="Custom OnCalendar specification (e.g., '*:0/15' for every 15 minutes)",
+    )
+    install_parser.add_argument(
+        "--user",
+        action="store_true",
+        help="Install as user service instead of system service",
+    )
+
+    # uninstall command
+    subparsers.add_parser(
+        "uninstall",
+        help="Remove systemd timer/service",
+        description="Remove installed systemd units",
+    )
+
+    # restore command
+    restore_parser = subparsers.add_parser(
+        "restore",
+        help="Restore snapshots from backup location",
+        description="Pull snapshots from backup storage back to local system",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # List available snapshots at backup location
+  btrfs-backup-ng restore --list ssh://backup@server:/backups/home
+
+  # Restore latest snapshot
+  btrfs-backup-ng restore ssh://backup@server:/backups/home /mnt/restore
+
+  # Restore specific snapshot
+  btrfs-backup-ng restore ssh://...:/backups/home /mnt/restore --snapshot home-20260104
+
+  # Restore snapshot before a specific date
+  btrfs-backup-ng restore ssh://...:/backups/home /mnt/restore --before "2026-01-01"
+
+  # Interactive selection
+  btrfs-backup-ng restore ssh://...:/backups/home /mnt/restore --interactive
+
+Config-driven restore:
+  # List volumes and backup targets from config
+  btrfs-backup-ng restore --list-volumes
+
+  # List snapshots available for a configured volume
+  btrfs-backup-ng restore --volume /home --list
+
+  # Restore /home from its configured backup target
+  btrfs-backup-ng restore --volume /home --to /mnt/restore
+
+  # Restore from second target (index 1)
+  btrfs-backup-ng restore --volume /home --target 1 --to /mnt/restore
+""",
+    )
+    restore_parser.add_argument(
+        "source",
+        nargs="?",
+        metavar="SOURCE",
+        help="Backup location (local path or ssh://user@host:/path)",
+    )
+    restore_parser.add_argument(
+        "destination",
+        nargs="?",
+        metavar="DESTINATION",
+        help="Local path to restore to",
+    )
+    restore_parser.add_argument(
+        "-l",
+        "--list",
+        action="store_true",
+        help="List available snapshots at backup location",
+    )
+    restore_parser.add_argument(
+        "-s",
+        "--snapshot",
+        metavar="NAME",
+        help="Restore specific snapshot by name",
+    )
+    restore_parser.add_argument(
+        "--before",
+        metavar="DATETIME",
+        help="Restore snapshot closest to this time (YYYY-MM-DD [HH:MM:SS])",
+    )
+    restore_parser.add_argument(
+        "-a",
+        "--all",
+        action="store_true",
+        help="Restore all snapshots (full mirror)",
+    )
+    restore_parser.add_argument(
+        "-i",
+        "--interactive",
+        action="store_true",
+        help="Interactively select snapshot to restore",
+    )
+    restore_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be restored without making changes",
+    )
+    restore_parser.add_argument(
+        "--no-incremental",
+        action="store_true",
+        help="Force full transfers (don't use incremental)",
+    )
+    restore_parser.add_argument(
+        "--skip-verify",
+        action="store_true",
+        help="Skip the pre-restore integrity check for raw backups (restore even if "
+        "the stored stream's checksum no longer matches, and skip the extra read). "
+        "Use for last-copy recovery of a partially-corrupt backup.",
+    )
+    restore_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Not supported in this release: existing snapshots are left in place "
+        "and a warning is printed. Remove a snapshot yourself to replace it",
+    )
+    restore_parser.add_argument(
+        "--in-place",
+        action="store_true",
+        help="Not implemented in this release: the command refuses and restores "
+        "nothing. Restore to a staging directory, verify it, and swap the "
+        "subvolumes yourself (README, Strategy 2)",
+    )
+    restore_parser.add_argument(
+        "--yes-i-know-what-i-am-doing",
+        action="store_true",
+        help="Confirm dangerous operations like in-place restore",
+    )
+    restore_parser.add_argument(
+        "--prefix",
+        metavar="PREFIX",
+        help="Snapshot prefix filter",
+    )
+    restore_parser.add_argument(
+        "--timestamp-format",
+        metavar="FMT",
+        help="strftime format for parsing snapshot timestamps in direct mode "
+        "(defaults to the config's [global] timestamp_format, else the built-in)",
+    )
+    restore_parser.add_argument(
+        "--ssh-sudo",
+        action="store_true",
+        help="Use sudo for btrfs commands on remote host",
+    )
+    restore_parser.add_argument(
+        "--ssh-key",
+        metavar="FILE",
+        help="SSH private key file",
+    )
+    restore_parser.add_argument(
+        "--ssh-auth-sock",
+        metavar="PATH",
+        help="Explicit ssh-agent socket (overrides auto-discovery; useful under sudo)",
+    )
+    restore_parser.add_argument(
+        "--compress",
+        metavar="METHOD",
+        choices=_compression_choices(),
+        help="Compression method for transfers",
+    )
+    restore_parser.add_argument(
+        "--rate-limit",
+        metavar="RATE",
+        help="Bandwidth limit (e.g., '10M', '1G')",
+    )
+    restore_parser.add_argument(
+        "--gpg-keyring",
+        metavar="PATH",
+        help="GPG keyring to decrypt an encrypted raw backup (must match the "
+        "keyring the backup was encrypted for)",
+    )
+    restore_parser.add_argument(
+        "--openssl-cipher",
+        metavar="CIPHER",
+        help="OpenSSL cipher fallback for a legacy raw backup whose sidecar "
+        "does not record one (modern sidecars are authoritative)",
+    )
+    add_fs_checks_args(restore_parser)
+    add_ssh_hostkey_arg(restore_parser)
+    add_remote_lock_arg(restore_parser)
+
+    # Config-driven restore options
+    config_group = restore_parser.add_argument_group(
+        "Config-driven restore",
+        "Use configuration file to determine backup sources",
+    )
+    config_group.add_argument(
+        "-c",
+        "--config",
+        metavar="FILE",
+        help="Path to configuration file",
+    )
+    config_group.add_argument(
+        "--volume",
+        metavar="PATH",
+        help="Restore backups for volume defined in config (e.g., /home)",
+    )
+    config_group.add_argument(
+        "--target",
+        metavar="INDEX",
+        type=int,
+        help="Target index to restore from (0-based, default: first target)",
+    )
+    config_group.add_argument(
+        "--list-volumes",
+        action="store_true",
+        help="List volumes and their backup targets from config",
+    )
+    config_group.add_argument(
+        "--to",
+        metavar="PATH",
+        help="Destination path for config-driven restore (used with --volume)",
+    )
+
+    # Recovery commands group
+    recovery_group = restore_parser.add_argument_group(
+        "Recovery options",
+        "Commands for managing failed or incomplete restores",
+    )
+    recovery_group.add_argument(
+        "--status",
+        action="store_true",
+        help="Show status of locks and incomplete restores at backup location",
+    )
+    recovery_group.add_argument(
+        "--unlock",
+        metavar="LOCK_ID",
+        nargs="?",
+        const="all",
+        help="Unlock stuck restore session(s). Use 'all' or specify a lock ID",
+    )
+    recovery_group.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="Clean up partial/incomplete snapshot restores at destination",
+    )
+
+    add_progress_args(restore_parser)
+
+    # verify command
+    verify_parser = subparsers.add_parser(
+        "verify",
+        help="Verify backup integrity",
+        description="Check that backups are valid and restorable",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Verification levels:
+  metadata  Quick check of snapshot existence and parent chain integrity
+  stream    btrfs targets: verify a send stream can be generated (no data transfer).
+            raw:// / raw+ssh:// targets: recompute each stream's sha256 and compare it
+            to the checksum sealed in the .meta sidecar (detects at-rest corruption).
+  full      Complete restore test to temporary location (most thorough)
+
+For a raw:// or raw+ssh:// target the default level is 'stream' (the sealed-checksum
+check), since a raw backup's integrity IS whether its stored bytes still match what was
+written. NOTE: a raw+ssh checksum is recomputed BY the (untrusted) remote, so it detects
+corruption, not tampering -- verify a raw:// copy for tamper-evidence.
+
+Examples:
+  # Quick metadata check (btrfs target)
+  btrfs-backup-ng verify /mnt/backup/home
+
+  # Verify remote backup over SSH
+  btrfs-backup-ng verify ssh://backup@server:/backups/home --ssh-sudo
+
+  # Stream integrity check
+  btrfs-backup-ng verify /mnt/backup/home --level stream
+
+  # Verify a raw target (checks the sealed sha256 of every stream)
+  btrfs-backup-ng verify raw:///mnt/usb/backups
+  btrfs-backup-ng verify raw+ssh://backup@server:/backups --ssh-sudo
+
+  # Full restore test (requires temp dir on btrfs)
+  btrfs-backup-ng verify ssh://...:/backups/home --level full --temp-dir /mnt/test
+
+  # Verify specific snapshot
+  btrfs-backup-ng verify /mnt/backup/home --snapshot home-20260104-120000
+""",
+    )
+    verify_parser.add_argument(
+        "location",
+        metavar="LOCATION",
+        help="Backup location to verify (local path or ssh://user@host:/path)",
+    )
+    verify_parser.add_argument(
+        "--level",
+        choices=["metadata", "stream", "full"],
+        default=None,
+        help="Verification level (default: metadata for btrfs targets; stream, which "
+        "checks the sealed sha256, for raw:// and raw+ssh:// targets)",
+    )
+    verify_selection = verify_parser.add_mutually_exclusive_group()
+    verify_selection.add_argument(
+        "--snapshot",
+        metavar="NAME",
+        help="Verify only this specific snapshot",
+    )
+    verify_selection.add_argument(
+        "--all",
+        action="store_true",
+        help="Verify EVERY snapshot at the backup location. stream/full default to the "
+        "latest only (fast); --all checks the whole chain. metadata and raw targets "
+        "already check all snapshots, so --all is a no-op there.",
+    )
+    verify_parser.add_argument(
+        "--temp-dir",
+        metavar="PATH",
+        help="Temporary directory for full verification (must be on btrfs)",
+    )
+    verify_parser.add_argument(
+        "--no-cleanup",
+        action="store_true",
+        help="Don't delete restored snapshots after full verification",
+    )
+    verify_parser.add_argument(
+        "--prefix",
+        metavar="PREFIX",
+        help="Snapshot prefix filter",
+    )
+    verify_parser.add_argument(
+        "--timestamp-format",
+        metavar="FMT",
+        help="strftime format for parsing snapshot timestamps in direct mode "
+        "(defaults to the config's [global] timestamp_format, else the built-in)",
+    )
+    verify_parser.add_argument(
+        "--ssh-sudo",
+        action="store_true",
+        help="Use sudo for btrfs commands on remote host",
+    )
+    verify_parser.add_argument(
+        "--ssh-key",
+        metavar="FILE",
+        help="SSH private key file",
+    )
+    verify_parser.add_argument(
+        "--ssh-auth-sock",
+        metavar="PATH",
+        help="Explicit ssh-agent socket (overrides auto-discovery; useful under sudo)",
+    )
+    add_fs_checks_args(verify_parser)
+    add_ssh_hostkey_arg(verify_parser)
+    add_remote_lock_arg(verify_parser)
+    verify_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in JSON format",
+    )
+    verify_parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Suppress progress output",
+    )
+
+    # completions command
+    completions_parser = subparsers.add_parser(
+        "completions",
+        help="Install shell completion scripts",
+        description="Install or locate shell completion scripts for bash, zsh, or fish",
+    )
+    completions_subs = completions_parser.add_subparsers(dest="completions_action")
+
+    completions_install = completions_subs.add_parser(
+        "install",
+        help="Install completions for your shell",
+    )
+    completions_install.add_argument(
+        "--shell",
+        choices=["bash", "zsh", "fish"],
+        required=True,
+        help="Shell to install completions for",
+    )
+    completions_install.add_argument(
+        "--system",
+        action="store_true",
+        help="Install system-wide (requires root)",
+    )
+
+    completions_subs.add_parser(
+        "path",
+        help="Show path to completion scripts",
+    )
+
+    # manpages command
+    manpages_parser = subparsers.add_parser(
+        "manpages",
+        help="Install man pages",
+        description="Install or locate man pages for btrfs-backup-ng commands",
+    )
+    manpages_subs = manpages_parser.add_subparsers(dest="manpages_action")
+
+    manpages_install = manpages_subs.add_parser(
+        "install",
+        help="Install man pages",
+    )
+    manpages_install.add_argument(
+        "--system",
+        action="store_true",
+        help="Install system-wide to /usr/local/share/man (requires root)",
+    )
+    manpages_install.add_argument(
+        "--prefix",
+        metavar="PATH",
+        help="Install to PREFIX/share/man/man1",
+    )
+
+    manpages_subs.add_parser(
+        "path",
+        help="Show path to man page files",
+    )
+
+    # estimate command
+    estimate_parser = subparsers.add_parser(
+        "estimate",
+        help="Estimate backup transfer sizes",
+        description="Calculate data sizes before transferring backups",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Estimate transfer size for direct paths
+  btrfs-backup-ng estimate /mnt/snapshots ssh://backup@server:/backups
+
+  # Estimate using configuration file
+  btrfs-backup-ng estimate --volume /home
+
+  # Estimate with JSON output
+  btrfs-backup-ng estimate --volume /home --json
+
+  # Estimate for specific target
+  btrfs-backup-ng estimate --volume /home --target 1
+
+  # Check if destination has sufficient space
+  btrfs-backup-ng estimate --volume /home --check-space
+
+  # Check space with custom safety margin (20%)
+  btrfs-backup-ng estimate --volume /home --check-space --safety-margin 20
+""",
+    )
+    estimate_parser.add_argument(
+        "source",
+        nargs="?",
+        metavar="SOURCE",
+        help="Source snapshot location",
+    )
+    estimate_parser.add_argument(
+        "destination",
+        nargs="?",
+        metavar="DESTINATION",
+        help="Backup destination (local path or ssh://user@host:/path)",
+    )
+    estimate_parser.add_argument(
+        "-c",
+        "--config",
+        metavar="FILE",
+        help="Path to configuration file",
+    )
+    estimate_parser.add_argument(
+        "--volume",
+        metavar="PATH",
+        help="Estimate for volume defined in config (e.g., /home)",
+    )
+    estimate_parser.add_argument(
+        "--target",
+        metavar="INDEX",
+        type=int,
+        help="Target index to estimate for (0-based, default: first target)",
+    )
+    estimate_parser.add_argument(
+        "--prefix",
+        metavar="PREFIX",
+        help="Snapshot prefix filter",
+    )
+    estimate_parser.add_argument(
+        "--ssh-sudo",
+        action="store_true",
+        help="Use sudo for btrfs commands on remote host",
+    )
+    estimate_parser.add_argument(
+        "--ssh-key",
+        metavar="FILE",
+        help="SSH private key file",
+    )
+    estimate_parser.add_argument(
+        "--ssh-auth-sock",
+        metavar="PATH",
+        help="Explicit ssh-agent socket (overrides auto-discovery; useful under sudo)",
+    )
+    estimate_parser.add_argument(
+        "--timestamp-format",
+        metavar="FMT",
+        help="strftime format for parsing snapshot timestamps in direct mode "
+        "(defaults to the config's [global] timestamp_format, else the built-in)",
+    )
+    add_fs_checks_args(estimate_parser)
+    add_ssh_hostkey_arg(estimate_parser)
+    add_remote_lock_arg(estimate_parser)
+    estimate_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in JSON format",
+    )
+    estimate_parser.add_argument(
+        "--check-space",
+        action="store_true",
+        help="Check if destination has sufficient space for the transfer",
+    )
+    estimate_parser.add_argument(
+        "--safety-margin",
+        metavar="PERCENT",
+        type=float,
+        default=10.0,
+        help="Safety margin percentage for space check (default: 10%%)",
+    )
+
+    # transfers command - manage chunked/resumable transfers (experimental)
+    transfers_parser = subparsers.add_parser(
+        "transfers",
+        help="Manage chunked and resumable transfers (experimental)",
+        description="[EXPERIMENTAL] List, resume, pause, and clean up chunked transfers.\n\n"
+        "Note: The chunked transfer feature is experimental and has not been\n"
+        "extensively tested in production environments.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # List all incomplete transfers
+  btrfs-backup-ng transfers list
+
+  # Show details of a specific transfer
+  btrfs-backup-ng transfers show abc12345
+
+  # Resume a failed transfer
+  btrfs-backup-ng transfers resume abc12345
+
+  # Clean up stale transfers (older than 48 hours)
+  btrfs-backup-ng transfers cleanup
+
+  # Clean up a specific transfer
+  btrfs-backup-ng transfers cleanup abc12345 --force
+
+  # List backup operations
+  btrfs-backup-ng transfers operations
+""",
+    )
+    transfers_subs = transfers_parser.add_subparsers(dest="transfers_action")
+
+    # transfers list
+    transfers_list = transfers_subs.add_parser(
+        "list",
+        help="List incomplete transfers",
+    )
+    transfers_list.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format",
+    )
+
+    # transfers show
+    transfers_show = transfers_subs.add_parser(
+        "show",
+        help="Show details of a transfer",
+    )
+    transfers_show.add_argument(
+        "transfer_id",
+        metavar="ID",
+        help="Transfer ID to show",
+    )
+    transfers_show.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format",
+    )
+
+    # transfers resume
+    transfers_resume = transfers_subs.add_parser(
+        "resume",
+        help="Resume a failed or paused transfer",
+    )
+    transfers_resume.add_argument(
+        "transfer_id",
+        metavar="ID",
+        help="Transfer ID to resume",
+    )
+    transfers_resume.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without making changes",
+    )
+
+    # transfers pause
+    transfers_pause = transfers_subs.add_parser(
+        "pause",
+        help="Pause an active transfer",
+    )
+    transfers_pause.add_argument(
+        "transfer_id",
+        metavar="ID",
+        help="Transfer ID to pause",
+    )
+
+    # transfers cleanup
+    transfers_cleanup = transfers_subs.add_parser(
+        "cleanup",
+        help="Clean up old or completed transfers",
+    )
+    transfers_cleanup.add_argument(
+        "transfer_id",
+        nargs="?",
+        metavar="ID",
+        help="Specific transfer ID to clean up (optional)",
+    )
+    transfers_cleanup.add_argument(
+        "--max-age",
+        type=int,
+        default=48,
+        metavar="HOURS",
+        help="Clean up transfers older than this (default: 48 hours)",
+    )
+    transfers_cleanup.add_argument(
+        "--force",
+        action="store_true",
+        help="Force cleanup of active transfers",
+    )
+    transfers_cleanup.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be cleaned up without making changes",
+    )
+
+    # transfers operations
+    transfers_ops = transfers_subs.add_parser(
+        "operations",
+        help="List backup operations",
+    )
+    transfers_ops.add_argument(
+        "--all",
+        action="store_true",
+        help="Include archived operations",
+    )
+    transfers_ops.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format",
+    )
+
+    # doctor command
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Diagnose backup system health",
+        description="Analyze and diagnose problems with the backup system",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Full system diagnosis
+  btrfs-backup-ng doctor
+
+  # JSON output for scripting
+  btrfs-backup-ng doctor --json
+
+  # Check specific category only
+  btrfs-backup-ng doctor --check config
+  btrfs-backup-ng doctor --check snapshots
+  btrfs-backup-ng doctor --check transfers
+  btrfs-backup-ng doctor --check system
+
+  # Auto-fix safe issues
+  btrfs-backup-ng doctor --fix
+
+  # Fix with confirmation prompts
+  btrfs-backup-ng doctor --fix --interactive
+""",
+    )
+    doctor_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in JSON format",
+    )
+    doctor_parser.add_argument(
+        "--check",
+        choices=["config", "snapshots", "transfers", "system"],
+        action="append",
+        metavar="CATEGORY",
+        help="Check specific category only (can be repeated)",
+    )
+    doctor_parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="Attempt to automatically fix safe issues",
+    )
+    doctor_parser.add_argument(
+        "-i",
+        "--interactive",
+        action="store_true",
+        help="Prompt for confirmation before each fix",
+    )
+    doctor_parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Only show warnings and errors",
+    )
+    doctor_parser.add_argument(
+        "--volume",
+        metavar="PATH",
+        action="append",
+        help="Only check specific volume(s)",
+    )
+
+    # snapper command - manage snapper integration
+    snapper_parser = subparsers.add_parser(
+        "snapper",
+        help="Manage snapper-managed snapshots",
+        description="Discover, list, and backup snapper-managed snapshots",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Detect snapper configurations
+  btrfs-backup-ng snapper detect
+
+  # List all snapper snapshots
+  btrfs-backup-ng snapper list
+
+  # List snapshots for specific config
+  btrfs-backup-ng snapper list --config root
+
+  # List only timeline snapshots
+  btrfs-backup-ng snapper list --config root --type single
+
+  # Backup snapper snapshots to remote target
+  btrfs-backup-ng snapper backup root ssh://backup@server:/backups/root
+
+  # Backup specific snapshot
+  btrfs-backup-ng snapper backup root /mnt/backup --snapshot 1234
+
+  # Dry run backup
+  btrfs-backup-ng snapper backup root /mnt/backup --dry-run
+""",
+    )
+    snapper_subs = snapper_parser.add_subparsers(dest="snapper_action")
+
+    # snapper detect
+    snapper_detect = snapper_subs.add_parser(
+        "detect",
+        help="Detect snapper configurations on the system",
+    )
+    snapper_detect.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format",
+    )
+
+    # snapper list
+    snapper_list = snapper_subs.add_parser(
+        "list",
+        help="List snapper configs and snapshots",
+    )
+    snapper_list.add_argument(
+        "-c",
+        "--config",
+        metavar="NAME",
+        help="Specific snapper config name",
+    )
+    snapper_list.add_argument(
+        "-t",
+        "--type",
+        choices=["single", "pre", "post"],
+        action="append",
+        metavar="TYPE",
+        help="Filter by snapshot type (can be repeated)",
+    )
+    snapper_list.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format",
+    )
+    snapper_list.add_argument(
+        "--timestamp-format",
+        metavar="FMT",
+        help="strftime format for the previewed backup_name "
+        "(defaults to the config's [global] timestamp_format)",
+    )
+
+    # snapper backup
+    snapper_backup = snapper_subs.add_parser(
+        "backup",
+        help="Backup snapper snapshots to target",
+    )
+    snapper_backup.add_argument(
+        "config",
+        metavar="CONFIG",
+        help="Snapper config name (e.g., root, home)",
+    )
+    snapper_backup.add_argument(
+        "target",
+        metavar="TARGET",
+        help=(
+            "Backup target: local path or ssh://user@host:/path (btrfs), "
+            "or raw:///path / raw+ssh://user@host/path (non-btrfs)"
+        ),
+    )
+    snapper_backup.add_argument(
+        "-s",
+        "--snapshot",
+        type=int,
+        metavar="NUM",
+        help="Backup specific snapshot number only",
+    )
+    snapper_backup.add_argument(
+        "-t",
+        "--type",
+        choices=["single", "pre", "post"],
+        action="append",
+        metavar="TYPE",
+        help="Filter by snapshot type (can be repeated)",
+    )
+    snapper_backup.add_argument(
+        "--min-age",
+        metavar="DURATION",
+        default="0",
+        help="Minimum snapshot age before backup (e.g., 1h, 30m)",
+    )
+    snapper_backup.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without making changes",
+    )
+    snapper_backup.add_argument(
+        "--ssh-sudo",
+        action="store_true",
+        help="Use sudo for btrfs commands on remote host",
+    )
+    snapper_backup.add_argument(
+        "--ssh-key",
+        metavar="FILE",
+        help="SSH private key file",
+    )
+    snapper_backup.add_argument(
+        "--ssh-auth-sock",
+        metavar="PATH",
+        help="Explicit ssh-agent socket (overrides auto-discovery; useful under sudo)",
+    )
+    add_ssh_hostkey_arg(snapper_backup)
+    add_remote_lock_arg(snapper_backup)
+    snapper_backup.add_argument(
+        "--compress",
+        metavar="METHOD",
+        choices=_compression_choices(),
+        help="Compression method for transfers",
+    )
+    snapper_backup.add_argument(
+        "--rate-limit",
+        metavar="RATE",
+        help="Bandwidth limit (e.g., '10M', '1G')",
+    )
+    snapper_backup.add_argument(
+        "--timestamp-format",
+        metavar="FMT",
+        help="strftime format for the timestamp in backup names "
+        "(default: %%Y%%m%%d-%%H%%M%%S)",
+    )
+    snapper_backup.add_argument(
+        "--encrypt",
+        metavar="METHOD",
+        choices=["none", "gpg", "openssl_enc"],
+        help="Encrypt the backup (raw:// / raw+ssh:// targets only)",
+    )
+    snapper_backup.add_argument(
+        "--gpg-recipient",
+        metavar="KEYID",
+        help="GPG recipient key (required with --encrypt gpg)",
+    )
+    snapper_backup.add_argument(
+        "--gpg-keyring",
+        metavar="PATH",
+        help="Optional GPG keyring file",
+    )
+    snapper_backup.add_argument(
+        "--openssl-cipher",
+        metavar="CIPHER",
+        help="OpenSSL cipher for --encrypt openssl_enc (default aes-256-cbc)",
+    )
+    add_progress_args(snapper_backup)
+
+    # snapper status
+    snapper_status = snapper_subs.add_parser(
+        "status",
+        help="Show backup status for snapper configs",
+    )
+    snapper_status.add_argument(
+        "-c",
+        "--config",
+        metavar="NAME",
+        help="Specific snapper config name",
+    )
+    snapper_status.add_argument(
+        "target",
+        nargs="?",
+        metavar="TARGET",
+        help="Backup target to check status for",
+    )
+    snapper_status.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format",
+    )
+    snapper_status.add_argument(
+        "--timestamp-format",
+        metavar="FMT",
+        help="strftime format used when the backups were written, so status "
+        "counts match (defaults to the config's [global] timestamp_format)",
+    )
+
+    # snapper restore
+    snapper_restore = snapper_subs.add_parser(
+        "restore",
+        help="Restore snapper backups to local snapper format",
+    )
+    snapper_restore.add_argument(
+        "source",
+        metavar="SOURCE",
+        help="Backup source (local path or ssh://user@host:/path)",
+    )
+    snapper_restore.add_argument(
+        "config",
+        metavar="CONFIG",
+        nargs="?",
+        help="Local snapper config to restore into (e.g., root, home). Required when "
+        "restoring; optional with --list (listing only reads the source).",
+    )
+    snapper_restore.add_argument(
+        "-s",
+        "--snapshot",
+        type=int,
+        action="append",
+        metavar="NUM",
+        help="Restore specific snapshot number(s) (can be repeated)",
+    )
+    snapper_restore.add_argument(
+        "-a",
+        "--all",
+        action="store_true",
+        help="Restore all snapper backups",
+    )
+    snapper_restore.add_argument(
+        "--backup-name",
+        action="append",
+        metavar="NAME",
+        help="Restore the exact raw backup by its name (from --list); can be "
+        "repeated. Use this to restore an older backup when a snapper number was "
+        "reused (see --list for names).",
+    )
+    snapper_restore.add_argument(
+        "--date",
+        metavar="DATE",
+        help="Restrict the selection to backups whose date matches DATE "
+        "(YYYY-MM-DD[ HH:MM:SS] prefix). Disambiguates a reused --snapshot NUM.",
+    )
+    snapper_restore.add_argument(
+        "--from-config",
+        metavar="NAME",
+        help="Only restore from this snapper config in backup",
+    )
+    snapper_restore.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without making changes",
+    )
+    snapper_restore.add_argument(
+        "--ssh-sudo",
+        action="store_true",
+        help="Use sudo for btrfs commands on remote host",
+    )
+    snapper_restore.add_argument(
+        "--ssh-key",
+        metavar="FILE",
+        help="SSH private key file",
+    )
+    snapper_restore.add_argument(
+        "--ssh-auth-sock",
+        metavar="PATH",
+        help="Explicit ssh-agent socket (overrides auto-discovery; useful under sudo)",
+    )
+    snapper_restore.add_argument(
+        "--gpg-keyring",
+        metavar="PATH",
+        help="GPG keyring to decrypt an encrypted raw snapper backup (must "
+        "match the keyring the backup was encrypted for)",
+    )
+    snapper_restore.add_argument(
+        "--openssl-cipher",
+        metavar="CIPHER",
+        help="OpenSSL cipher fallback for a legacy raw backup whose sidecar "
+        "does not record one (modern sidecars are authoritative)",
+    )
+    add_ssh_hostkey_arg(snapper_restore)
+    add_remote_lock_arg(snapper_restore)
+    snapper_restore.add_argument(
+        "-l",
+        "--list",
+        action="store_true",
+        help="List available snapper backups at source",
+    )
+    snapper_restore.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format (for --list)",
+    )
+
+    # snapper generate-config
+    snapper_genconfig = snapper_subs.add_parser(
+        "generate-config",
+        help="Generate TOML config for snapper volumes",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Generate config for all snapper configs
+  btrfs-backup-ng snapper generate-config
+
+  # Generate for specific snapper config
+  btrfs-backup-ng snapper generate-config --config root
+
+  # Specify a backup target
+  btrfs-backup-ng snapper generate-config --target ssh://backup@server:/backups
+
+  # Append to existing config file
+  btrfs-backup-ng snapper generate-config --append ~/.config/btrfs-backup-ng/config.toml
+
+  # Write to new file
+  btrfs-backup-ng snapper generate-config -o /etc/btrfs-backup-ng/snapper.toml
+""",
+    )
+    snapper_genconfig.add_argument(
+        "-c",
+        "--config",
+        metavar="NAME",
+        action="append",
+        help="Snapper config name to include (can be repeated, default: all)",
+    )
+    snapper_genconfig.add_argument(
+        "-t",
+        "--target",
+        metavar="PATH",
+        help="Default backup target path (local or ssh://user@host:/path)",
+    )
+    snapper_genconfig.add_argument(
+        "-o",
+        "--output",
+        metavar="FILE",
+        help="Write config to file (default: stdout)",
+    )
+    snapper_genconfig.add_argument(
+        "-a",
+        "--append",
+        metavar="FILE",
+        help="Append volume configs to existing TOML file",
+    )
+    snapper_genconfig.add_argument(
+        "--type",
+        choices=["single", "pre", "post"],
+        action="append",
+        metavar="TYPE",
+        help="Snapshot types to include (default: single)",
+    )
+    snapper_genconfig.add_argument(
+        "--min-age",
+        metavar="DURATION",
+        default="1h",
+        help="Minimum snapshot age (default: 1h)",
+    )
+    snapper_genconfig.add_argument(
+        "--ssh-sudo",
+        action="store_true",
+        help="Enable sudo for SSH targets",
+    )
+    snapper_genconfig.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format instead of TOML",
+    )
+
+    _keep_global_options_across_subcommands(parser)
+
+    return parser
+
+
+def show_migration_notice() -> None:
+    """Show one-time notice about config file migration."""
+    from pathlib import Path
+
+    notice_file = (
+        Path.home() / ".config" / "btrfs-backup-ng" / ".migration-notice-shown"
+    )
+
+    if notice_file.exists():
+        return
+
+    print("=" * 70)
+    print("TIP: btrfs-backup-ng now supports TOML configuration files!")
+    print("")
+    print("Instead of command-line arguments, you can define your backup")
+    print("configuration in a config file for easier management.")
+    print("")
+    print("Generate an example config:")
+    print("  btrfs-backup-ng config init > ~/.config/btrfs-backup-ng/config.toml")
+    print("")
+    print("Then run backups with:")
+    print("  btrfs-backup-ng run")
+    print("")
+    print("This notice will only be shown once.")
+    print("=" * 70)
+    print("")
+
+    # Create notice file to prevent showing again
+    try:
+        notice_file.parent.mkdir(parents=True, exist_ok=True)
+        notice_file.touch()
+    except OSError:
+        pass  # Ignore if we can't write the notice file
+
+
+def run_legacy_mode(argv: list[str]) -> int:
+    """Run in legacy mode using the original CLI interface.
+
+    Args:
+        argv: Command line arguments
+
+    Returns:
+        Exit code
+    """
+    # Show migration notice (one time only)
+    show_migration_notice()
+
+    # Import and run the original main function
+    from .._legacy_main import legacy_main
+
+    return legacy_main(argv)
+
+
+def run_subcommand(args: argparse.Namespace) -> int:
+    """Run the specified subcommand.
+
+    Args:
+        args: Parsed arguments
+
+    Returns:
+        Exit code
+    """
+    from .. import __version__
+
+    if args.version:
+        print(f"btrfs-backup-ng {__version__}")
+        return 0
+
+    if not args.command:
+        print("No command specified. Use --help for usage information.")
+        return 1
+
+    # Route to appropriate command handler
+    handlers: dict[str, Callable] = {
+        "run": cmd_run,
+        "snapshot": cmd_snapshot,
+        "transfer": cmd_transfer,
+        "transfers": cmd_transfers,
+        "prune": cmd_prune,
+        "list": cmd_list,
+        "status": cmd_status,
+        "config": cmd_config,
+        "install": cmd_install,
+        "uninstall": cmd_uninstall,
+        "restore": cmd_restore,
+        "verify": cmd_verify,
+        "estimate": cmd_estimate,
+        "completions": cmd_completions,
+        "manpages": cmd_manpages,
+        "doctor": cmd_doctor,
+        "snapper": cmd_snapper,
+        "raw": cmd_raw,
+    }
+
+    handler = handlers.get(args.command)
+    if handler is None:
+        print(f"Unknown command: {args.command}")
+        return 1
+
+    try:
+        return handler(args)
+    except KeyboardInterrupt:
+        # Ctrl-C: acknowledge cleanly instead of dumping a KeyboardInterrupt traceback.
+        # A worker thread still finishing must not begin anything new either.
+        lifecycle.request_stop()
+        print("\nInterrupted.", file=sys.stderr)
+        return 130
+    except __util__.AbortError as e:
+        # A deliberate, already-plain-language abort (a failed integrity check, a
+        # missing tool, a refused unsafe operation). Its message carries the reason
+        # and the next step, so show it as-is.
+        message = str(e).strip()
+        print(
+            f"Error: {message}" if message else "Error: operation aborted.",
+            file=sys.stderr,
+        )
+        return 1
+    except Exception as e:  # noqa: BLE001 - last-resort user-facing guard
+        # Any other unhandled error must never reach the user as a raw Python
+        # traceback (this often fires mid-backup or mid-restore). Render one plain
+        # line plus a pointer to --debug for the full trace, and exit non-zero. The
+        # traceback itself is preserved at debug level for troubleshooting.
+        logger.debug("Unhandled error in '%s' command", args.command, exc_info=True)
+        message = str(e).strip() or e.__class__.__name__
+        print(f"Error: {message}", file=sys.stderr)
+        print(
+            "Run the same command with --debug to see the full technical traceback.",
+            file=sys.stderr,
+        )
+        return 1
+
+
+# Command handlers - these will be implemented in separate modules
+# For now, they're stubs that print what would happen
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """Execute run command."""
+    from .run import execute_run
+
+    return execute_run(args)
+
+
+def cmd_snapshot(args: argparse.Namespace) -> int:
+    """Execute snapshot command."""
+    from .snapshot import execute_snapshot
+
+    return execute_snapshot(args)
+
+
+def cmd_transfer(args: argparse.Namespace) -> int:
+    """Execute transfer command."""
+    from .transfer import execute_transfer
+
+    return execute_transfer(args)
+
+
+def cmd_prune(args: argparse.Namespace) -> int:
+    """Execute prune command."""
+    from .prune import execute_prune
+
+    return execute_prune(args)
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    """Execute list command."""
+    from .list_cmd import execute_list
+
+    return execute_list(args)
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Execute status command."""
+    from .status import execute_status
+
+    return execute_status(args)
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    """Execute config command."""
+    from .config_cmd import execute_config
+
+    return execute_config(args)
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    """Execute install command."""
+    from .install import execute_install
+
+    return execute_install(args)
+
+
+def cmd_uninstall(args: argparse.Namespace) -> int:
+    """Execute uninstall command."""
+    from .install import execute_uninstall
+
+    return execute_uninstall(args)
+
+
+def cmd_restore(args: argparse.Namespace) -> int:
+    """Execute restore command."""
+    from .restore import execute_restore
+
+    return execute_restore(args)
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    """Execute verify command."""
+    from .verify import execute
+
+    return execute(args)
+
+
+def cmd_estimate(args: argparse.Namespace) -> int:
+    """Execute estimate command."""
+    from .estimate import execute_estimate
+
+    return execute_estimate(args)
+
+
+def cmd_completions(args: argparse.Namespace) -> int:
+    """Execute completions command."""
+    from .completions import execute_completions
+
+    return execute_completions(args)
+
+
+def cmd_manpages(args: argparse.Namespace) -> int:
+    """Execute manpages command."""
+    from .manpages import execute_manpages
+
+    return execute_manpages(args)
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Execute doctor command."""
+    from .doctor import execute_doctor
+
+    return execute_doctor(args)
+
+
+def cmd_transfers(args: argparse.Namespace) -> int:
+    """Execute transfers command."""
+    from .transfers_cmd import execute_transfers
+
+    return execute_transfers(args)
+
+
+def cmd_snapper(args: argparse.Namespace) -> int:
+    """Execute snapper command."""
+    from .snapper_cmd import execute_snapper
+
+    return execute_snapper(args)
+
+
+def cmd_raw(args: argparse.Namespace) -> int:
+    """Execute raw command."""
+    from .raw_cmd import execute_raw
+
+    return execute_raw(args)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Main entry point for btrfs-backup-ng CLI.
+
+    Args:
+        argv: Command line arguments (defaults to sys.argv[1:])
+
+    Returns:
+        Exit code
+    """
+    if argv is None:
+        argv = sys.argv[1:]
+
+    # Check for legacy mode
+    if is_legacy_mode(argv):
+        return run_legacy_mode(argv)
+
+    # A URL in the first position is a legacy-mode invocation with a remote
+    # SOURCE, which is not supported: taking a snapshot on a remote host is
+    # not implemented (#108). Without this the subcommand parser rejected it
+    # as "invalid choice", which says nothing about why.
+    if argv and argv[0].startswith("ssh://"):
+        print(
+            f"btrfs-backup-ng: error: {argv[0]!r} is a remote source. A source "
+            "must be a local subvolume path; taking a snapshot on a remote host "
+            "is not supported. ssh:// is accepted for destinations.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Parse with new subcommand interface
+    parser = create_subcommand_parser()
+    args = parser.parse_args(argv)
+
+    return run_subcommand(args)

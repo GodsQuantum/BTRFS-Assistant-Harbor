@@ -1,0 +1,12 @@
+#!/usr/bin/python3
+"""Isolated legacy Harbor compatibility CLI, no /usr/bin/btrfs-backup-ng collision."""
+import sys
+from pathlib import Path
+
+_VENDOR = Path(__file__).resolve().parent.parent / 'lib/btrfs-assistant-harbor/legacy-python'
+if not _VENDOR.is_dir():
+    raise SystemExit("Harbor legacy Python engine not installed at " + str(_VENDOR))
+sys.path.insert(0, str(_VENDOR))
+from btrfs_backup_ng.__main__ import main
+if __name__ == "__main__":
+    main()

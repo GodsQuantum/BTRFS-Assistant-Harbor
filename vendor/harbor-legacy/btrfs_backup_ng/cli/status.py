@@ -1,0 +1,452 @@
+"""Status command: Show job status and statistics."""
+
+import argparse
+import json
+import logging
+from pathlib import Path
+
+from .. import endpoint
+from ..__logger__ import create_logger
+from ..config import ConfigError, find_config_file, load_config
+from ..transaction import get_transaction_stats, read_transaction_log
+from btrfs_backup_ng import __util__
+
+from .common import (
+    apply_config_verbosity,
+    btrfs_debug_enabled,
+    get_log_level,
+    get_timestamp_format,
+    resolve_snapshot_dir,
+    thread_ssh_target_config,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _format_bytes(size_bytes: int | float) -> str:
+    """Format bytes as human-readable string."""
+    size: float = float(size_bytes)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(size) < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} PB"
+
+
+def _format_duration(seconds: float) -> str:
+    """Format duration as human-readable string."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    elif seconds < 3600:
+        return f"{seconds / 60:.1f}m"
+    else:
+        return f"{seconds / 3600:.1f}h"
+
+
+STATUS_SCHEMA_VERSION = 1
+
+
+def _execute_status_json(args: argparse.Namespace) -> int:
+    """Emit a stable machine-readable status report for integrations."""
+    log_level = get_log_level(args)
+    create_logger(False, level=log_level)
+
+    try:
+        config_path = find_config_file(getattr(args, "config", None))
+        if config_path is None:
+            print(
+                json.dumps(
+                    {
+                        "schema_version": STATUS_SCHEMA_VERSION,
+                        "healthy": False,
+                        "error": {
+                            "code": "config_not_found",
+                            "message": "No configuration file found.",
+                        },
+                        "volumes": [],
+                    }
+                )
+            )
+            return 1
+        config, _ = load_config(config_path)
+    except ConfigError as exc:
+        print(
+            json.dumps(
+                {
+                    "schema_version": STATUS_SCHEMA_VERSION,
+                    "healthy": False,
+                    "error": {"code": "config_error", "message": str(exc)},
+                    "volumes": [],
+                }
+            )
+        )
+        return 1
+
+    apply_config_verbosity(args, config)
+    volumes = config.get_enabled_volumes()
+    report: dict[str, object] = {
+        "schema_version": STATUS_SCHEMA_VERSION,
+        "config": str(config_path),
+        "healthy": True,
+        "parallelism": {
+            "volumes": config.global_config.parallel_volumes,
+            "targets": config.global_config.parallel_targets,
+        },
+        "volumes": [],
+    }
+
+    if not volumes:
+        report["healthy"] = False
+        report["error"] = {
+            "code": "no_volumes",
+            "message": "No volumes configured",
+        }
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 1
+
+    all_healthy = True
+    volume_reports: list[dict[str, object]] = []
+
+    for volume in volumes:
+        endpoint_kwargs = {
+            "snap_prefix": volume.snapshot_prefix,
+            "convert_rw": False,
+            "subvolume_sync": False,
+            "btrfs_debug": btrfs_debug_enabled(args, config),
+            "fs_checks": "auto",
+            "timestamp_format": get_timestamp_format(config),
+        }
+
+        source_status = "unknown"
+        source_count = 0
+        last_snapshot_name: str | None = None
+
+        try:
+            source_path = Path(volume.path).resolve()
+            full_snapshot_dir = resolve_snapshot_dir(volume.snapshot_dir, source_path)
+            if full_snapshot_dir.exists():
+                source_kwargs = dict(endpoint_kwargs)
+                source_kwargs["path"] = full_snapshot_dir
+                source_kwargs["snapshot_folder"] = str(full_snapshot_dir)
+                source_endpoint = endpoint.choose_endpoint(
+                    str(source_path),
+                    source_kwargs,
+                    source=True,
+                )
+                source_endpoint.prepare()
+                snapshots = source_endpoint.list_snapshots()
+                source_count = len(snapshots)
+                if snapshots:
+                    last_snapshot_name = snapshots[-1].get_name()
+                    source_status = "ok"
+                else:
+                    source_status = "no snapshots"
+                    all_healthy = False
+            else:
+                source_status = "no snapshot dir"
+                all_healthy = False
+        except __util__.AbortError as exc:
+            source_status = f"error: {exc}"
+            all_healthy = False
+        except Exception as exc:
+            source_status = f"error: {exc}"
+            all_healthy = False
+
+        target_reports: list[dict[str, object]] = []
+        for target in volume.targets:
+            target_status = "unknown"
+            target_count = 0
+            pending = 0
+            try:
+                dest_kwargs = dict(endpoint_kwargs)
+                thread_ssh_target_config(dest_kwargs, target)
+                dest_endpoint = endpoint.choose_endpoint(
+                    target.path,
+                    dest_kwargs,
+                    source=False,
+                )
+                dest_endpoint.prepare()
+                dest_snapshots = dest_endpoint.list_snapshots()
+                target_count = len(dest_snapshots)
+                if dest_snapshots:
+                    target_status = "ok"
+                else:
+                    target_status = "no backups"
+                    all_healthy = False
+                if (
+                    source_count > 0
+                    and target_count > 0
+                    and target_count < source_count
+                ):
+                    pending = source_count - target_count
+            except Exception as exc:
+                target_status = f"error: {exc}"
+                all_healthy = False
+
+            target_reports.append(
+                {
+                    "path": target.path,
+                    "status": target_status,
+                    "backup_count": target_count,
+                    "pending": pending,
+                }
+            )
+
+        volume_reports.append(
+            {
+                "path": volume.path,
+                "source": {
+                    "status": source_status,
+                    "snapshot_count": source_count,
+                    "latest_snapshot": last_snapshot_name,
+                },
+                "targets": target_reports,
+            }
+        )
+
+    report["volumes"] = volume_reports
+    report["healthy"] = all_healthy
+
+    if config.global_config.transaction_log:
+        transactions: dict[str, object] = {
+            "stats": get_transaction_stats(config.global_config.transaction_log),
+        }
+        if getattr(args, "transactions", False):
+            transactions["recent"] = read_transaction_log(
+                config.global_config.transaction_log,
+                limit=getattr(args, "limit", 10),
+            )
+        report["transactions"] = transactions
+
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if all_healthy else 1
+
+
+def execute_status(args: argparse.Namespace) -> int:
+    """Execute the status command.
+
+    Shows backup status, last run times, and health information.
+
+    Args:
+        args: Parsed command line arguments
+
+    Returns:
+        Exit code
+    """
+    if getattr(args, "format", "text") == "json":
+        return _execute_status_json(args)
+
+    log_level = get_log_level(args)
+    create_logger(False, level=log_level)
+
+    # Find and load config
+    try:
+        config_path = find_config_file(getattr(args, "config", None))
+        if config_path is None:
+            print("No configuration file found.")
+            print("Create one with: btrfs-backup-ng config init")
+            return 1
+
+        config, _ = load_config(config_path)
+
+    except ConfigError as e:
+        logger.error("Configuration error: %s", e)
+        return 1
+
+    apply_config_verbosity(args, config)
+    volumes = config.get_enabled_volumes()
+
+    if not volumes:
+        print("No volumes configured")
+        return 1
+
+    print("btrfs-backup-ng Status")
+    print("=" * 60)
+    print(f"Config: {config_path}")
+    print(
+        f"Volumes: {len(volumes)} configured, {len(config.get_enabled_volumes())} enabled"
+    )
+    print(
+        f"Parallelism: {config.global_config.parallel_volumes} volumes, {config.global_config.parallel_targets} targets"
+    )
+    print("")
+
+    all_healthy = True
+
+    for volume in volumes:
+        print(f"Volume: {volume.path}")
+
+        # Build endpoint kwargs
+        endpoint_kwargs = {
+            "snap_prefix": volume.snapshot_prefix,
+            "convert_rw": False,
+            "subvolume_sync": False,
+            "btrfs_debug": btrfs_debug_enabled(args, config),
+            "fs_checks": "auto",
+            "timestamp_format": get_timestamp_format(config),
+        }
+
+        # Check source
+        source_status = "unknown"
+        source_count = 0
+        last_snapshot = None
+
+        try:
+            source_path = Path(volume.path).resolve()
+
+            # ONE resolution for every command (resolve_snapshot_dir), so
+            # this command reads exactly the directory run/snapshot write. A
+            # missing absolute base is refused there with the mount diagnosis
+            # instead of the generic warning below.
+            try:
+                full_snapshot_dir = resolve_snapshot_dir(
+                    volume.snapshot_dir, source_path
+                )
+            except __util__.AbortError as e:
+                logger.warning("  %s", e)
+                continue
+
+            if full_snapshot_dir.exists():
+                source_kwargs = dict(endpoint_kwargs)
+                source_kwargs["path"] = full_snapshot_dir
+                source_kwargs["snapshot_folder"] = str(full_snapshot_dir)
+
+                source_endpoint = endpoint.choose_endpoint(
+                    str(source_path),
+                    source_kwargs,
+                    source=True,
+                )
+                source_endpoint.prepare()
+
+                snapshots = source_endpoint.list_snapshots()
+                source_count = len(snapshots)
+
+                if snapshots:
+                    last_snapshot = snapshots[-1]
+                    source_status = "ok"
+                else:
+                    # A volume with nothing to back up is not a healthy volume.
+                    # all_healthy was only ever falsified inside except handlers,
+                    # so every non-exceptional bad state -- this one, a missing
+                    # snapshot dir, a target holding no backups -- left the
+                    # verdict green, and `status` printed "All systems
+                    # operational" and exited 0 for a system that has never
+                    # backed up or whose destination drive was wiped. This is
+                    # the command a monitoring wrapper checks.
+                    source_status = "no snapshots"
+                    all_healthy = False
+            else:
+                source_status = "no snapshot dir"
+                all_healthy = False
+
+        except Exception as e:
+            source_status = f"error: {e}"
+            all_healthy = False
+
+        print(f"  Source: {source_status} ({source_count} snapshots)")
+        if last_snapshot:
+            print(f"  Latest: {last_snapshot.get_name()}")
+
+        # Check targets
+        for target in volume.targets:
+            target_status = "unknown"
+            target_count = 0
+
+            try:
+                dest_kwargs = dict(endpoint_kwargs)
+                thread_ssh_target_config(dest_kwargs, target)
+
+                dest_endpoint = endpoint.choose_endpoint(
+                    target.path,
+                    dest_kwargs,
+                    source=False,
+                )
+                dest_endpoint.prepare()
+
+                dest_snapshots = dest_endpoint.list_snapshots()
+                target_count = len(dest_snapshots)
+
+                if dest_snapshots:
+                    target_status = "ok"
+                else:
+                    # A target holding nothing is the state an operator most
+                    # needs told about, and it reported as operational.
+                    target_status = "no backups"
+                    all_healthy = False
+
+                # Check sync status
+                if source_count > 0 and target_count > 0:
+                    if target_count < source_count:
+                        pending = source_count - target_count
+                        target_status = f"ok ({pending} pending)"
+
+            except Exception as e:
+                target_status = f"error: {e}"
+                all_healthy = False
+
+            print(f"  Target: {target.path}")
+            print(f"    Status: {target_status} ({target_count} backups)")
+
+        print("")
+
+    # Transaction log stats
+    if config.global_config.transaction_log:
+        print("Transaction History")
+        print("-" * 60)
+        stats = get_transaction_stats(config.global_config.transaction_log)
+
+        if stats["total_records"] > 0:
+            print(f"  Total records: {stats['total_records']}")
+            print(
+                f"  Transfers: {stats['transfers']['completed']} completed, "
+                f"{stats['transfers']['failed']} failed"
+            )
+            print(
+                f"  Total transferred: {_format_bytes(stats['total_bytes_transferred'])}"
+            )
+
+            # Show recent transactions if --transactions flag
+            if getattr(args, "transactions", False):
+                print("")
+                print("Recent Transactions:")
+                limit = getattr(args, "limit", 10)
+                records = read_transaction_log(
+                    config.global_config.transaction_log, limit=limit
+                )
+                for record in records:
+                    ts = record.get("timestamp", "")[:19].replace("T", " ")
+                    status = record.get("status", "?")
+                    action = record.get("action", "?")
+                    snapshot = record.get("snapshot", "N/A")
+
+                    # Plain-ASCII status words, not glyphs: this output is read
+                    # from cron/systemd logs where the stream may not be UTF-8
+                    # (a non-ASCII character raises UnicodeEncodeError there) and
+                    # where "grep FAILED" has to work.
+                    status_label = {
+                        "completed": "[OK]",
+                        "failed": "[FAILED]",
+                    }.get(status, "[STARTED]")
+                    line = f"  {status_label:<9} {ts} {action:10} {snapshot}"
+
+                    if record.get("duration_seconds"):
+                        line += f" ({_format_duration(record['duration_seconds'])})"
+                    if record.get("size_bytes"):
+                        line += f" [{_format_bytes(record['size_bytes'])}]"
+                    if record.get("error"):
+                        line += f" ERROR: {record['error'][:50]}"
+
+                    print(line)
+        else:
+            print("  No transaction history yet")
+
+        print("")
+
+    # Summary
+    print("=" * 60)
+    if all_healthy:
+        print("Overall: All systems operational")
+    else:
+        print("Overall: Some issues detected")
+
+    return 0 if all_healthy else 1

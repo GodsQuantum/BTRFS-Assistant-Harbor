@@ -1,0 +1,1462 @@
+"""Restore command: Restore snapshots from backup locations.
+
+Enables pulling snapshots from backup storage (SSH or local) back to local systems
+for disaster recovery, migration, or backup verification.
+"""
+
+import argparse
+import dataclasses
+import logging
+import os
+import subprocess
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from .. import __util__, endpoint
+from ..__logger__ import create_logger
+from ..config import ConfigError, find_config_file, load_config
+from ..core.target import TargetKind, parse_target
+from ..core.restore import (
+    RestoreError,
+    _retry_with_inferred_prefix,
+    list_remote_snapshots,
+    restore_snapshots,
+    validate_restore_destination,
+)
+from .common import (
+    apply_config_verbosity,
+    apply_configured_verbosity,
+    btrfs_debug_enabled,
+    get_fs_checks_mode,
+    get_log_level,
+    resolve_timestamp_format,
+    should_show_progress,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def execute_restore(args: argparse.Namespace) -> int:
+    """Execute the restore command.
+
+    Restores snapshots from a backup location to a local destination.
+
+    Args:
+        args: Parsed command line arguments
+
+    Returns:
+        Exit code (0 for success, non-zero for failure)
+    """
+    log_level = get_log_level(args)
+    create_logger(False, level=log_level)
+    # The location modes read the configuration for a target's options and a
+    # timestamp_format; its quiet/verbose applies to them too. The --volume
+    # modes load it again below and apply again, which is idempotent.
+    apply_configured_verbosity(args)
+
+    # --in-place is NOT implemented, and the command refuses rather than
+    # proceed as if it were. Accepting the flag and running the ordinary
+    # restore -- which lands the snapshot NESTED at DESTINATION/<name> and
+    # replaces nothing -- reported success for a location that was never
+    # replaced, and the README documented that as a disaster-recovery
+    # strategy; the config-driven path (--volume) did not even read the
+    # flag. The refusal sits ahead of every mode, before any endpoint is
+    # prepared, so nothing is touched, and it names the procedure that does
+    # work today.
+    if getattr(args, "in_place", False):
+        logger.error(
+            "--in-place is not implemented in this release, and this command "
+            "refuses rather than pretend: nothing was restored. A restore "
+            "receives each snapshot as a NESTED subvolume at "
+            "DESTINATION/<snapshot name>; it never replaces DESTINATION "
+            "itself. To replace a location: restore into a staging directory, "
+            "verify it, then swap the subvolumes yourself -- the README's "
+            "Strategy 2 gives the exact commands, including the rollback. The "
+            "running root filesystem can only be replaced from a rescue "
+            "system. In-place restore that verifies the staged copy before "
+            "swapping is planned and tracked in issue #109."
+        )
+        return 2
+
+    # Handle --list-volumes mode (list configured volumes)
+    if getattr(args, "list_volumes", False):
+        return _execute_list_volumes(args)
+
+    # Handle config-driven restore with --volume flag
+    volume_path = getattr(args, "volume", None)
+    if volume_path:
+        return _execute_config_restore(args, volume_path)
+
+    # Handle --list mode (just list available snapshots)
+    if getattr(args, "list", False):
+        return _execute_list(args)
+
+    # Handle --status mode (show locks and incomplete restores)
+    if getattr(args, "status", False):
+        return _execute_status(args)
+
+    # Handle --unlock mode (unlock stuck sessions)
+    unlock_arg = getattr(args, "unlock", None)
+    if unlock_arg is not None:
+        return _execute_unlock(args, unlock_arg)
+
+    # Handle --cleanup mode (clean up partial restores)
+    if getattr(args, "cleanup", False):
+        return _execute_cleanup(args)
+
+    # Get source and destination
+    source = getattr(args, "source", None)
+    destination = getattr(args, "destination", None)
+
+    if not source:
+        print("Error: Source backup location required")
+        print("Usage: btrfs-backup-ng restore <source> <destination>")
+        print("       btrfs-backup-ng restore --list <source>")
+        print("       btrfs-backup-ng restore --volume <path> --to <destination>")
+        return 1
+
+    if not destination:
+        print("Error: Destination path required")
+        print("Usage: btrfs-backup-ng restore <source> <destination>")
+        return 1
+
+    # Delegate to main restore logic
+    args.source = source
+    args.destination = destination
+    return _execute_main_restore(args)
+
+
+def _execute_list_volumes(args: argparse.Namespace) -> int:
+    """List volumes and their backup targets from config.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, non-zero for failure)
+    """
+    # Load config
+    config_file = getattr(args, "config", None)
+    try:
+        if config_file:
+            config, _warnings = load_config(config_file)
+            config_path = config_file
+        else:
+            found_path = find_config_file()
+            if not found_path:
+                print("Error: No configuration file found")
+                print("Use --config to specify a config file, or create one at:")
+                print("  ~/.config/btrfs-backup-ng/config.toml")
+                print("  /etc/btrfs-backup-ng/config.toml")
+                return 1
+            config, _warnings = load_config(found_path)
+            config_path = found_path
+    except ConfigError as e:
+        logger.error("Failed to load config: %s", e)
+        return 1
+
+    apply_config_verbosity(args, config)
+    print(f"Configuration: {config_path}")
+    print("=" * 60)
+    print()
+
+    volumes = config.get_enabled_volumes()
+    if not volumes:
+        print("No volumes configured")
+        return 0
+
+    for i, vol in enumerate(volumes):
+        print(f"Volume {i + 1}: {vol.path}")
+        print(f"  Snapshot prefix: {vol.snapshot_prefix}")
+        print(f"  Snapshot dir: {vol.snapshot_dir}")
+
+        if vol.targets:
+            print("  Backup targets:")
+            for j, target in enumerate(vol.targets):
+                ssh_info = " (ssh_sudo)" if target.ssh_sudo else ""
+                mount_info = " (require_mount)" if target.require_mount else ""
+                print(f"    [{j}] {target.path}{ssh_info}{mount_info}")
+        else:
+            print("  No backup targets configured")
+        print()
+
+    print(f"Total: {len(volumes)} volume(s)")
+    return 0
+
+
+def _execute_config_restore(args: argparse.Namespace, volume_path: str) -> int:
+    """Execute config-driven restore for a specific volume.
+
+    Uses the configuration file to determine where backups are stored,
+    then restores from the configured target.
+
+    Args:
+        args: Command arguments
+        volume_path: Path of the volume to restore (e.g., /home)
+
+    Returns:
+        Exit code (0 for success, non-zero for failure)
+    """
+    # Load config
+    config_file = getattr(args, "config", None)
+    try:
+        if config_file:
+            config, _warnings = load_config(config_file)
+        else:
+            found_path = find_config_file()
+            if not found_path:
+                print("Error: No configuration file found")
+                print("Use --config to specify a config file")
+                return 1
+            config, _warnings = load_config(found_path)
+    except ConfigError as e:
+        logger.error("Failed to load config: %s", e)
+        return 1
+
+    apply_config_verbosity(args, config)
+    # Find the requested volume
+    volume = None
+    for vol in config.get_enabled_volumes():
+        if vol.path == volume_path:
+            volume = vol
+            break
+
+    if not volume:
+        print(f"Error: Volume '{volume_path}' not found in configuration")
+        print("Available volumes:")
+        for vol in config.get_enabled_volumes():
+            print(f"  {vol.path}")
+        return 1
+
+    # Check volume has targets
+    if not volume.targets:
+        print(f"Error: Volume '{volume_path}' has no backup targets configured")
+        return 1
+
+    # Get target index
+    target_idx = getattr(args, "target", None) or 0
+    if target_idx < 0 or target_idx >= len(volume.targets):
+        print(f"Error: Invalid target index {target_idx}")
+        print(f"Volume '{volume_path}' has {len(volume.targets)} target(s):")
+        for j, t in enumerate(volume.targets):
+            print(f"  [{j}] {t.path}")
+        return 1
+
+    target = volume.targets[target_idx]
+    source = target.path
+
+    # Get destination
+    destination = getattr(args, "to", None) or getattr(args, "destination", None)
+
+    # Handle --list mode for config-driven restore
+    if getattr(args, "list", False):
+        # Set source and call list
+        args.source = source
+        # Apply target's SSH settings
+        if target.ssh_sudo:
+            args.ssh_sudo = True
+        if target.ssh_key:
+            args.ssh_key = target.ssh_key
+        if not getattr(args, "ssh_host_key_policy", None):
+            args.ssh_host_key_policy = target.ssh_host_key_policy
+        # Use volume's snapshot prefix. `is None`, not truthiness: a volume's
+        # prefix is "" only when the operator wrote snapshot_prefix = "" (an
+        # unset one is auto-derived and non-empty), so a falsy test dropped
+        # exactly the deliberate choice issue #6 exists to honour.
+        if getattr(args, "prefix", None) is None:
+            args.prefix = volume.snapshot_prefix
+        return _execute_list(args)
+
+    # For actual restore, need destination
+    if not destination:
+        print("Error: Destination required for restore")
+        print(
+            f"Usage: btrfs-backup-ng restore --volume {volume_path} --to <destination>"
+        )
+        return 1
+
+    # Build effective arguments
+    print("Config-driven restore:")
+    print(f"  Volume: {volume_path}")
+    print(f"  Source: {source}")
+    print(f"  Destination: {destination}")
+    print()
+
+    # Update args with config values
+    args.source = source
+    args.destination = destination
+
+    # Apply target's settings if not overridden on CLI
+    if target.ssh_sudo and not getattr(args, "ssh_sudo", False):
+        args.ssh_sudo = True
+    if target.ssh_key and not getattr(args, "ssh_key", None):
+        args.ssh_key = target.ssh_key
+    if not getattr(args, "ssh_host_key_policy", None):
+        args.ssh_host_key_policy = target.ssh_host_key_policy
+    if target.compress != "none" and not getattr(args, "compress", None):
+        args.compress = target.compress
+    if target.rate_limit and not getattr(args, "rate_limit", None):
+        args.rate_limit = target.rate_limit
+
+    # Use volume's snapshot prefix if not overridden. `is None` for the same
+    # reason as the listing path above: an explicit empty prefix is a choice.
+    if getattr(args, "prefix", None) is None:
+        args.prefix = volume.snapshot_prefix
+
+    # Now call the main restore logic (fall through to execute_restore's main path)
+    # We need to reprocess since we've set up the args
+    return _execute_main_restore(args)
+
+
+def _execute_main_restore(args: argparse.Namespace) -> int:
+    """Execute the main restore logic after arguments are resolved.
+
+    This is called both from direct CLI usage and config-driven restore.
+
+    Args:
+        args: Parsed arguments with source and destination set
+
+    Returns:
+        Exit code (0 for success, non-zero for failure)
+    """
+
+    # --overwrite is NOT implemented in this release, and says so rather than
+    # accepting the flag and doing nothing.
+    #
+    # It was built here and then withdrawn. Replacing a snapshot means deleting
+    # it before receiving its replacement -- a received subvolume cannot be
+    # renamed or moved, so there is no staging and no atomic swap -- and four
+    # adversarial passes each found another way for that window to end with the
+    # operator holding neither copy. The last was a corrupt backup: every check
+    # of whether the replacement could be delivered ran after the deletion.
+    #
+    # A restore that leaves a missing snapshot restored and an existing one
+    # untouched is still useful, so this reports and continues rather than
+    # refusing the whole run.
+    if getattr(args, "overwrite", False):
+        logger.warning(
+            "--overwrite is not supported in this release and was NOT applied: "
+            "snapshots already at the destination are left exactly as they are. "
+            "Anything missing is still restored. To replace an existing "
+            "snapshot, remove it yourself and run this again."
+        )
+    source = args.source
+    destination = args.destination
+
+    # Validate destination
+    dest_path = Path(destination).resolve()
+    in_place = getattr(args, "in_place", False)
+    force = getattr(args, "yes_i_know_what_i_am_doing", False)
+
+    try:
+        validate_restore_destination(dest_path, in_place=in_place, force=force)
+    except RestoreError as e:
+        logger.error("Destination validation failed: %s", e)
+        return 1
+
+    # Prepare backup endpoint (source)
+    try:
+        backup_endpoint = _prepare_backup_endpoint(args, source)
+    except Exception as e:
+        logger.error("Failed to prepare backup endpoint: %s", e)
+        return 1
+
+    # Prepare local endpoint (destination). Resolve the SAME timestamp_format AND the
+    # SAME snapshot prefix the backup (source) endpoint uses, so already-restored
+    # snapshots are recognized by name (skip-existing + incremental-base detection). An
+    # empty prefix here made list_snapshots fail to parse prefixed names like
+    # "home-20240101-..." -> the chain never saw the local parent and re-restored it.
+    try:
+        local_endpoint = _prepare_local_endpoint(
+            dest_path,
+            resolve_timestamp_format(
+                getattr(args, "timestamp_format", None), getattr(args, "config", None)
+            ),
+            snap_prefix=getattr(args, "prefix", "") or "",
+            btrfs_debug=btrfs_debug_enabled(args),
+        )
+    except Exception as e:
+        logger.error("Failed to prepare local endpoint: %s", e)
+        return 1
+
+    # Parse time if --before specified
+    before_time = None
+    before_str = getattr(args, "before", None)
+    if before_str:
+        try:
+            before_time = _parse_datetime(before_str)
+            logger.info(
+                "Restoring snapshot before: %s",
+                time.strftime("%Y-%m-%d %H:%M:%S", before_time),
+            )
+        except ValueError as e:
+            logger.error("Invalid date format: %s", e)
+            return 1
+
+    # Get options
+    dry_run = getattr(args, "dry_run", False)
+    snapshot_name = getattr(args, "snapshot", None)
+    restore_all = getattr(args, "all", False)
+    no_incremental = getattr(args, "no_incremental", False)
+    interactive = getattr(args, "interactive", False)
+
+    # Interactive mode
+    if interactive:
+        snapshot_name = _interactive_select(backup_endpoint)
+        if snapshot_name is None:
+            logger.info("No snapshot selected, aborting")
+            return 0
+
+    # Build transfer options
+    show_progress = should_show_progress(args)
+    options = {
+        "compress": getattr(args, "compress", None) or "none",
+        "rate_limit": getattr(args, "rate_limit", None),
+        "show_progress": show_progress,
+    }
+
+    # Execute restore
+    logger.info(__util__.log_heading(f"Restore started at {time.ctime()}"))
+    logger.info("Source: %s", source)
+    logger.info("Destination: %s", dest_path)
+
+    try:
+        stats = restore_snapshots(
+            backup_endpoint=backup_endpoint,
+            local_endpoint=local_endpoint,
+            snapshot_name=snapshot_name,
+            before_time=before_time,
+            restore_all=restore_all,
+            no_incremental=no_incremental,
+            options=options,
+            dry_run=dry_run,
+        )
+    except RestoreError as e:
+        logger.error("Restore failed: %s", e)
+        return 1
+    except Exception as e:
+        logger.error("Unexpected error during restore: %s", e)
+        logger.debug("Exception details:", exc_info=True)
+        return 1
+
+    logger.info(__util__.log_heading(f"Restore finished at {time.ctime()}"))
+
+    # Return appropriate exit code
+    if stats["failed"] > 0:
+        return 1
+    return 0
+
+
+def _execute_list(args: argparse.Namespace) -> int:
+    """List available snapshots at backup location."""
+    source = getattr(args, "source", None)
+    if not source:
+        print("Error: Source backup location required")
+        print("Usage: btrfs-backup-ng restore --list <source>")
+        return 1
+
+    try:
+        backup_endpoint = _prepare_backup_endpoint(args, source)
+    except Exception as e:
+        logger.error("Failed to prepare backup endpoint: %s", e)
+        return 1
+
+    # Do for `--list` what `restore` already does: work out the prefix this
+    # location actually uses and show those snapshots, rather than telling the
+    # operator to re-run with an argument we just derived ourselves.
+    #
+    # The most ordinary command there is -- `restore --list <dest>` with no
+    # --prefix -- otherwise answered "No snapshots matched" for a location
+    # holding a perfectly good backup, which reads as data loss.
+    #
+    # Shared with --interactive, --status and the restore path, so the rules
+    # cannot diverge: it infers only when NO prefix was asked for, and refuses
+    # to choose when the location holds more than one (two prefixes usually
+    # means two volumes side by side, and showing the wrong one is worse than
+    # asking).
+    try:
+        snapshots, inferred_prefix = _list_for_display(backup_endpoint)
+    except Exception as e:
+        logger.error("Failed to list snapshots: %s", e)
+        return 1
+
+    if inferred_prefix:
+        print(
+            f"No snapshots use the default prefix here; listing "
+            f"{inferred_prefix!r} instead, which is what this location uses."
+        )
+        print("")
+
+    if not snapshots:
+        # "No snapshots found" is only honest when the location really is empty.
+        # A prefix that matched nothing produces the identical message, and an
+        # operator reading it during a restore concludes their backups are gone.
+        explanation = None
+        try:
+            explanation = backup_endpoint.describe_empty_listing()
+        except Exception as e:  # noqa: BLE001 - never fail because a hint failed
+            logger.debug("Could not build an empty-listing explanation: %s", e)
+        if explanation:
+            print(f"No snapshots matched at {source}.")
+            print("")
+            print(explanation)
+            return 1
+        print("No snapshots found at backup location")
+        return 0
+
+    print(f"Available snapshots at {source}:")
+    print("")
+
+    # Format nicely
+    for i, snap in enumerate(snapshots, 1):
+        name = snap.get_name()
+        # Try to format the timestamp nicely
+        if hasattr(snap, "time_obj") and snap.time_obj:
+            time_str = time.strftime("%Y-%m-%d %H:%M:%S", snap.time_obj)
+        else:
+            time_str = "unknown"
+        print(f"  {i:3}. {name:<40} ({time_str})")
+
+    print("")
+    print(f"Total: {len(snapshots)} snapshot(s)")
+
+    return 0
+
+
+def _configured_target_options(args: argparse.Namespace, source: str) -> dict:
+    """SSH/decryption options configured for ``source`` in the user's config.
+
+    A restore names its source as a URI on the command line, so nothing tied it
+    back to the target entry that produced those backups -- the options lived in
+    the config file and only ``--ssh-*`` flags were consulted. The result was a
+    backup that wrote successfully for months and then could not be READ:
+
+        $ btrfs-backup-ng -c config.toml restore --list raw+ssh://host:/backups
+        ERROR  Failed to create remote directory: ...
+
+    while the identical target backed up fine, because `run` reads the config and
+    `restore` did not. Passing --ssh-key by hand made it work, which is the whole
+    diagnosis. Measured on a real host.
+
+    Matching is on the target path as written, after stripping a trailing slash.
+    Returns {} when there is no config, no match, or anything goes wrong -- a
+    convenience lookup must never be the reason a restore cannot start.
+    """
+    try:
+        config_file = find_config_file(getattr(args, "config", None))
+        if config_file is None:
+            return {}
+        config, _warnings = load_config(config_file)
+    except Exception as e:  # noqa: BLE001 - a lookup failure must not block a restore
+        logger.debug("Could not read config for target options: %s", e)
+        return {}
+
+    wanted = source.rstrip("/")
+    for volume in getattr(config, "volumes", []) or []:
+        for target in getattr(volume, "targets", []) or []:
+            if str(getattr(target, "path", "")).rstrip("/") != wanted:
+                continue
+            defaults = {
+                field.name: field.default
+                for field in dataclasses.fields(target)
+                if field.default is not dataclasses.MISSING
+            }
+            found = {}
+            for key in (
+                "ssh_key",
+                "ssh_sudo",
+                "ssh_port",
+                "ssh_auth_sock",
+                "ssh_host_key_policy",
+                "ssh_password_auth",
+                "skip_remote_lock",
+                "gpg_keyring",
+                "openssl_cipher",
+            ):
+                value = getattr(target, key, None)
+                # Only unset values are skipped here. False is a SETTING, not an
+                # absence: ssh_password_auth defaults to True, so `false` -- the
+                # only useful thing to write -- was dropped as "unset" on the way
+                # in and dropped again below as "same as default" if it were
+                # true. The option could not be returned under any value it
+                # could hold. Booleans that merely restate the schema default are
+                # still skipped by the check that follows.
+                if value is None or value == "":
+                    continue
+                # Only what this target actually says. Schema defaults are not
+                # choices the user made, and reporting them as "configured" turns
+                # a local restore into a claim about SSH settings it never had.
+                if key in defaults and value == defaults[key]:
+                    continue
+                found[key] = value
+            if found:
+                logger.info(
+                    "Using the options configured for this target in %s: %s",
+                    config_file,
+                    ", ".join(sorted(found)),
+                )
+            return found
+    return {}
+
+
+def _prepare_backup_endpoint(args: argparse.Namespace, source: str):
+    """Prepare the backup endpoint for restore.
+
+    Args:
+        args: Command arguments
+        source: Source path (local or ssh://)
+
+    Returns:
+        Configured endpoint
+    """
+    # Build endpoint kwargs. Thread timestamp_format so custom-named snapshots
+    # are parsed rather than silently skipped when listing/matching backups.
+    endpoint_kwargs = {
+        "snap_prefix": getattr(args, "prefix", "") or "",
+        # Whether a prefix was CHOSEN, which the value alone cannot express: ""
+        # is both "the operator asked for no prefix" and "nobody said". Prefix
+        # inference must override the second and never the first.
+        "snap_prefix_explicit": getattr(args, "prefix", None) is not None,
+        "convert_rw": False,
+        "subvolume_sync": False,
+        "btrfs_debug": btrfs_debug_enabled(args),
+        "fs_checks": get_fs_checks_mode(args),
+        "timestamp_format": resolve_timestamp_format(
+            getattr(args, "timestamp_format", None),
+            getattr(args, "config", None),
+        ),
+    }
+
+    # SSH options. Dispatch on the scheme, not on a "ssh://" prefix: raw+ssh://
+    # does not start with it, so a remote raw source used to be given none of the
+    # --ssh-* options and its remote listing ran as whoever ssh logged in as.
+    scheme = parse_target(source)
+    # What the config says about THIS target. Command-line flags still win; this
+    # only fills what was not given, so a restore works with the same settings
+    # that produced the backup instead of demanding they be retyped.
+    configured = _configured_target_options(args, source)
+
+    if scheme.needs_ssh_options:
+        endpoint_kwargs["ssh_sudo"] = getattr(args, "ssh_sudo", False) or bool(
+            configured.get("ssh_sudo", False)
+        )
+        # `port`, not `ssh_port`: that is the key choose_endpoint and the
+        # endpoints read. Threaded under the config's own spelling it was
+        # dropped by the endpoint's key whitelist, so a restore against a
+        # non-standard port quietly used 22 -- while the log said the target's
+        # ssh_port had been applied. cli/common.py already maps it this way for
+        # the backup path, and records the same bug being fixed there before.
+        _port = configured.get("ssh_port")
+        if _port:
+            endpoint_kwargs["port"] = _port
+        _hkp = getattr(args, "ssh_host_key_policy", None) or configured.get(
+            "ssh_host_key_policy"
+        )
+        if _hkp:
+            endpoint_kwargs["ssh_host_key_policy"] = _hkp
+        # --skip-remote-lock is per-run and the flag wins; a target may also
+        # carry it for a destination that can never be written.
+        if getattr(args, "skip_remote_lock", None) or configured.get(
+            "skip_remote_lock"
+        ):
+            endpoint_kwargs["skip_remote_lock"] = True
+        # There is no --ssh-password-auth flag, so the args lookup is a constant
+        # True unless a caller sets the attribute directly; reading only it meant
+        # a configured `ssh_password_auth = false` had no effect on a restore at
+        # all, while the same setting was honoured for backups. Either side may
+        # disable the fallback and neither can re-enable what the other refused.
+        endpoint_kwargs["ssh_password_fallback"] = bool(
+            getattr(args, "ssh_password_auth", True)
+        ) and bool(configured.get("ssh_password_auth", True))
+        ssh_key = getattr(args, "ssh_key", None) or configured.get("ssh_key")
+        if ssh_key:
+            # The two remote endpoints read the identity file under DIFFERENT
+            # config keys: SSHEndpoint accepts either name, SSHRawEndpoint reads
+            # only "ssh_key". Threading one name for both silently drops
+            # --ssh-key for raw+ssh://, producing an ssh invocation with no -i
+            # flag and no error.
+            endpoint_kwargs[scheme.ssh_identity_config_key or "ssh_identity_file"] = (
+                ssh_key
+            )
+        ssh_auth_sock = getattr(args, "ssh_auth_sock", None) or configured.get(
+            "ssh_auth_sock"
+        )
+        if ssh_auth_sock:
+            endpoint_kwargs["ssh_auth_sock"] = ssh_auth_sock
+    elif not scheme.is_raw:
+        # For local paths, we need to set 'path' as well since LocalEndpoint
+        # always resolves config["path"] during initialization. A raw:// source
+        # is excluded: choose_endpoint parses the path out of the URI itself, and
+        # Path("raw:///x").resolve() would resolve against the working directory.
+        endpoint_kwargs["path"] = Path(source).resolve()
+
+    # Decryption settings for an encrypted raw backup. Needed for both raw://
+    # (local) and raw+ssh:// sources -- neither starts with "ssh://", so thread
+    # them here (outside the ssh branch) and only when the operator supplied one
+    # so the sidecar-recorded cipher stays authoritative; the endpoint value is
+    # the fallback for a legacy sidecar. Harmless for non-raw endpoints (dropped
+    # by the base config whitelist).
+    gpg_keyring = getattr(args, "gpg_keyring", None) or configured.get("gpg_keyring")
+    if gpg_keyring:
+        endpoint_kwargs["gpg_keyring"] = gpg_keyring
+    openssl_cipher = getattr(args, "openssl_cipher", None) or configured.get(
+        "openssl_cipher"
+    )
+    if openssl_cipher:
+        endpoint_kwargs["openssl_cipher"] = openssl_cipher
+
+    # Harbor's verified machine-set recovery MUST NOT create even a lock
+    # directory on the source backup (USB/NAS may be read-only). Redirect
+    # the raw-source pin store to the *existing* receiving staging directory.
+    # Normal user restores retain their original persisted source pins.
+    private_locks = os.environ.get("BTRFS_HARBOR_RESTORE_LOCK_ROOT")
+    if private_locks is not None:
+        destination = getattr(args, "destination", None)
+        stage = Path(private_locks)
+        if (
+            scheme.kind != TargetKind.RAW
+            or not isinstance(destination, str)
+            or not stage.is_absolute()
+            or stage.is_symlink()
+            or not stage.is_dir()
+            or stage.resolve() != Path(destination).resolve()
+            or stage.resolve() == Path(scheme.path).resolve()
+        ):
+            raise ValueError(
+                "machine recovery lock root must equal the real local staging directory"
+            )
+        endpoint_kwargs["lock_root"] = str(stage)
+
+    # Create endpoint - for restore, backup location needs to be set as "path"
+    # (not "source") because list_snapshots() uses config["path"]
+    # The source=False means the path will be stored in config["path"]
+    # A restore reads the backup location; the bookkeeping tree a destination
+    # gets is not created there (a read-only medium must serve as a source).
+    endpoint_kwargs["create_tree"] = False
+    backup_ep = endpoint.choose_endpoint(
+        source,
+        endpoint_kwargs,
+        source=False,
+    )
+    # The generic factory intentionally whitelists keys. Set this scoped
+    # machine recovery lockroot after construction so RawEndpoint.set_lock
+    # cannot fall back to writing under the backup source path.
+    if private_locks is not None:
+        backup_ep.config["lock_root"] = str(stage)
+    # Restore-time integrity check for raw targets: default ON, disabled by
+    # --skip-verify (for last-copy recovery of a partially-corrupt backup).
+    backup_ep.config["verify_before_restore"] = not getattr(args, "skip_verify", False)
+    backup_ep.prepare()
+
+    return backup_ep
+
+
+def _prepare_local_endpoint(
+    dest_path: Path,
+    timestamp_format: str | None = None,
+    snap_prefix: str = "",
+    btrfs_debug: bool = False,
+):
+    """Prepare the local endpoint for receiving restored snapshots.
+
+    Args:
+        dest_path: Local destination path
+        timestamp_format: Format for parsing names of snapshots already at the
+            destination, so skip-existing and incremental-base detection see
+            custom-named snapshots instead of silently dropping them. Must match
+            the format the backup (source) endpoint uses.
+        snap_prefix: Snapshot name prefix the backup uses (e.g. ``home-``). The local
+            endpoint must parse already-restored subvolumes under the SAME prefix, or it
+            fails to recognize them and the restore chain re-restores an existing parent.
+
+    Returns:
+        Configured local endpoint
+    """
+    from ..endpoint.local import LocalEndpoint
+
+    # Ensure directory exists
+    dest_path.mkdir(parents=True, exist_ok=True)
+
+    endpoint_kwargs = {
+        "path": dest_path,
+        "source": None,  # This is the destination for receive
+        "snap_prefix": snap_prefix,
+        "convert_rw": False,
+        "subvolume_sync": False,
+        "btrfs_debug": btrfs_debug,
+        "fs_checks": "auto",
+        "timestamp_format": timestamp_format,
+    }
+
+    local_ep = LocalEndpoint(config=endpoint_kwargs)
+    local_ep.prepare()
+
+    return local_ep
+
+
+def _parse_datetime(dt_str: str) -> time.struct_time:
+    """Parse a datetime string to struct_time.
+
+    Supports formats:
+        - 2026-01-04
+        - 2026-01-04 12:00
+        - 2026-01-04 12:00:00
+        - 2026-01-04T12:00:00
+
+    Args:
+        dt_str: Datetime string
+
+    Returns:
+        time.struct_time
+
+    Raises:
+        ValueError: If format is not recognized
+    """
+    formats = [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+    ]
+
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(dt_str, fmt)
+            return dt.timetuple()
+        except ValueError:
+            continue
+
+    raise ValueError(
+        f"Could not parse date '{dt_str}'. "
+        f"Use format: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS"
+    )
+
+
+def _list_for_display(backup_endpoint: Any) -> tuple[list[Any], str]:
+    """Snapshots at this location, under the prefix it actually uses.
+
+    Returns ``(snapshots, inferred_prefix)``; ``inferred_prefix`` is empty when
+    nothing had to be inferred.
+
+    Every read-only view of a location goes through here, so none of them can
+    drift from the others. ``--list`` grew the inference and its siblings did
+    not, which left three commands answering for the same directory three
+    different ways:
+
+    * ``--interactive`` printed "No snapshots available", and the restore then
+      returned 0 -- a restore that restored nothing, reporting success -- for a
+      location the same command without ``-i`` restores fine;
+    * ``--status`` reported "Available snapshots: 0" for a location ``--list``
+      shows as full;
+    * ``--list`` was right.
+
+    The inference rules are the transfer path's own primitive, not a copy of it:
+    it applies only when no prefix was asked for, and refuses to choose when a
+    location holds more than one.
+    """
+    snapshots = list_remote_snapshots(backup_endpoint)
+    if snapshots:
+        return snapshots, ""
+    inferred = _retry_with_inferred_prefix(backup_endpoint)
+    if not inferred:
+        return [], ""
+    return inferred, str(backup_endpoint.config.get("snap_prefix", "") or "")
+
+
+def _interactive_select(backup_endpoint) -> str | None:
+    """Interactively select a snapshot to restore.
+
+    Args:
+        backup_endpoint: Endpoint to list snapshots from
+
+    Returns:
+        Selected snapshot name, or None if cancelled
+    """
+    try:
+        snapshots, inferred = _list_for_display(backup_endpoint)
+    except Exception as e:
+        logger.error("Failed to list snapshots: %s", e)
+        return None
+
+    if not snapshots:
+        print("No snapshots available")
+        return None
+
+    if inferred:
+        print(
+            f"No snapshots use the default prefix here; showing {inferred!r} "
+            f"instead, which is what this location uses."
+        )
+
+    print("")
+    print("Available snapshots:")
+    print("")
+
+    for i, snap in enumerate(snapshots, 1):
+        name = snap.get_name()
+        if hasattr(snap, "time_obj") and snap.time_obj:
+            time_str = time.strftime("%Y-%m-%d %H:%M:%S", snap.time_obj)
+        else:
+            time_str = "unknown"
+        print(f"  {i:3}. {name:<40} ({time_str})")
+
+    print("")
+    print("  0. Cancel")
+    print("")
+
+    while True:
+        try:
+            choice = input("Select snapshot to restore [0]: ").strip()
+            if not choice or choice == "0":
+                return None
+
+            idx = int(choice) - 1
+            if 0 <= idx < len(snapshots):
+                selected = snapshots[idx]
+                print(f"\nSelected: {selected.get_name()}")
+                confirm = input("Proceed with restore? [y/N]: ").strip().lower()
+                if confirm in ("y", "yes"):
+                    return selected.get_name()
+                else:
+                    print("Cancelled")
+                    return None
+            else:
+                print(f"Invalid selection. Enter 1-{len(snapshots)} or 0 to cancel.")
+
+        except ValueError:
+            print("Invalid input. Enter a number.")
+        except (EOFError, KeyboardInterrupt):
+            print("\nCancelled")
+            return None
+
+
+def _execute_status(args: argparse.Namespace) -> int:
+    """Show status of locks and incomplete restores at backup location.
+
+    Displays:
+    - Active locks on snapshots (from restore or backup operations)
+    - Any partial/incomplete snapshots detected
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, non-zero for failure)
+    """
+    source = getattr(args, "source", None)
+    if not source:
+        print("Error: Source backup location required")
+        print("Usage: btrfs-backup-ng restore --status <source>")
+        return 1
+
+    try:
+        backup_endpoint = _prepare_backup_endpoint(args, source)
+    except Exception as e:
+        logger.error("Failed to prepare backup endpoint: %s", e)
+        return 1
+
+    print(f"Restore status for {source}")
+    print("=" * 60)
+    print()
+
+    # Endpoints whose set_lock is in-memory only never record a lock, so there is
+    # nothing here to inspect. Reporting "no active locks" would be technically
+    # true and actively misleading: it reads as "we looked, and the target is
+    # clean" when nothing was ever recorded to look at. Remote endpoints do
+    # record locks now and implement _read_locks against them, so they take the
+    # ordinary path below rather than this one.
+    if not backup_endpoint.persists_locks:
+        print("This target does not persist locks.")
+        print()
+        print("Its pins are held in memory for the duration of a single run, so")
+        print("nothing is written here and an interrupted run leaves nothing behind")
+        print("to inspect or unlock. Local, ssh://, raw:// and raw+ssh:// locations")
+        print("all persist their pins on the location itself and report them here.")
+        return 0
+
+    # Read through the endpoint rather than rebuilding the path here. The
+    # endpoint already coerces config['path'] to a Path -- SSH endpoints keep it
+    # a str -- and this duplicate build did not, so it raised
+    # "unsupported operand type(s) for /: 'str' and 'str'", swallowed it, and
+    # printed "No active locks found." for a target it had never opened.
+    try:
+        locks = backup_endpoint._read_locks()
+    except Exception as e:
+        # AbortError carries no message of its own -- the specific cause was
+        # already logged by _read_locks -- so name the type rather than printing
+        # a sentence that trails off after a colon.
+        detail = str(e) or f"{type(e).__name__}; see the error logged above"
+        print(f"Error: the lock state at {source} could not be read ({detail}).")
+        print()
+        print("This is NOT a report of zero locks. Nothing was read, so nothing is")
+        print("known about what is locked; resolve the error above before treating")
+        print("this target as unlocked.")
+        return 1
+
+    # Display locks
+    if locks:
+        print("Active Locks:")
+        print("-" * 40)
+        restore_locks: dict[str, Any] = {}
+        other_locks: dict[str, Any] = {}
+
+        for snap_name, lock_info in locks.items():
+            snap_locks = lock_info.get("locks", [])
+            parent_locks = lock_info.get("parent_locks", [])
+            all_locks = snap_locks + parent_locks
+
+            for lock_id in all_locks:
+                if lock_id.startswith("restore:"):
+                    if snap_name not in restore_locks:
+                        restore_locks[snap_name] = []
+                    restore_locks[snap_name].append(lock_id)
+                else:
+                    if snap_name not in other_locks:
+                        other_locks[snap_name] = []
+                    other_locks[snap_name].append(lock_id)
+
+        if restore_locks:
+            print("\n  Restore locks (from restore operations):")
+            for snap_name, lock_ids in restore_locks.items():
+                for lock_id in lock_ids:
+                    session_id = lock_id.replace("restore:", "")
+                    print(f"    {snap_name}: session {session_id}")
+
+        if other_locks:
+            print("\n  Other locks (from backup/transfer operations):")
+            for snap_name, lock_ids in other_locks.items():
+                for lock_id in lock_ids:
+                    print(f"    {snap_name}: {lock_id}")
+
+        print()
+        print(f"Total: {len(locks)} snapshot(s) with locks")
+        print()
+        print("To unlock restore sessions:")
+        print("  btrfs-backup-ng restore --unlock all <source>")
+        print("  btrfs-backup-ng restore --unlock <session-id> <source>")
+    else:
+        print("No active locks found.")
+        print()
+
+    # List snapshots for reference, under the prefix this location actually
+    # uses -- reporting 0 for a location holding backups reads as data loss.
+    snapshots: list[Any] = []
+    try:
+        snapshots, inferred = _list_for_display(backup_endpoint)
+        if inferred:
+            print(f"\nAvailable snapshots: {len(snapshots)} (prefix {inferred!r})")
+        else:
+            print(f"\nAvailable snapshots: {len(snapshots)}")
+    except Exception as e:
+        logger.warning("Could not list snapshots: %s", e)
+
+    # A snapper backup location holds numbered slots (.snapshots/<n>/snapshot)
+    # or sidecar-named streams, not prefix-named snapshots, so the listing
+    # above is 0 for it however many backups it holds -- the same "0 for a
+    # location holding backups" this command is not allowed to print. Those
+    # backups are enumerated the way `snapper restore --list` enumerates them
+    # and reported with the pins a running snapper restore holds on them.
+    _print_snapper_backups(source, backup_endpoint, args, locks, snapshots)
+
+    return 0
+
+
+def _snapper_endpoint_options(args: argparse.Namespace) -> dict[str, Any]:
+    """The restore command's connection options in the shape the snapper
+    enumeration (``list_snapper_backups``) takes: the same options
+    ``snapper restore`` threads, so a location written with ``--ssh-sudo`` is
+    read back with it and the enumeration is of what is there."""
+    options: dict[str, Any] = {}
+    if getattr(args, "ssh_sudo", False):
+        options["ssh_sudo"] = True
+    if getattr(args, "skip_remote_lock", None):
+        options["skip_remote_lock"] = True
+    if btrfs_debug_enabled(args):
+        options["btrfs_debug"] = True
+    if getattr(args, "ssh_key", None):
+        options["ssh_identity_file"] = args.ssh_key
+        options["ssh_key"] = args.ssh_key
+    if getattr(args, "ssh_auth_sock", None):
+        options["ssh_auth_sock"] = args.ssh_auth_sock
+    if getattr(args, "ssh_host_key_policy", None):
+        options["ssh_host_key_policy"] = args.ssh_host_key_policy
+    if getattr(args, "gpg_keyring", None):
+        options["gpg_keyring"] = args.gpg_keyring
+    if getattr(args, "openssl_cipher", None):
+        options["openssl_cipher"] = args.openssl_cipher
+    return options
+
+
+def _snapper_pin_key(backup: dict) -> str:
+    """The name under which a snapper restore pins this backup on its location:
+    the engine's key for a numbered slot is ``snapshot-<n>``, for a raw stream
+    its own file name (``core.operations._SnapperBtrfsBackup.get_name``,
+    ``RawSnapshot``)."""
+    name = backup.get("backup_name")
+    if name:
+        return str(name)
+    return f"snapshot-{backup.get('number')}"
+
+
+def _print_snapper_backups(
+    source: str,
+    backup_endpoint: Any,
+    args: argparse.Namespace,
+    locks: dict[str, Any],
+    prefix_snapshots: list[Any],
+) -> None:
+    """Report the snapper backups at ``source`` and the pins held on them.
+
+    Prints nothing for a location with no snapper layout. A layout that is
+    there but cannot be enumerated is reported as exactly that, never as
+    zero backups.
+    """
+    from ..core.restore import list_snapper_backups, snapper_layout_present
+
+    if not snapper_layout_present(backup_endpoint):
+        return
+    try:
+        backups = list_snapper_backups(source, _snapper_endpoint_options(args))
+    except Exception as e:
+        print()
+        print(f"Snapper backups: the layout at {source} could not be enumerated ({e}).")
+        print("This is NOT a report of zero backups; resolve the error before")
+        print("treating this location as empty.")
+        return
+
+    print()
+    print(f"Snapper backups: {len(backups)}")
+    if not prefix_snapshots:
+        print("(This location holds snapper backups, numbered by snapshot, rather")
+        print(" than prefix-named snapshots; list and restore them with")
+        print(" `btrfs-backup-ng snapper restore --list <source>`.)")
+    if not backups:
+        return
+    print()
+    pinned_total = 0
+    for backup in backups:
+        metadata = backup.get("metadata")
+        date = getattr(metadata, "date", None)
+        when = date.strftime("%Y-%m-%d %H:%M:%S") if date else "date unknown"
+        kind = getattr(metadata, "type", None) or "?"
+        description = getattr(metadata, "description", None) or ""
+        lock_info = locks.get(_snapper_pin_key(backup), {}) if locks else {}
+        pins = list(lock_info.get("locks", [])) + list(
+            lock_info.get("parent_locks", [])
+        )
+        line = f"  {backup.get('number'):>6}  {kind:<6}  {when:<19}  {description[:30]}"
+        if pins:
+            pinned_total += 1
+            line += "  pinned: " + ", ".join(pins)
+        print(line.rstrip())
+    if pinned_total:
+        print()
+        print(
+            f"{pinned_total} snapper backup(s) are pinned by a restore in progress "
+            f"(or one that did not finish); retention does not delete a pinned "
+            f"backup. Unlock a finished session with restore --unlock."
+        )
+
+
+def _execute_unlock(args: argparse.Namespace, lock_id: str) -> int:
+    """Unlock stuck restore session(s).
+
+    Args:
+        args: Command arguments
+        lock_id: Lock ID to unlock, or "all" to unlock all restore locks
+
+    Returns:
+        Exit code (0 for success, non-zero for failure)
+    """
+    source = getattr(args, "source", None)
+    if not source:
+        print("Error: Source backup location required")
+        print("Usage: btrfs-backup-ng restore --unlock [LOCK_ID] <source>")
+        return 1
+
+    try:
+        backup_endpoint = _prepare_backup_endpoint(args, source)
+    except Exception as e:
+        logger.error("Failed to prepare backup endpoint: %s", e)
+        return 1
+
+    # Endpoints whose set_lock is in-memory only never write a lock file, so
+    # there is nothing here to inspect. Reporting "no active locks" would be
+    # technically true and actively misleading: it reads as "we looked, and the
+    # target is clean" when nothing was ever recorded to look at.
+    if not backup_endpoint.persists_locks:
+        print("This target does not persist locks, so there is nothing to unlock.")
+        print()
+        print("Its pins are held in memory for the duration of a single run, so an")
+        print("interrupted run leaves nothing behind to clear.")
+        return 0
+
+    # Same endpoint API as --status, for the same reason.
+    try:
+        locks = backup_endpoint._read_locks()
+    except Exception as e:
+        logger.error("The lock state could not be read, so nothing was unlocked: %s", e)
+        return 1
+
+    if not locks:
+        print("No locks found - nothing to unlock.")
+        return 0
+
+    # Find and remove matching locks
+    unlocked_count = 0
+    new_locks: dict[str, Any] = {}
+
+    for snap_name, lock_info in locks.items():
+        snap_locks = set(lock_info.get("locks", []))
+        parent_locks = set(lock_info.get("parent_locks", []))
+
+        if lock_id == "all":
+            # Remove all restore locks
+            restore_snap_locks = {lk for lk in snap_locks if lk.startswith("restore:")}
+            restore_parent_locks = {
+                lk for lk in parent_locks if lk.startswith("restore:")
+            }
+            unlocked_count += len(restore_snap_locks) + len(restore_parent_locks)
+            snap_locks -= restore_snap_locks
+            parent_locks -= restore_parent_locks
+        else:
+            # Remove specific lock
+            full_lock_id = (
+                f"restore:{lock_id}" if not lock_id.startswith("restore:") else lock_id
+            )
+            if full_lock_id in snap_locks:
+                snap_locks.discard(full_lock_id)
+                unlocked_count += 1
+            if full_lock_id in parent_locks:
+                parent_locks.discard(full_lock_id)
+                unlocked_count += 1
+
+        # Keep entry if it still has locks
+        if snap_locks or parent_locks:
+            new_entry = {}
+            if snap_locks:
+                new_entry["locks"] = list(snap_locks)
+            if parent_locks:
+                new_entry["parent_locks"] = list(parent_locks)
+            new_locks[snap_name] = new_entry
+
+    # Write through the endpoint's own writer, which does the atomic replace
+    # (temp -> fsync -> os.replace -> parent fsync, 0600). A torn lock file
+    # is misread as "no locks" and lets retention prune a snapshot that is still
+    # locked, so this must not be a plain open("w") -- and must not be a second
+    # copy of the careful version either.
+    try:
+        backup_endpoint._write_locks(new_locks)
+    except Exception as e:
+        logger.error("Could not write the lock file: %s", e)
+        return 1
+
+    if unlocked_count > 0:
+        print(f"Unlocked {unlocked_count} lock(s).")
+        if new_locks:
+            print(f"Remaining locks: {len(new_locks)} snapshot(s)")
+        else:
+            print("All locks cleared.")
+    else:
+        if lock_id == "all":
+            print("No restore locks found to unlock.")
+        else:
+            print(f"Lock '{lock_id}' not found.")
+        return 1
+
+    return 0
+
+
+def _execute_cleanup(args: argparse.Namespace) -> int:
+    """Remove what an interrupted restore left at the destination, and only that.
+
+    A restore writes a run marker under ``DEST/.btrfs-backup-ng/restore/``
+    for each receive while it is in flight and removes it once the copy is
+    verified. A marker that outlives its process is the record of a restore
+    that was killed mid-receive, and the subvolume it names -- when that
+    subvolume has no received_uuid -- is the partial that receive left. That
+    conjunction is the only thing this command deletes. Everything else it
+    finds is reported and left: a marker whose restore is still running, a
+    marker naming a complete received copy (the marker is stale, the copy is
+    not), a subvolume under no marker at all, however empty -- an operator's
+    own ``btrfs subvolume create`` is indistinguishable from an interrupted
+    receive, and this command used to delete it on emptiness alone.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, non-zero for failure)
+    """
+    from ..core.layout import read_markers, still_abandoned
+    from ..endpoint.local import LocalEndpoint
+
+    # For cleanup, accept either destination or source as the path
+    # (user might use either positional argument)
+    destination = getattr(args, "destination", None) or getattr(args, "source", None)
+    if not destination:
+        print("Error: Destination path required")
+        print("Usage: btrfs-backup-ng restore --cleanup <destination>")
+        return 1
+
+    dest_path = Path(destination).resolve()
+
+    if not dest_path.exists():
+        print(f"Error: Destination path does not exist: {dest_path}")
+        return 1
+
+    print(f"Scanning for interrupted restores in {dest_path}")
+    print("=" * 60)
+    print()
+
+    # The one identity probe, through an endpoint over the destination. Not
+    # prepared: this is a read of what is there, and prepare() would create
+    # the bookkeeping tree under a path that may not be a restore destination.
+    probe = LocalEndpoint(
+        config={"path": dest_path, "snap_prefix": "", "fs_checks": "skip"}
+    )
+
+    try:
+        marked = read_markers(dest_path, probe)
+    except Exception as e:
+        logger.error("Error reading the run markers under %s: %s", dest_path, e)
+        return 1
+
+    abandoned = [m for m in marked if m.state == "abandoned"]
+    stale_only = [m for m in marked if m.state in ("missing", "complete")]
+    left = [m for m in marked if m.state not in ("abandoned", "missing", "complete")]
+    marked_names = {m.name for m in marked}
+
+    # Subvolumes under no marker are reported when they look like debris and
+    # never touched. Emptiness is not evidence.
+    unclear: list[tuple[Path, str]] = []
+    try:
+        for item in dest_path.iterdir():
+            if not item.is_dir() or item.name in marked_names:
+                continue
+            if not __util__.is_subvolume(item):
+                continue
+            try:
+                contents: list[Path] | None = list(item.iterdir())
+            except PermissionError:
+                contents = None
+            if contents is None:
+                unclear.append((item, "cannot be read, so it cannot be identified"))
+            elif not contents or (
+                len(contents) == 1 and contents[0].name == ".btrfs-backup-ng"
+            ):
+                unclear.append(
+                    (item, "empty, and no run marker of this tool's names it")
+                )
+    except Exception as e:
+        logger.error("Error scanning destination: %s", e)
+        return 1
+
+    if left:
+        print(
+            f"Leaving {len(left)} marked entr{'y' if len(left) == 1 else 'ies'} alone:\n"
+        )
+        for m in left:
+            print(f"  {m.name}")
+            print(f"      {m.detail} (marker {m.marker.name})")
+        print()
+
+    if unclear:
+        print(
+            f"Leaving {len(unclear)} subvolume(s) alone -- not identifiable as ours:\n"
+        )
+        for subvol, why in unclear:
+            print(f"  {subvol.name}")
+            print(f"      {why}")
+        print()
+        print("Delete these yourself if you know they are debris.")
+        print()
+
+    if stale_only:
+        print(f"Found {len(stale_only)} stale marker(s) with nothing to remove:\n")
+        for m in stale_only:
+            print(f"  {m.name}")
+            print(f"      {m.detail}")
+        print()
+
+    if not abandoned:
+        for m in stale_only:
+            _remove_marker(m.marker)
+        print("No interrupted restores found.")
+        return 0
+
+    print(f"Found {len(abandoned)} interrupted restore(s):\n")
+    for i, m in enumerate(abandoned, 1):
+        print(f"  {i}. {m.name}")
+        print(f"      Reason: {m.detail}")
+        print(f"      Marker: {m.marker.name} (session {m.record.get('session')})")
+        print()
+
+    # Ask for confirmation
+    dry_run = getattr(args, "dry_run", False)
+    if dry_run:
+        print("Dry run - no changes made.")
+        return 0
+
+    print("These subvolumes are named by this tool's own run markers and hold no")
+    print("received copy.")
+    confirm = input("Delete them? [y/N]: ").strip().lower()
+
+    if confirm not in ("y", "yes"):
+        print("Cancelled.")
+        return 0
+
+    deleted = 0
+    failed = 0
+    for m in abandoned:
+        assert m.path is not None
+        if not still_abandoned(m, probe):
+            logger.error(
+                "Not deleting %s: it changed since it was examined and is no "
+                "longer an abandoned, un-received subvolume",
+                m.path,
+            )
+            failed += 1
+            continue
+        try:
+            logger.info("Deleting the interrupted restore at %s", m.path)
+            result = subprocess.run(
+                [*_sudo_prefix(), "btrfs", "subvolume", "delete", str(m.path)],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                print(f"  Deleted: {m.name}")
+                deleted += 1
+                _remove_marker(m.marker)
+            else:
+                logger.error("Failed to delete %s: %s", m.path, result.stderr.strip())
+                failed += 1
+        except Exception as e:
+            logger.error("Failed to delete %s: %s", m.path, e)
+            failed += 1
+    for m in stale_only:
+        _remove_marker(m.marker)
+
+    print()
+    print(f"Cleanup complete: {deleted} deleted, {failed} failed")
+
+    return 0 if failed == 0 else 1
+
+
+def _sudo_prefix() -> list[str]:
+    """``btrfs subvolume delete`` needs privilege; the same escalation the
+    engine's partial cleanup applies, and none when already root."""
+    return [] if os.geteuid() == 0 else ["sudo", "-n"]
+
+
+def _remove_marker(marker: Path) -> None:
+    try:
+        marker.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        logger.warning("Could not remove the run marker %s: %s", marker, e)
