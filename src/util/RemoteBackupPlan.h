@@ -15,6 +15,8 @@ QStringList listArguments(const QString &target);
 bool trustedBackendExecutable(const QString &path);
 QStringList casInitArguments(const QString &repo, bool allowLocal);
 QStringList casListArguments(const QString &repo);
+QStringList casPrunePreviewArguments(const QString &repo, const QString &archive = QString());
+QStringList casPruneConfirmArguments(const QString &repo, const QString &archive, const QString &planSha256);
 QStringList casSendArguments(const QString &repo, const QString &config, unsigned number,
                              const QString &snapshot, bool incremental,
                              const QString &parentSnapshot, unsigned parentNumber, bool allowLocal);

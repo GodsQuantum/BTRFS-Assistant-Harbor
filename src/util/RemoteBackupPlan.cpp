@@ -188,3 +188,19 @@ QStringList scheduleInstallerArguments(const QString &config, const QString &tar
     return args;
 }
 }
+
+namespace HarborRemote {
+QStringList casPrunePreviewArguments(const QString &repo, const QString &archive) {
+    if (!safePath(repo) || (!archive.isEmpty() && !safeArchive(archive))) return {};
+    QStringList args{QStringLiteral("prune"), QStringLiteral("--repo"), repo};
+    if (!archive.isEmpty()) args << QStringLiteral("--name") << archive;
+    return args;
+}
+QStringList casPruneConfirmArguments(const QString &repo, const QString &archive, const QString &planSha256) {
+    static const QRegularExpression digest(QStringLiteral("^[a-f0-9]{64}$"));
+    auto args = casPrunePreviewArguments(repo, archive);
+    if (args.isEmpty() || !digest.match(planSha256).hasMatch()) return {};
+    args << QStringLiteral("--confirm-plan") << planSha256;
+    return args;
+}
+}

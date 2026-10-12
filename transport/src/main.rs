@@ -129,6 +129,17 @@ enum Action {
         #[arg(long, conflicts_with = "preview")]
         confirm: bool,
     },
+    /// Preview, or explicitly confirm, a graph-safe CAS archive prune + orphan sweep.
+    /// Default is a read-only dry-run. No implicit retention policy or Snapper deletion.
+    Prune {
+        #[arg(long)]
+        repo: PathBuf,
+        #[arg(long = "name")]
+        names: Vec<String>,
+        /// SHA256 plan token emitted by dry-run; required for any deletion.
+        #[arg(long)]
+        confirm_plan: Option<String>,
+    },
     /// List committed CAS archives, without modifying their data.
     List {
         #[arg(long)]
@@ -567,14 +578,30 @@ fn execute(action: Action) -> Result<()> {
                 json!({"status": "native-btrfs-stream-verified", "name": name})
             );
         }
+        Action::Prune {
+            repo,
+            names,
+            confirm_plan,
+        } => {
+            let _owner = RepoAccess::begin()?;
+            let repository = Repository::open(&repo)?;
+            let (status, plan) = if let Some(expected) = confirm_plan {
+                ("pruned", repository.gc_confirm(&names, &expected)?)
+            } else {
+                ("dry-run", repository.gc_preview(&names)?)
+            };
+            println!("{}", json!({"status":status, "plan":plan}));
+        }
         Action::List { repo } => {
             let _owner = RepoAccess::begin()?;
             let repo = Repository::open(&repo)?;
+            let _reader = repo.read_lease()?;
             println!("{}", serde_json::to_string(&repo.list_archives()?)?);
         }
         Action::Verify { repo, name } => {
             let _owner = RepoAccess::begin()?;
             let repo = Repository::open(&repo)?;
+            let _reader = repo.read_lease()?;
             let raw_bytes = repo.verify(&name)?;
             println!(
                 "{}",
