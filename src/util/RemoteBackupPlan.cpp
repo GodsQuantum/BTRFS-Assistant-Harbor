@@ -204,3 +204,22 @@ QStringList casPruneConfirmArguments(const QString &repo, const QString &archive
     return args;
 }
 }
+
+// Harbor machine-set integration calls the existing checkpoint-v2 backend,
+// not an additional bridge or invented service. Both operations are read-only.
+namespace HarborRemote {
+QStringList machineSetListArguments(const QString &target) {
+    if (!safePath(target)) return {};
+    return {QStringLiteral("raw"), QStringLiteral("checkpoint-v2"),
+            QStringLiteral("set-list"), QStringLiteral("--target"), target};
+}
+QStringList machineSetPreviewArguments(const QString &target, const QString &setId, const QString &staging) {
+    const QUuid uuid(setId);
+    if (!safePath(target) || !safePath(staging) ||
+        uuid.isNull() || uuid.toString(QUuid::WithoutBraces) != setId) return {};
+    return {QStringLiteral("raw"), QStringLiteral("checkpoint-v2"),
+            QStringLiteral("set-restore"), QStringLiteral("--target"), target,
+            QStringLiteral("--set-id"), setId, QStringLiteral("--staging"), staging,
+            QStringLiteral("--experimental")}; // never --confirm in Qt preview
+}
+}

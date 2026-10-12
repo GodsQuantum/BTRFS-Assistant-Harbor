@@ -51,6 +51,17 @@ int main() {
   REQUIRE(casInitArguments(casPath, false).contains("init"));
   REQUIRE(casInitArguments("/", false).isEmpty());
   REQUIRE(casListArguments(casPath).contains("list"));
+  const QString machineSetId("a5d970db-9664-4be8-a0fb-bb1e93c60ec3");
+  REQUIRE(machineSetListArguments("/mnt/legacy").contains("set-list"));
+  REQUIRE(machineSetListArguments("/").isEmpty());
+  const auto machinePlan = machineSetPreviewArguments("/mnt/legacy", machineSetId, "/mnt/staging");
+  REQUIRE(machinePlan.contains("set-restore"));
+  REQUIRE(machinePlan.contains("--experimental"));
+  REQUIRE(!machinePlan.contains("--confirm"));
+  REQUIRE(machineSetPreviewArguments("/mnt/legacy", "invalid-id", "/mnt/staging").isEmpty());
+  REQUIRE(machineSetPreviewArguments("/mnt/legacy", machineSetId, "/").isEmpty());
+  REQUIRE(machineSetPreviewArguments("/mnt/legacy", machineSetId, "relative").isEmpty());
+
   REQUIRE(casPrunePreviewArguments(casPath, "snap-root-123").contains("--name"));
   REQUIRE(!casPrunePreviewArguments(casPath).contains("--name"));
   REQUIRE(casPrunePreviewArguments(casPath, "../oops").isEmpty());
