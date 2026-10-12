@@ -19,12 +19,17 @@ public:
     explicit RemoteBackupWidget(Snapper *snapper, QWidget *parent = nullptr);
 private:
     void refreshSnapshots();
+    bool isCasMode() const;
+    QString snapperSourcePath(unsigned number) const;
     void launch(const QStringList &arguments, const QString &purpose, const QString &executable = QStringLiteral("btrfs-backup-ng"));
     void listArchives();
+    void listTransfers();
     void appendOutput(const QString &output);
     void actionFinished(int exitCode, QProcess::ExitStatus exitStatus);
     QString selectedArchive() const;
     Snapper *m_snapper;
+    QComboBox *m_backend;
+    QComboBox *m_parentSnapshots;
     QComboBox *m_configs;
     QComboBox *m_snapshots;
     QLineEdit *m_target;

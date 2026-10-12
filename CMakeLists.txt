@@ -23,6 +23,21 @@ find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Widgets LinguistTools REQUIRED)
 add_subdirectory(src)
 add_subdirectory(icons)
 
+# Build the Rust CAS CLI with the same reproducible Cargo.lock that passed
+# guest Btrfs end-to-end tests. Keep outputs out of the source worktree.
+find_program(CARGO_EXECUTABLE cargo REQUIRED)
+set(HARBOR_RUST_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/harbor-rust")
+add_custom_target(harbor-transport-cli ALL
+    COMMAND "${CARGO_EXECUTABLE}" build --locked --release
+            --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/transport/Cargo.toml"
+            --target-dir "${HARBOR_RUST_TARGET_DIR}"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/transport"
+    COMMENT "Building Harbor FastCDC Rust transport"
+    VERBATIM)
+install(PROGRAMS
+    "${HARBOR_RUST_TARGET_DIR}/release/harbor-transport"
+    DESTINATION "${CMAKE_INSTALL_BINDIR}")
+
 message(STATUS "Btrfs Assistant will be built for install into ${CMAKE_INSTALL_PREFIX}")
 
 enable_testing()

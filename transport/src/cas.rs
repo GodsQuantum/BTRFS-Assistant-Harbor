@@ -6,6 +6,7 @@ use fastcdc::v2020::StreamCDC;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 #[cfg(unix)]
@@ -27,6 +28,14 @@ struct Entry {
     zstd_size: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotIdentity {
+    pub source_uuid: Uuid,
+    pub parent_uuid: Option<Uuid>,
+    pub parent_archive: Option<String>,
+    pub protocol: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Manifest {
     format: u32,
@@ -34,6 +43,8 @@ struct Manifest {
     name: String,
     raw_sha256: String,
     raw_size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    identity: Option<SnapshotIdentity>,
     objects: Vec<Entry>,
 }
 
@@ -42,6 +53,14 @@ pub struct IngestStats {
     pub new_objects: usize,
     pub reused_objects: usize,
     pub raw_sha256: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArchiveInfo {
+    pub name: String,
+    pub raw_size: u64,
+    pub source_uuid: Option<Uuid>,
+    pub parent_archive: Option<String>,
 }
 
 pub struct Repository {
@@ -145,7 +164,7 @@ impl Repository {
             root: root.to_path_buf(),
             id,
         };
-        repo.ensure_directories()?;
+        repo.check_directories()?;
         Ok(repo)
     }
     pub fn id(&self) -> Uuid {
@@ -165,7 +184,7 @@ impl Repository {
             Uuid::parse_str(id_string.trim())? == self.id,
             "repository identity changed"
         );
-        self.ensure_directories()
+        self.check_directories()
     }
     fn ensure_directories(&self) -> Result<()> {
         for name in ["objects", "manifests"] {
@@ -180,10 +199,22 @@ impl Repository {
         }
         Ok(())
     }
-    fn object_path(&self, hash: &str) -> Result<PathBuf> {
+    fn check_directories(&self) -> Result<()> {
+        for name in ["objects", "manifests"] {
+            let path = self.root.join(name);
+            ensure!(
+                path.is_dir() && !path.is_symlink(),
+                "missing or unsafe repository directory: {}",
+                name
+            );
+        }
+        Ok(())
+    }
+
+    fn object_path(&self, hash: &str, create: bool) -> Result<PathBuf> {
         ensure!(valid_hash(hash), "invalid object digest");
         let prefix = self.root.join("objects").join(&hash[..2]);
-        if !prefix.exists() {
+        if !prefix.exists() && create {
             fs::create_dir(&prefix)?;
         }
         ensure!(
@@ -234,7 +265,7 @@ impl Repository {
     }
     fn read_object(&self, entry: &Entry) -> Result<Vec<u8>> {
         self.guard()?;
-        let path = self.object_path(&entry.hash)?;
+        let path = self.object_path(&entry.hash, false)?;
         let f = open_regular(&path)?;
         ensure!(
             f.metadata()?.len() == entry.zstd_size as u64,
@@ -260,6 +291,32 @@ impl Repository {
         );
         Ok(raw)
     }
+    fn inspect_existing_object(&self, hash: &str, raw_size: usize) -> Result<Entry> {
+        self.guard()?;
+        let path = self.object_path(hash, false)?;
+        let fd = open_regular(&path)?;
+        ensure!(
+            fd.metadata()?.len() <= (MAX_CHUNK * 2) as u64,
+            "existing compressed chunk exceeds safety limit"
+        );
+        let mut stored = Vec::new();
+        fd.take((MAX_CHUNK * 2 + 1) as u64)
+            .read_to_end(&mut stored)?;
+        ensure!(!stored.is_empty(), "existing compressed chunk is empty");
+        let raw = zstd::bulk::decompress(&stored, raw_size)
+            .context("existing compressed chunk cannot be decompressed")?;
+        ensure!(
+            raw.len() == raw_size && blake3::hash(&raw).to_hex().as_str() == hash,
+            "existing compressed chunk raw BLAKE3 mismatch"
+        );
+        Ok(Entry {
+            hash: hash.to_string(),
+            raw_size,
+            zstd_sha256: hex_digest(&stored),
+            zstd_size: stored.len(),
+        })
+    }
+
     fn lock(&self) -> Result<File> {
         self.guard()?;
         let lock_path = self.root.join(".harbor-repo.lock");
@@ -273,14 +330,97 @@ impl Repository {
         fd.lock_exclusive()?;
         Ok(fd)
     }
+    /// A bounded, read-only list of committed CAS archives.
+    pub fn list_archives(&self) -> Result<Vec<ArchiveInfo>> {
+        self.guard()?;
+        let mut results = Vec::new();
+        for entry in fs::read_dir(self.root.join("manifests"))?.take(10_000) {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.ends_with(".json") {
+                continue;
+            }
+            let stem = name.trim_end_matches(".json");
+            if !safe_name(stem) {
+                continue;
+            }
+            // Invalid/corrupt archives cannot masquerade as verified entries.
+            let manifest = self.load_manifest(stem)?;
+            results.push(ArchiveInfo {
+                name: stem.to_string(),
+                raw_size: manifest.raw_size,
+                source_uuid: manifest
+                    .identity
+                    .as_ref()
+                    .map(|identity| identity.source_uuid),
+                parent_archive: manifest
+                    .identity
+                    .and_then(|identity| identity.parent_archive),
+            });
+        }
+        results.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(results)
+    }
+
+    pub fn snapshot_identity(&self, name: &str) -> Result<Option<SnapshotIdentity>> {
+        Ok(self.load_manifest(name)?.identity)
+    }
+
+    fn validate_snapshot_identity(&self, name: &str, identity: &SnapshotIdentity) -> Result<()> {
+        ensure!(identity.protocol == 2, "unsupported Btrfs send protocol");
+        ensure!(!identity.source_uuid.is_nil(), "missing source UUID");
+        match (identity.parent_uuid, identity.parent_archive.as_deref()) {
+            (None, None) => Ok(()),
+            (Some(parent_uuid), Some(parent_name)) => {
+                ensure!(parent_uuid != identity.source_uuid, "self-parent snapshot");
+                ensure!(parent_name != name, "self-parent archive");
+                let parent = self.load_manifest(parent_name)?;
+                ensure!(
+                    parent
+                        .identity
+                        .as_ref()
+                        .is_some_and(|i| i.source_uuid == parent_uuid),
+                    "incremental parent is not a verified archived snapshot"
+                );
+                Ok(())
+            }
+            _ => Err(anyhow!(
+                "incremental parent UUID and parent archive must both be specified"
+            )),
+        }
+    }
+
     pub fn ingest<R: Read, F: FnOnce() -> bool>(
         &self,
         name: &str,
         stream: R,
         eof_success: F,
     ) -> Result<IngestStats> {
+        self.ingest_inner(name, stream, eof_success, None)
+    }
+
+    pub fn ingest_snapshot<R: Read, F: FnOnce() -> bool>(
+        &self,
+        name: &str,
+        stream: R,
+        eof_success: F,
+        identity: SnapshotIdentity,
+    ) -> Result<IngestStats> {
+        self.ingest_inner(name, stream, eof_success, Some(identity))
+    }
+
+    fn ingest_inner<R: Read, F: FnOnce() -> bool>(
+        &self,
+        name: &str,
+        stream: R,
+        eof_success: F,
+        identity: Option<SnapshotIdentity>,
+    ) -> Result<IngestStats> {
         let manifest_path = self.manifest_path(name)?;
         let _lock = self.lock()?;
+        if let Some(ref identity) = identity {
+            self.validate_snapshot_identity(name, identity)?;
+        }
         let mut raw_digest = Sha256::new();
         let mut raw_size = 0u64;
         let mut entries = Vec::new();
@@ -299,15 +439,18 @@ impl Repository {
                 .checked_add(chunk.data.len() as u64)
                 .ok_or_else(|| anyhow!("raw size overflow"))?;
             let hash = blake3::hash(&chunk.data).to_hex().to_string();
-            let packed = zstd::bulk::compress(&chunk.data, 3)?;
-            let entry = Entry {
+            // Level 1 is the throughput-oriented default. Existing chunks are
+            // accepted by their *decoded* BLAKE3 rather than zstd bytes;
+            // zstd versions/levels may encode identical data differently.
+            let packed = zstd::bulk::compress(&chunk.data, 1)?;
+            let mut entry = Entry {
                 hash: hash.clone(),
                 raw_size: chunk.data.len(),
                 zstd_sha256: hex_digest(&packed),
                 zstd_size: packed.len(),
             };
             self.guard()?;
-            let path = self.object_path(&hash)?;
+            let path = self.object_path(&hash, true)?;
             let directory = path.parent().context("object has no parent")?;
             if write_unique(
                 directory,
@@ -316,8 +459,9 @@ impl Repository {
             )? {
                 new_objects += 1;
             } else {
-                self.read_object(&entry)
-                    .context("existing content-addressed object differs")?;
+                entry = self
+                    .inspect_existing_object(&hash, chunk.data.len())
+                    .context("existing content-addressed object differs or is corrupt")?;
                 reused_objects += 1;
             }
             entries.push(entry);
@@ -334,6 +478,7 @@ impl Repository {
             name: name.to_string(),
             raw_sha256: hexsha.clone(),
             raw_size,
+            identity,
             objects: entries,
         };
         let data = serde_json::to_vec(&manifest)?;
@@ -343,7 +488,8 @@ impl Repository {
             ensure!(
                 previous.raw_sha256 == manifest.raw_sha256
                     && previous.raw_size == manifest.raw_size
-                    && previous.objects == manifest.objects,
+                    && previous.objects == manifest.objects
+                    && previous.identity == manifest.identity,
                 "existing manifest differs; will not overwrite archive"
             );
         } else {
@@ -356,7 +502,8 @@ impl Repository {
                 let previous = self.load_manifest(name)?;
                 ensure!(
                     previous.raw_sha256 == manifest.raw_sha256
-                        && previous.objects == manifest.objects,
+                        && previous.objects == manifest.objects
+                        && previous.identity == manifest.identity,
                     "existing manifest differs"
                 );
             }
@@ -367,6 +514,41 @@ impl Repository {
             raw_sha256: hexsha,
         })
     }
+    /// Return the fully verified chain, from original full send to target.
+    pub fn verified_restore_chain(&self, name: &str) -> Result<Vec<String>> {
+        let mut seen = HashSet::new();
+        let mut chain = Vec::new();
+        let mut current = name.to_owned();
+        let mut expected_uuid: Option<Uuid> = None;
+        loop {
+            ensure!(seen.insert(current.clone()), "cyclic incremental chain");
+            ensure!(seen.len() <= 128, "incremental chain depth exceeded");
+            let manifest = self.load_manifest(&current)?;
+            let identity = manifest
+                .identity
+                .ok_or_else(|| anyhow!("missing Btrfs snapshot provenance"))?;
+            ensure!(identity.protocol == 2, "unsupported Btrfs stream protocol");
+            if let Some(expected) = expected_uuid {
+                ensure!(
+                    identity.source_uuid == expected,
+                    "incremental parent UUID mismatch"
+                );
+            }
+            self.verify(&current)?;
+            chain.push(current.clone());
+            match (identity.parent_uuid, identity.parent_archive) {
+                (None, None) => break,
+                (Some(uuid), Some(parent)) => {
+                    expected_uuid = Some(uuid);
+                    current = parent;
+                }
+                _ => return Err(anyhow!("incomplete parent chain")),
+            }
+        }
+        chain.reverse();
+        Ok(chain)
+    }
+
     pub fn verify(&self, name: &str) -> Result<u64> {
         let manifest = self.load_manifest(name)?;
         let mut digest = Sha256::new();

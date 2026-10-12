@@ -103,3 +103,97 @@ On these particular bytes, zstd 1 dominated higher levels. This is
 not sufficient to choose defaults for already-compressed Btrfs send,
 video files, or a saturated NFS/SMB/SSH link. Never claim these numbers
 represent remote link throughput or production ETA.
+
+## Real Linux kernel Btrfs E2E: 2026-10-12 LXC700 / QEMU-TCG
+
+A reusable rootless-on-the-host VM test was added at
+`transport/tests/vm/e2e_alpine_btrfs.py` (requires QEMU, Alpine 3.23.3
+virt ISO SHA-256 d91fb5c7a73528c89e0a1aa9a7d959f9deb9ca3dc5211e39bd73fd7df0d9070e,
+`pexpect==4.9.0`, and an x86_64-unknown-linux-musl static Rust build).
+
+- Alpine guest kernel **6.18.7-0-virt**, btrfs-progs 6.17.1.
+- Guest-only Btrfs disk: 640MiB sparse image; 9p shared **temporary**
+  directory accessible only to this QEMU test, never the production NAS.
+- Created RW source subvolume with file/metadata then readonly `base`;
+  edited files and created readonly `next`, both sent with
+  `harbor-transport send` (full + `--parent-archive base-vm` delta).
+- Both source and archived parent UUID validated by the new engine;
+  stored SHA256 verified; native `btrfs receive --dump` validated both
+  streams; then `harbor-transport receive --confirm` replayed them to a
+  separate empty **guest Btrfs** staging directory.
+- Compared actual restored files, verified received snapshot ro=true
+  and nested subvolume's content **absent** (not recursive).
+- Cloned archive into independent scratch, intentionally corrupted an
+  object -> refused before any Btrfs receive writes; deleted parent
+  manifest -> similarly refused before writes. Original repository
+  re-verified intact.
+- Automated PASS on exact VM full+incremental and fail-closed tests;
+  35-second TCG run in this test environment (not a throughput benchmark).
+- Legacy complete user data were **never mounted or written**; previously
+  a separate readonly 328-byte compressed archive was also successfully
+  decoded, copied into CAS, reconstructed and native-dumped.
+
+Suggested rerun (LXC700 only, after building musl target):
+```bash
+python -m venv /tmp/btrfs-harbor-vm-venv
+/tmp/btrfs-harbor-vm-venv/bin/pip install -r transport/tests/vm/requirements.txt
+CC_x86_64_unknown_linux_musl=musl-gcc \
+CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc \
+cargo build --release --target x86_64-unknown-linux-musl \
+  --manifest-path transport/Cargo.toml
+/tmp/btrfs-harbor-vm-venv/bin/python transport/tests/vm/e2e_alpine_btrfs.py
+```
+
+The VM script downloads a pinned Alpine ISO into a temporary working
+directory only if `--iso` was not provided, validates its SHA256, and
+automatically deletes the VM disk, binaries and temporary guest share
+on completion or failure.
+
+Remaining production gates: live NFS + SMB disconnect/reconnect across
+a sleeping workstation, durable progress/journal UI, restore file browser,
+SSH encryption and credentials, application packaging on CachyOS and
+parent-chain retention/GC/space quotas. QEMU-TCG success does NOT certify
+the production NFS environment or 1TB-scale behavior.
+
+## October 12 follow-on validation and UI integration
+
+- `RemoteBackupWidget` now supports read-only display of incomplete
+  legacy `checkpoint-v2` transfers, UUID-preserving selection and manual
+  resume after explicit confirmation. It uses the existing Harbor CLI,
+  not the experimental CAS format. It does not force-terminate an active job.
+- On the root-running Qt backend launcher, binaries located by `PATH`
+  are denied unless the canonical resolved binary is regular, executable,
+  owned by root, not group/world writable and under `/usr/bin` or
+  `/usr/local/bin`, with safe root-owned parent directories. This
+  prevents a rogue executable from a user-owned directory being launched
+  with Btrfs Assistant administrator privileges. The test validates both
+  a trusted system binary and unsafe paths. The trade-off is that user
+  `~/.local/bin` installations of the Harbor CLI must be installed in
+  a root-managed prefix before GUI activation.
+- Native full + incremental restoration in QEMU now additionally compares
+  sparse files byte-for-byte, verifies mode 0640, hardlink inode identity,
+  symlink destination, and `user.harbor_test` extended attribute.
+  Alpine guest needs `attr` tools for these assertions.
+- Real VM test was repeated after enabling `verify-stream` CRC/command
+  validation, and after adding metadata assertions: all succeeded with
+  error injection and full guest VM teardown.
+- Root/no-root snapshot source identity remains in the Rust manifest.
+  Incremental restore requires a verifiable archived parent chain before
+  `btrfs receive`; no automatic rollback of system root is attempted.
+
+Production risk still open: the Qt UI presently runs the *legacy* Harbor
+checkpoint backend for end-user sends/resumes; the Rust CAS is a separate
+experimental command and does not transparently convert the earlier user
+archive format. Live NFS/SMB reconnection/failover, source Snapper pinning
+and scheduled Rust delivery must be evaluated before any engine cutover.
+
+
+## Final 2026-10-12 CAS integration and ownership decisions
+
+The GUI has a separate CAS FastCDC selector, explicit parent Snapper selection and Btrfs staging recovery. It does not silently reinterpret historic Harbor archives.
+
+Different Zstandard encoders or levels may emit different bytes for identical raw content. A failing regression test reproduced a false checksum mismatch when reusing a valid chunk. CAS now authenticates the decoded raw block with BLAKE3 and retains the stored object's actual SHA256/size. New chunks use zstd 1.
+
+Linux FSUID/FSGID are temporarily switched to the authenticated PKEXEC_UID only around CAS repository access. This allows the original local UID to own marker, object and manifest files without changing NFS mounts/ACL or Btrfs sender privileges. It passed isolated UID1000 root tests and Alpine QEMU send/receive tests.
+
+The historic Python backend does not automatically inherit this CAS ownership policy, especially for systemd timers. That remains a release blocker for the strict arezki NFS permissions requirement.

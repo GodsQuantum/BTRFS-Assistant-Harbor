@@ -189,3 +189,30 @@ fn mid_stream_timeout_does_not_publish_and_next_attempt_reuses_committed_objects
     assert!(second.reused_objects > 0);
     assert_eq!(repo.verify("timeout").unwrap(), bytes.len() as u64);
 }
+
+#[test]
+fn valid_existing_same_raw_chunk_with_other_zstd_level_must_be_reused() {
+    let tmp = TempDir::new().unwrap();
+    let repo = Repository::initialize(tmp.path()).unwrap();
+    let bytes = b"compressed block ".repeat(90_000);
+    let first = repo.ingest("level3", Cursor::new(&bytes), || true).unwrap();
+    assert!(first.new_objects >= 1);
+    let obj = std::fs::read_dir(tmp.path().join("objects"))
+        .unwrap()
+        .flat_map(|folder| std::fs::read_dir(folder.unwrap().path()).unwrap())
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let alternate = zstd::bulk::compress(&bytes, 17).unwrap();
+    assert_ne!(std::fs::read(&obj).unwrap(), alternate);
+    std::fs::write(&obj, alternate).unwrap();
+    // A valid raw chunk may already be present from a different compression
+    // setting; a new backup must not reject the block or trust bad metadata.
+    let second = repo
+        .ingest("level17", Cursor::new(&bytes), || true)
+        .unwrap();
+    assert_eq!(second.new_objects, 0);
+    assert!(second.reused_objects > 0);
+    assert_eq!(repo.verify("level17").unwrap(), bytes.len() as u64);
+}
