@@ -7,16 +7,19 @@ pkgdesc='Btrfs Assistant fork with Snapper remote backup, Harbor checkpoint-v2 a
 arch=('x86_64')
 url='https://gitlab.com/btrfs-assistant/btrfs-assistant'
 license=('GPL-3.0-or-later' 'MIT')
-depends=('qt6-base' 'btrfs-progs' 'snapper' 'polkit' 'python' 'python-filelock' 'python-rich')
-makedepends=('cmake' 'ninja' 'qt6-tools' 'rust' 'pkgconf')
+depends=('qt6-base' 'btrfs-progs' 'snapper' 'polkit' 'python' 'python-filelock' 'python-rich' 'zstd')
+makedepends=('cmake' 'ninja' 'qt6-tools' 'qt6-declarative' 'rust' 'pkgconf')
 source=("${pkgname}-${pkgver}.tar.gz")
 sha256sums=('@SHA256@')
 build() {
+    # Use Arch's tested system libzstd, avoiding bundled C archive/LLD ABI conflicts.
+    export ZSTD_SYS_USE_PKG_CONFIG=1
     cmake -S "${srcdir}/btrfs-assistant-harbor" -B "${srcdir}/build" \
         -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
     cmake --build "${srcdir}/build" --parallel 4
 }
 check() {
+    export ZSTD_SYS_USE_PKG_CONFIG=1
     ctest --test-dir "${srcdir}/build" --output-on-failure
     python -m unittest discover -s "${srcdir}/btrfs-assistant-harbor/tests" -p test_remote_schedule.py
     cargo test --locked --manifest-path "${srcdir}/btrfs-assistant-harbor/transport/Cargo.toml" --all-targets
