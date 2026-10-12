@@ -67,7 +67,7 @@ def build_send(profile, snapper_bin="snapper", cas_bin="harbor-transport") -> li
         # A manifest alone does not establish validity; never silently skip
         # a corrupted backup and call the schedule successful.
         subprocess.run([cas_bin, "verify-stream", "--repo", profile.target,
-                        "--name", name],timeout=180, check=True)
+                        "--name", name], check=True)
         return None
     argv = [cas_bin, "send", "--repo", profile.target, "--name", name,
             "--snapshot", str(latest_path), "--experimental", "--retries", "8"]
@@ -79,7 +79,7 @@ def build_send(profile, snapper_bin="snapper", cas_bin="harbor-transport") -> li
         # An inventory entry alone is not enough. Reject damaged ancestors
         # rather than creating an incremental archive with an unusable base.
         subprocess.run([cas_bin, "verify-stream", "--repo", profile.target,
-                        "--name", parent_archive], timeout=180, check=True)
+                        "--name", parent_archive], check=True)
         argv.extend(["--parent", str(path),
                      "--parent-archive", parent_archive])
     if profile.allow_local:
@@ -94,4 +94,9 @@ def run_cas_profile(profile) -> int:
         return 0
     env = os.environ.copy()
     env["PKEXEC_UID"] = str(profile.owner_uid)
-    return subprocess.run(args, env=env, timeout=7200, check=False).returncode
+    # A multi-hundred-GiB full backup or checksum verification can exceed
+    # two hours. The systemd oneshot unit owns job cancellation, and Harbor
+    # enforces network retries and repository locks independently.
+    # An arbitrary Python subprocess deadline would cause perpetual partial
+    # backups on slow NFS or an encrypted remote link.
+    return subprocess.run(args, env=env, check=False).returncode

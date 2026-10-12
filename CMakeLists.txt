@@ -46,3 +46,10 @@ add_executable(test-remote-backup-plan
 target_include_directories(test-remote-backup-plan PRIVATE src)
 target_link_libraries(test-remote-backup-plan PRIVATE Qt6::Core)
 add_test(NAME remote-backup-plan COMMAND test-remote-backup-plan)
+
+# An installed binary must identify the actual build, not a stale -dev
+# version. This test also exercises CLI startup without a Btrfs mount.
+add_test(NAME harbor-release-version
+         COMMAND $<TARGET_FILE:btrfs-assistant-harbor-bin> --version)
+set_tests_properties(harbor-release-version PROPERTIES
+                     PASS_REGULAR_EXPRESSION "0.1.0-alpha6")
