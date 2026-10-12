@@ -70,7 +70,7 @@ class Profile:
         return profile
 
 
-def schedule_argv(profile: Profile, executable: str = "/usr/bin/btrfs-backup-ng") -> list[str]:
+def schedule_argv(profile: Profile, executable: str = "/usr/bin/harbor-checkpoint-v2") -> list[str]:
     return [
         executable, "raw", "checkpoint-v2", "schedule-run",
         "--target", profile.target,
@@ -187,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
                             f"btrfs-assistant-harbor-{profile.profile_id}.timer"], check=True)
         return 0
     profile = load_profile(args.profile_id)
-    cli = shutil.which("btrfs-backup-ng")
+    cli = shutil.which("harbor-checkpoint-v2")
     if not cli:
         print("Harbor CLI is missing from the service PATH", file=sys.stderr)
         return 127

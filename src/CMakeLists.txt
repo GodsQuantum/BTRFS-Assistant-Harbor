@@ -40,3 +40,12 @@ target_compile_options(btrfs-assistant-harbor-bin PRIVATE -Wall -Wextra -Wconver
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_options(btrfs-assistant-harbor-bin PRIVATE -Werror)
 endif()
+
+# Preserve legacy snapshot-v2 archives without hijacking btrfs-backup-ng.
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/vendor/harbor-legacy/btrfs_backup_ng
+        DESTINATION lib/btrfs-assistant-harbor/legacy-python
+        PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)
+install(PROGRAMS ${PROJECT_SOURCE_DIR}/backend/harbor-checkpoint-v2
+        DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES ${PROJECT_SOURCE_DIR}/vendor/harbor-legacy/LICENSE-MIT
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/btrfs-assistant-harbor)

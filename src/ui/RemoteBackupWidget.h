@@ -21,7 +21,7 @@ private:
     void refreshSnapshots();
     bool isCasMode() const;
     QString snapperSourcePath(unsigned number) const;
-    void launch(const QStringList &arguments, const QString &purpose, const QString &executable = QStringLiteral("btrfs-backup-ng"));
+    void launch(const QStringList &arguments, const QString &purpose, const QString &executable = QStringLiteral("harbor-checkpoint-v2"));
     void listArchives();
     void listTransfers();
     void appendOutput(const QString &output);

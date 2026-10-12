@@ -1,0 +1,137 @@
+"""Snapshot command: Create snapshots only (no transfer)."""
+
+import argparse
+import logging
+import time
+from pathlib import Path
+
+from .. import __util__, endpoint
+from ..__logger__ import add_file_handler, create_logger
+from ..config import ConfigError, find_config_file, load_config
+from .common import (
+    apply_config_verbosity,
+    btrfs_debug_enabled,
+    create_snapshot_dir,
+    get_log_level,
+    get_timestamp_format,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def execute_snapshot(args: argparse.Namespace) -> int:
+    """Execute the snapshot command.
+
+    Creates snapshots for configured volumes without transferring to targets.
+
+    Args:
+        args: Parsed command line arguments
+
+    Returns:
+        Exit code
+    """
+    log_level = get_log_level(args)
+    create_logger(False, level=log_level)
+
+    # Find and load config
+    try:
+        config_path = find_config_file(getattr(args, "config", None))
+        if config_path is None:
+            print("No configuration file found.")
+            print("Create one with: btrfs-backup-ng config init")
+            return 1
+
+        logger.info("Loading configuration from: %s", config_path)
+        config, warnings = load_config(config_path)
+
+    except ConfigError as e:
+        logger.error("Configuration error: %s", e)
+        return 1
+
+    # Enable file logging if configured
+    if config.global_config.log_file:
+        add_file_handler(config.global_config.log_file)
+
+    # Emitted AFTER the file handler is installed. Logged before it, these
+    # went to the console only -- an operator running from cron or systemd
+    # with log_file set had a log that silently omitted every config
+    # warning, which is the one place they would look afterwards.
+    apply_config_verbosity(args, config)
+    for warning in warnings:
+        logger.warning("Config: %s", warning)
+
+    # Filter volumes if --volume specified
+    volume_filter = getattr(args, "volume", None)
+    volumes = config.get_enabled_volumes()
+
+    if volume_filter:
+        volumes = [v for v in volumes if v.path in volume_filter]
+        if not volumes:
+            logger.error("No matching volumes found for: %s", volume_filter)
+            return 1
+
+    if not volumes:
+        logger.error("No volumes configured")
+        return 1
+
+    dry_run = getattr(args, "dry_run", False)
+
+    if dry_run:
+        logger.info("Dry run mode - showing what would be done")
+        print("")
+        print("Would create snapshots for:")
+        for volume in volumes:
+            prefix = volume.snapshot_prefix
+            print(f"  {volume.path} (prefix: {prefix})")
+        return 0
+
+    logger.info(__util__.log_heading(f"Creating snapshots at {time.ctime()}"))
+
+    success_count = 0
+    fail_count = 0
+
+    for volume in volumes:
+        logger.info("Volume: %s", volume.path)
+
+        try:
+            # Build endpoint kwargs
+            endpoint_kwargs = {
+                "snap_prefix": volume.snapshot_prefix,
+                "convert_rw": False,
+                "subvolume_sync": False,
+                "btrfs_debug": btrfs_debug_enabled(args, config),
+                "fs_checks": "auto",
+                "timestamp_format": get_timestamp_format(config),
+            }
+
+            # Prepare source endpoint
+            source_path = Path(volume.path).resolve()
+
+            # The source and an absolute snapshot_dir must already exist; only
+            # what lies below them is created. See create_snapshot_dir.
+            full_snapshot_dir = create_snapshot_dir(volume.snapshot_dir, source_path)
+
+            source_kwargs = dict(endpoint_kwargs)
+            source_kwargs["path"] = full_snapshot_dir
+            source_kwargs["snapshot_folder"] = str(full_snapshot_dir)
+
+            source_endpoint = endpoint.choose_endpoint(
+                str(source_path),
+                source_kwargs,
+                source=True,
+            )
+            source_endpoint.prepare()
+
+            # Create snapshot
+            snapshot = source_endpoint.snapshot()
+            logger.info("  Created: %s", snapshot)
+            success_count += 1
+
+        except Exception as e:
+            logger.error("  Failed: %s", e)
+            fail_count += 1
+
+    logger.info(__util__.log_heading(f"Finished at {time.ctime()}"))
+    logger.info("Created %d snapshot(s), %d failed", success_count, fail_count)
+
+    return 1 if fail_count > 0 else 0
