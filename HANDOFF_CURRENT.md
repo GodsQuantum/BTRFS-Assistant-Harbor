@@ -69,3 +69,31 @@ docs/architecture/QA-STATUS-2026-10-12.md et cette page. Continuer dans
 cette seule branche LXC700, écrire tests d'abord, utiliser les derniers
 btrfs-progs et FastCDC officiels. Ne pas déposer dans le dossier canonique,
 ne pas installer sur Pegasus, ne pas nettoyer les données utilisateur.
+
+## Package de test alpha3 (12 octobre 2026)
+
+Le moteur historique Harbor rc.6, commit 24000f5110e3b191c5280dde365507f86dbe89ad,
+est embarqué dans vendor/harbor-legacy/ sous licence MIT et exposé
+uniquement par le nom harbor-checkpoint-v2 : aucun conflit avec
+btrfs-backup-ng système. Les dépendances filelock/rich sont déclarées.
+
+CachyOS/Arch : paquet natif construit dans un conteneur Arch jetable, avec
+tests CTest, Python, Rust, installation pacman isolée, smoke test des deux
+backends et Qt --version en langue française, et audit ldd. Source de
+package gelée au commit 0f205f433df2 (SHA256 de tar source
+dcd347dbbd84ed796b62d52081c844a26a66a8ef4ab842ee45bad0c5fd0fb618).
+Paquet btrfs-assistant-harbor-0.1.0alpha3-1-x86_64.pkg.tar.zst,
+SHA256 e26bff26a1959397ca3a08356fe5e66b1adc2601afc8892b33094324ed48d32d.
+Original LXC700 sous /home/arezki/Dev/Harbor-Arch-Package-DEV/.
+
+Interface réorganisée sur deux lignes pour les portables et traductions
+françaises isolées dans /usr/share/btrfs-assistant-harbor/translations,
+sans écraser le Btrfs Assistant original.
+
+Ceci est une alpha installable pour validation, PAS une version stable.
+Les coupures et remontages NFS/SMB réels, le comportement de la GUI
+sur Pegasus/CachyOS, les ACL des tâches planifiées historiques, le
+restaurateur bare-metal/EFI, la rétention/GC CAS et SSH restent à valider.
+Ne pas installer pendant une sauvegarde active, ni toucher à la production.
+Les essais de serveur SMB de laboratoire n'ont pas débouché sur un
+test réussi : ne pas les comptabiliser comme validés.
