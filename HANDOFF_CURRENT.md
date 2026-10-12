@@ -97,3 +97,20 @@ restaurateur bare-metal/EFI, la rétention/GC CAS et SSH restent à valider.
 Ne pas installer pendant une sauvegarde active, ni toucher à la production.
 Les essais de serveur SMB de laboratoire n'ont pas débouché sur un
 test réussi : ne pas les comptabiliser comme validés.
+
+## Final network failure checkpoint: alpha4 candidate
+
+SMB3 real network tests PASSED: stopping a disposable loopback Samba
+server during preflight and, independently, after at least three real CAS
+objects reached the remote share, then restarting it. Both cases finished
+with native Btrfs verify/receive and byte-for-byte comparisons. Code now
+retries bounded EHOSTDOWN/EAGAIN/EIO during preflight and send (no retries on
+identity/hash mismatch). CAS now verifies every published object by
+re-reading the remote repository BEFORE writing the final manifest;
+a deliberately corrupted object caused no visible archive to be committed.
+
+NFSv4 is NOT certified, due to invalid storage persistence using nested
+NFS-Ganesha MEM FSAL and a permissions-restricted VFS FSAL. Never claim
+the actual NFS user topology was tested. No production mount or data was
+changed, and test-only Docker/QEMU processes must be cleaned up.
+Read docs/architecture/QA-STATUS-2026-10-12.md.

@@ -128,6 +128,17 @@ fn write_unique(directory: &Path, name: &str, content: &[u8]) -> Result<bool> {
     result
 }
 
+fn checked_real_directory(path: &Path) -> Result<()> {
+    // Preserve the underlying OS error (including transient network errno),
+    // rather than treating EHOSTDOWN as a permanent "not a directory".
+    let metadata = fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.file_type().is_dir(),
+        "repository component must be a real directory"
+    );
+    Ok(())
+}
+
 impl Repository {
     pub fn initialize(root: &Path) -> Result<Self> {
         ensure!(
@@ -150,10 +161,7 @@ impl Repository {
         Ok(repo)
     }
     pub fn open(root: &Path) -> Result<Self> {
-        ensure!(
-            root.is_dir() && !root.is_symlink(),
-            "repository root unavailable"
-        );
+        checked_real_directory(root).context("repository root unavailable")?;
         let marker = root.join(".harbor-repo-id");
         let mut id_string = String::new();
         open_regular(&marker)?
@@ -171,10 +179,7 @@ impl Repository {
         self.id
     }
     fn guard(&self) -> Result<()> {
-        ensure!(
-            self.root.is_dir() && !self.root.is_symlink(),
-            "repository root inaccessible"
-        );
+        checked_real_directory(&self.root).context("repository root inaccessible")?;
         let marker = self.root.join(".harbor-repo-id");
         let mut id_string = String::new();
         open_regular(&marker)?
@@ -202,11 +207,8 @@ impl Repository {
     fn check_directories(&self) -> Result<()> {
         for name in ["objects", "manifests"] {
             let path = self.root.join(name);
-            ensure!(
-                path.is_dir() && !path.is_symlink(),
-                "missing or unsafe repository directory: {}",
-                name
-            );
+            checked_real_directory(&path)
+                .with_context(|| format!("missing or unsafe repository directory: {name}"))?;
         }
         Ok(())
     }
@@ -472,6 +474,23 @@ impl Repository {
         );
         self.guard()?;
         let hexsha = format!("{:x}", raw_digest.finalize());
+        // The receiver can acknowledge a completed write and subsequently
+        // expose different bytes after a real NFS/SMB interruption. Re-read
+        // ALL committed objects and the ordered stream from the repository
+        // before publishing an immutable manifest. The readback is a
+        // deliberate integrity-over-throughput tradeoff for this release.
+        let mut readback_sha256 = Sha256::new();
+        for entry in &entries {
+            readback_sha256.update(
+                self.read_object(entry)
+                    .context("remote object readback failed; archive not committed")?,
+            );
+        }
+        ensure!(
+            format!("{:x}", readback_sha256.finalize()) == hexsha,
+            "remote readback stream SHA-256 mismatch; archive not committed"
+        );
+        self.guard()?;
         let manifest = Manifest {
             format: 1,
             repository: self.id,

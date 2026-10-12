@@ -216,3 +216,29 @@ fn valid_existing_same_raw_chunk_with_other_zstd_level_must_be_reused() {
     assert!(second.reused_objects > 0);
     assert_eq!(repo.verify("level17").unwrap(), bytes.len() as u64);
 }
+
+#[test]
+fn corrupted_remote_object_before_commit_does_not_publish_manifest() {
+    let temp = TempDir::new().unwrap();
+    let repo = Repository::initialize(temp.path()).unwrap();
+    let input = vec![0xABu8; 3 * 1024 * 1024];
+    let result = repo.ingest("must-not-publish", Cursor::new(&input), || {
+        let object = std::fs::read_dir(temp.path().join("objects"))
+            .unwrap()
+            .flat_map(|dir| std::fs::read_dir(dir.unwrap().path()).unwrap())
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        std::fs::write(object, b"remote-server-corrupted-the-object").unwrap();
+        true
+    });
+    assert!(
+        result.is_err(),
+        "corrupted remote object was improperly accepted"
+    );
+    assert!(
+        !repo.manifest_exists("must-not-publish"),
+        "unsafe to publish manifest before remote objects are verified"
+    );
+}

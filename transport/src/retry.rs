@@ -13,7 +13,11 @@ fn is_transient(error: &anyhow::Error) -> bool {
         cause.downcast_ref::<io::Error>().is_some_and(|error| {
             matches!(
                 error.raw_os_error(),
-                Some(110 | 104 | 107 | 113 | 116 | 112)
+                // EAGAIN(11) is observed from Linux CIFS during real
+                // Samba server restart while a chunk is being written.
+                // EIO(5) can also be emitted by a temporarily lost SMB/NFS
+                // handle; attempts remain bounded and verify full output.
+                Some(5 | 11 | 110 | 104 | 107 | 113 | 116 | 112)
             )
         })
     })
