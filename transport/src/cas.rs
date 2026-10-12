@@ -6,7 +6,7 @@ use fastcdc::v2020::StreamCDC;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 #[cfg(unix)]
@@ -63,6 +63,18 @@ pub struct ArchiveInfo {
     pub parent_archive: Option<String>,
 }
 
+/// Exact preview of an explicit deletion; no mutation until the complete
+/// plan digest is confirmed. A plan is bound to both repository ID and state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GcPlan {
+    pub repository: Uuid,
+    pub remove_archives: Vec<String>,
+    pub retain_archives: Vec<String>,
+    pub orphan_objects: usize,
+    pub reclaim_bytes: u64,
+    pub plan_sha256: String,
+}
+
 pub struct Repository {
     root: PathBuf,
     id: Uuid,
@@ -90,7 +102,10 @@ fn safe_name(name: &str) -> bool {
 }
 fn open_regular(path: &Path) -> Result<File> {
     ensure!(!path.is_symlink(), "refusing symlink: {}", path.display());
-    let file = File::open(path)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
     ensure!(file.metadata()?.is_file(), "not regular file");
     Ok(file)
 }
@@ -333,6 +348,7 @@ impl Repository {
             .read(true)
             .write(true)
             .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
             .open(path)?;
         FileExt::lock_shared(&fd)?;
         self.guard()?;
@@ -348,6 +364,7 @@ impl Repository {
             .truncate(false)
             .read(true)
             .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
             .open(lock_path)?;
         fd.lock_exclusive()?;
         Ok(fd)
@@ -382,6 +399,237 @@ impl Repository {
         }
         results.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(results)
+    }
+
+    // Enumerate *all* manifests, with no silent truncation. Fail closed on
+    // unsupported entries: a future format may have undiscovered references.
+    fn all_manifests(&self) -> Result<BTreeMap<String, Manifest>> {
+        self.guard()?;
+        let mut found = BTreeMap::new();
+        for entry in fs::read_dir(self.root.join("manifests"))? {
+            let entry = entry?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| anyhow!("non-UTF8 manifest name"))?;
+            ensure!(
+                name.ends_with(".json"),
+                "unexpected file in manifests: {name}"
+            );
+            let archive = name.strip_suffix(".json").unwrap();
+            ensure!(safe_name(archive), "unsafe manifest filename");
+            ensure!(
+                found.len() < 10_000,
+                "manifest inventory exceeds safety cap"
+            );
+            let manifest = self.load_manifest(archive)?;
+            found.insert(archive.to_string(), manifest);
+        }
+        Ok(found)
+    }
+
+    /// Inventory object paths without trusting the prefix/extension alone.
+    /// Unpublished chunks from interrupted ingests are swept on explicit GC.
+    fn all_objects(&self) -> Result<BTreeMap<String, (PathBuf, u64)>> {
+        self.guard()?;
+        let mut found = BTreeMap::new();
+        for prefix in fs::read_dir(self.root.join("objects"))? {
+            let prefix = prefix?;
+            let label = prefix
+                .file_name()
+                .into_string()
+                .map_err(|_| anyhow!("non-UTF8 object prefix"))?;
+            ensure!(
+                label.len() == 2
+                    && label
+                        .bytes()
+                        .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                "unexpected object prefix"
+            );
+            checked_real_directory(&prefix.path())?;
+            for entry in fs::read_dir(prefix.path())? {
+                let entry = entry?;
+                let filename = entry
+                    .file_name()
+                    .into_string()
+                    .map_err(|_| anyhow!("non-UTF8 object filename"))?;
+                let hash = filename
+                    .strip_suffix(".zst")
+                    .ok_or_else(|| anyhow!("unexpected object filename"))?;
+                ensure!(
+                    valid_hash(hash) && hash.starts_with(&label),
+                    "malformed object filename or prefix"
+                );
+                let md = fs::symlink_metadata(entry.path())?;
+                ensure!(md.file_type().is_file(), "non-regular object entry");
+                ensure!(
+                    found.len() < 2_000_000,
+                    "object inventory exceeds safety cap"
+                );
+                found.insert(hash.to_string(), (entry.path(), md.len()));
+            }
+        }
+        Ok(found)
+    }
+
+    fn gc_plan_locked(&self, requested: &[String]) -> Result<GcPlan> {
+        ensure!(requested.len() <= 10_000, "too many explicit archive names");
+        let selected: BTreeSet<String> = requested.iter().cloned().collect();
+        ensure!(
+            requested.len() == selected.len(),
+            "duplicate archive selection"
+        );
+        for name in &selected {
+            ensure!(safe_name(name), "invalid archive selection");
+        }
+        let manifests = self.all_manifests()?;
+        for name in &selected {
+            ensure!(manifests.contains_key(name), "unknown archive: {name}");
+        }
+
+        let mut retained_hashes = BTreeSet::new();
+        let mut sha = Sha256::new();
+        sha.update(b"Harbor CAS GC plan v1\0");
+        sha.update(self.id.as_bytes());
+        // Bind confirm token to every manifest's content, including archives
+        // not slated for deletion. This prevents stale-plan confirmation.
+        for (name, manifest) in &manifests {
+            let mut original = Vec::new();
+            open_regular(&self.manifest_path(name)?)?
+                .take(MAX_MANIFEST + 1)
+                .read_to_end(&mut original)?;
+            ensure!(
+                original.len() as u64 <= MAX_MANIFEST,
+                "oversized manifest during GC"
+            );
+            sha.update((name.len() as u64).to_le_bytes());
+            sha.update(name.as_bytes());
+            sha.update((original.len() as u64).to_le_bytes());
+            sha.update(Sha256::digest(&original));
+            if !selected.contains(name) {
+                // The complete retained incremental dependency graph must be
+                // present, acyclic and UUID-consistent before deleting anything.
+                // This also protects against preexisting malformed graph roots.
+                let mut node = name.as_str();
+                let mut visited = BTreeSet::new();
+                while let Some(identity) = manifests
+                    .get(node)
+                    .and_then(|manifest| manifest.identity.as_ref())
+                {
+                    ensure!(visited.insert(node), "cyclic retained parent graph");
+                    ensure!(visited.len() <= 128, "retained parent depth exceeded");
+                    ensure!(
+                        identity.protocol == 2,
+                        "unsupported retained Btrfs protocol"
+                    );
+                    match (&identity.parent_uuid, &identity.parent_archive) {
+                        (None, None) => break,
+                        (Some(parent_uuid), Some(parent)) => {
+                            ensure!(
+                                !selected.contains(parent),
+                                "retained archive {name} still needs parent {parent}"
+                            );
+                            let ancestor = manifests.get(parent).ok_or_else(|| {
+                                anyhow!("retained archive {name} has missing parent {parent}")
+                            })?;
+                            ensure!(
+                                ancestor
+                                    .identity
+                                    .as_ref()
+                                    .is_some_and(|i| i.source_uuid == *parent_uuid),
+                                "retained archive {name} parent UUID mismatch"
+                            );
+                            node = parent;
+                        }
+                        _ => return Err(anyhow!("incomplete retained parent link")),
+                    }
+                }
+                for part in &manifest.objects {
+                    retained_hashes.insert(part.hash.clone());
+                }
+                // No existing retained backup may depend on a missing or
+                // damaged stream, even if the selected archive is removable.
+                self.verify(name)?;
+            }
+        }
+        for name in &selected {
+            sha.update(name.as_bytes());
+            sha.update([0u8]);
+        }
+        let objects = self.all_objects()?;
+        let mut orphans = 0usize;
+        let mut reclaim_bytes = 0u64;
+        for (hash, (_, size)) in &objects {
+            sha.update(hash.as_bytes());
+            sha.update(size.to_le_bytes());
+            if !retained_hashes.contains(hash) {
+                orphans += 1;
+                reclaim_bytes = reclaim_bytes
+                    .checked_add(*size)
+                    .ok_or_else(|| anyhow!("reclaim size overflow"))?;
+            }
+        }
+        for hash in retained_hashes {
+            ensure!(
+                objects.contains_key(&hash),
+                "retained object missing: {hash}"
+            );
+        }
+        Ok(GcPlan {
+            repository: self.id,
+            remove_archives: selected.into_iter().collect(),
+            retain_archives: manifests
+                .keys()
+                .filter(|n| !requested.contains(n))
+                .cloned()
+                .collect(),
+            orphan_objects: orphans,
+            reclaim_bytes,
+            plan_sha256: hex_digest(&sha.finalize()),
+        })
+    }
+
+    /// Build dry-run under the exclusive repository lock, including immutable
+    /// manifest graph, bytewise verification of all remaining archives, and
+    /// a conservative object inventory. No file is removed.
+    pub fn gc_preview(&self, names: &[String]) -> Result<GcPlan> {
+        let _lock = self.lock()?;
+        self.gc_plan_locked(names)
+    }
+
+    /// The *same* exclusive lock is held from plan validation to fsync after
+    /// manifest deletion and orphan sweep. Manifest-first deletions make
+    /// crashes leave reclaimable orphans, never retained streams without data.
+    pub fn gc_confirm(&self, names: &[String], expected_digest: &str) -> Result<GcPlan> {
+        ensure!(valid_hash(expected_digest), "invalid plan token");
+        let _lock = self.lock()?;
+        let plan = self.gc_plan_locked(names)?;
+        ensure!(
+            plan.plan_sha256 == expected_digest,
+            "repository changed since preview; re-run dry-run"
+        );
+        let manifest_dir = self.root.join("manifests");
+        for name in &plan.remove_archives {
+            self.guard()?;
+            fs::remove_file(self.manifest_path(name)?)?;
+            sync_directory(&manifest_dir)?;
+        }
+        // Recalculate after manifest deletion: if an error/crash interrupted
+        // removal, a later explicit empty-selection sweep can reclaim orphans.
+        let current = self.all_manifests()?;
+        let referenced: BTreeSet<_> = current
+            .values()
+            .flat_map(|m| m.objects.iter().map(|e| e.hash.clone()))
+            .collect();
+        let objects = self.all_objects()?;
+        for (hash, (path, _)) in objects {
+            if !referenced.contains(&hash) {
+                self.guard()?;
+                fs::remove_file(&path)?;
+                sync_directory(path.parent().context("missing object parent")?)?;
+            }
+        }
+        Ok(plan)
     }
 
     pub fn snapshot_identity(&self, name: &str) -> Result<Option<SnapshotIdentity>> {

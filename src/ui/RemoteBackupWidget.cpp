@@ -87,6 +87,8 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     auto *schedules = new QPushButton(tr("Scheduled backups"), this);
     auto *initCas = new QPushButton(tr("Initialize CAS destination"), this);
     auto *verify = new QPushButton(tr("Verify selected archive"), this);
+    auto *prune = new QPushButton(tr("Delete selected CAS backup"), this);
+    auto *sweepOrphans = new QPushButton(tr("Reclaim unused CAS chunks"), this);
     auto *recover = new QPushButton(tr("Preview recovery"), this);
     // Two rows prevent button overflow on HiDPI 13-inch laptops.
     actions->addWidget(m_send, 0, 0);
@@ -99,6 +101,8 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     actions->addWidget(initCas, 1, 3);
     actions->addWidget(schedules, 2, 0);
     actions->addWidget(unschedule, 2, 1);
+    actions->addWidget(prune, 2, 2);
+    actions->addWidget(sweepOrphans, 2, 3);
     layout->addLayout(actions);
     layout->addWidget(new QLabel(tr("Select a completed archive to verify/recover, or an interrupted transfer to resume"), this));
     m_archives->setMinimumHeight(100);
@@ -113,16 +117,20 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
         m_configs->addItems(m_snapper->configs());
     }
     connect(m_configs, &QComboBox::currentTextChanged, this, [this] { refreshSnapshots(); });
-    connect(m_backend, &QComboBox::currentIndexChanged, this, [this, resume, interrupted, initCas] {
+    connect(m_backend, &QComboBox::currentIndexChanged, this, [this, resume, interrupted, initCas, prune, sweepOrphans] {
         const bool cas = isCasMode();
         resume->setEnabled(!cas);
         interrupted->setEnabled(!cas);
         initCas->setEnabled(cas);
+        prune->setEnabled(cas);
+        sweepOrphans->setEnabled(cas);
         m_parentSnapshots->setEnabled(cas);
     });
     // Initialize the UI immediately; do not leave disabled controls active.
     schedule->setEnabled(true);
     initCas->setEnabled(false);
+    prune->setEnabled(false);
+    sweepOrphans->setEnabled(false);
     m_parentSnapshots->setEnabled(false);
     connect(refresh, &QPushButton::clicked, this, [this] {
         if (m_snapper) m_snapper->load();
@@ -218,6 +226,27 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
             return;
         launch({QStringLiteral("remove"), QStringLiteral("--profile-id"), id},
                QStringLiteral("unschedule"), QStringLiteral("btrfs-assistant-harbor-schedule"));
+    });
+    connect(prune, &QPushButton::clicked, this, [this] {
+        const QString archive = selectedArchive();
+        const QStringList args = HarborRemote::casPrunePreviewArguments(m_target->text(), archive);
+        if (!isCasMode() || archive.isEmpty() || args.isEmpty()) {
+            QMessageBox::warning(this, tr("No CAS archive selected"), tr("Select a committed CAS archive."));
+            return;
+        }
+        m_pendingPruneRepo = m_target->text();
+        m_pendingPruneArchive = archive;
+        launch(args, QStringLiteral("cas-prune-preview"), QStringLiteral("harbor-transport"));
+    });
+    connect(sweepOrphans, &QPushButton::clicked, this, [this] {
+        const QStringList args = HarborRemote::casPrunePreviewArguments(m_target->text());
+        if (!isCasMode() || args.isEmpty()) {
+            QMessageBox::warning(this, tr("Invalid CAS destination"), tr("Choose a CAS repository first."));
+            return;
+        }
+        m_pendingPruneRepo = m_target->text();
+        m_pendingPruneArchive.clear();
+        launch(args, QStringLiteral("cas-prune-preview"), QStringLiteral("harbor-transport"));
     });
     connect(verify, &QPushButton::clicked, this, [this] {
         if (isCasMode()) {
@@ -398,6 +427,45 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
     m_state->setText(ok ? tr("Operation finished: %1").arg(m_purpose)
                         : tr("Operation failed: %1 (exit %2)").arg(m_purpose).arg(code));
     if (!ok) return;
+    if (m_purpose == QLatin1String("cas-prune-preview")) {
+        QJsonParseError error{};
+        const auto doc = QJsonDocument::fromJson(m_stdout, &error);
+        if (error.error != QJsonParseError::NoError || !doc.isObject()) {
+            appendOutput(tr("Prune preview invalid; refusing deletion."));
+            return;
+        }
+        const auto obj = doc.object();
+        const auto plan = obj.value(QStringLiteral("plan")).toObject();
+        const QString token = plan.value(QStringLiteral("plan_sha256")).toString();
+        const auto selected = plan.value(QStringLiteral("remove_archives")).toArray();
+        const QStringList args = HarborRemote::casPruneConfirmArguments(
+            m_pendingPruneRepo, m_pendingPruneArchive, token);
+        if (obj.value(QStringLiteral("status")).toString() != QLatin1String("dry-run") ||
+            args.isEmpty() || selected.size() != (m_pendingPruneArchive.isEmpty() ? 0 : 1) ||
+            (!m_pendingPruneArchive.isEmpty() && selected.first().toString() != m_pendingPruneArchive) ||
+            m_target->text() != m_pendingPruneRepo || !isCasMode()) {
+            appendOutput(tr("Prune plan mismatch or destination changed; refusing deletion."));
+            return;
+        }
+        const double freedMiB = plan.value(QStringLiteral("reclaim_bytes")).toDouble() / (1024.0 * 1024.0);
+        const QString detail = !m_pendingPruneArchive.isEmpty()
+            ? tr("Permanently delete the selected CAS archive %1 and reclaim unreferenced chunks?")
+                 .arg(m_pendingPruneArchive)
+            : tr("Reclaim orphan CAS chunks from aborted transfers? No committed archive will be removed.");
+        if (QMessageBox::warning(this, tr("Confirm destructive CAS cleanup"),
+                detail + tr("\nEstimated reclaimable compressed data: %1 MiB.\n"
+                            "This cannot be undone. The plan will be checked again under repository lock.")
+                             .arg(freedMiB, 0, 'f', 2),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes) {
+            launch(args, QStringLiteral("cas-prune-confirm"), QStringLiteral("harbor-transport"));
+        }
+        return;
+    }
+    if (m_purpose == QLatin1String("cas-prune-confirm")) {
+        appendOutput(tr("CAS pruning finished; refreshing archive inventory."));
+        listArchives();
+        return;
+    }
     if (m_purpose == QLatin1String("list")) {
         QJsonParseError error{};
         const auto doc = QJsonDocument::fromJson(m_stdout, &error);

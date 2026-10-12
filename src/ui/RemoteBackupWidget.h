@@ -47,4 +47,6 @@ private:
     QElapsedTimer m_transferTimer;
     QString m_purpose;
     QStringList m_pendingRestore;
+    QString m_pendingPruneArchive;
+    QString m_pendingPruneRepo;
 };

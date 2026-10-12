@@ -92,6 +92,31 @@ test -z "$(ls -A /mnt/fs/negative-parent)"
 echo HARBOR_NEGATIVE_TESTS_FAIL_CLOSED
 """
 
+PRUNE = r"""#!/bin/sh
+set -eu
+# An incremental's required base must never disappear, even with explicit intent.
+if /tmp/harbor-transport prune --repo /mnt/share/cas --name base-vm; then
+    echo DELETED_REQUIRED_PARENT
+    exit 31
+fi
+/tmp/harbor-transport verify-stream --repo /mnt/share/cas --name next-vm
+/tmp/harbor-transport prune --repo /mnt/share/cas --name next-vm > /tmp/plan.json
+token="$(jq -r '.plan.plan_sha256' /tmp/plan.json)"
+test "${#token}" = 64
+if /tmp/harbor-transport prune --repo /mnt/share/cas --name next-vm --confirm-plan "$(printf 'f%.0s' $(seq 1 64))"; then
+    echo STALE_TOKEN_ACCEPTED
+    exit 32
+fi
+/tmp/harbor-transport prune --repo /mnt/share/cas --name next-vm --confirm-plan "$token"
+test ! -e /mnt/share/cas/manifests/next-vm.json
+/tmp/harbor-transport verify-stream --repo /mnt/share/cas --name base-vm
+mkdir -p /mnt/fs/gc-restored
+/tmp/harbor-transport receive --repo /mnt/share/cas --name base-vm --staging /mnt/fs/gc-restored --confirm
+printf '%s\n' 'original' | cmp - /mnt/fs/gc-restored/base/docs/one.txt
+test "$(readlink /mnt/fs/gc-restored/base/docs/symlink.txt)" = "one.txt"
+echo HARBOR_PRUNE_PRESERVES_PARENT_AND_RESTORE
+"""
+
 def require_binary(path: str) -> None:
     if not shutil.which(path):
         raise RuntimeError(f"Required tool is missing: {path}")
@@ -139,6 +164,7 @@ def main() -> None:
         shutil.copy2(args.binary, share / "harbor-transport")
         (share / "prepare.sh").write_text(PREPARE)
         (share / "negative.sh").write_text(NEGATIVE)
+        (share / "prune.sh").write_text(PRUNE)
         qemu = [
             "qemu-system-x86_64", "-machine", "q35,accel=tcg", "-cpu", "qemu64",
             "-m", "768", "-smp", "2",
@@ -160,7 +186,7 @@ def main() -> None:
             child.expect(b"localhost:~#", timeout=40)
             child.sendline(b"stty -echo")
             child.expect(b"localhost:~#", timeout=15)
-            child.sendline(b"ip link set eth0 up; udhcpc -i eth0 -q; echo https://dl-cdn.alpinelinux.org/alpine/v3.23/main > /etc/apk/repositories; apk add --no-cache btrfs-progs coreutils attr >/tmp/apk.log; mkdir -p /mnt/share; mount -t 9p -o trans=virtio,version=9p2000.L hostshare /mnt/share; echo __GUEST_READY__")
+            child.sendline(b"ip link set eth0 up; udhcpc -i eth0 -q; echo https://dl-cdn.alpinelinux.org/alpine/v3.23/main > /etc/apk/repositories; apk add --no-cache btrfs-progs coreutils attr jq >/tmp/apk.log; mkdir -p /mnt/share; mount -t 9p -o trans=virtio,version=9p2000.L hostshare /mnt/share; echo __GUEST_READY__")
             child.expect(b"__GUEST_READY__", timeout=150)
             child.expect(b"localhost:~#", timeout=15)
             run_guest(child, "prepare.sh", "FULL_INCREMENTAL", 180)
@@ -170,6 +196,7 @@ def main() -> None:
             obj.write_bytes(b"corrupted")
             (share / "cas-no-parent" / "manifests/base-vm.json").unlink()
             run_guest(child, "negative.sh", "FAIL_CLOSED", 120)
+            run_guest(child, "prune.sh", "PRUNE_RESTORE", 150)
             child.sendline(b"poweroff")
             child.expect(pexpect.EOF, timeout=45)
             print("PASS E2E QEMU BTRFS ISOLATED", flush=True)

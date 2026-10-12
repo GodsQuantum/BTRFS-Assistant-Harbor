@@ -71,3 +71,25 @@ leur disparition. L'interface indique le même numéro alpha6 que le paquet.
 - Les restaurations CAS conservent un verrou partagé du dépôt jusqu'à leur fin. Ce mécanisme est testé localement, pas certifié sur les NFS/SMB de production.
 - Le GC/rétention destructrice CAS, l'inventaire machine complet EFI/boot, la restauration bare-metal, les connexions SSH et les ACL NFS de production restent hors couverture de cette préversion.
 - Btrfs Assistant officiel et ses configurations Snapper existantes sont préservés et restent installables en parallèle.
+
+
+### Rétention CAS contrôlée (alpha8, laboratoire)
+
+L'onglet de sauvegarde distante permet désormais la suppression explicitement
+confirmée d'une archive CAS et le nettoyage séparé des blocs inutilisés.
+Le moteur `harbor-transport prune --repo CHEMIN [--name ARCHIVE]` émet d'abord
+un **plan de simulation**, incluant le nombre de blocs orphelins et les octets
+compressés récupérables. **Aucun fichier n'est supprimé par défaut.** L'action
+réelle requiert la valeur `--confirm-plan SHA256` issue de cette simulation.
+Le moteur recalcule et compare le plan sous verrou exclusif avant suppression.
+
+Un parent exigé par un incrémental conservé ne peut pas être supprimé. Les
+objets partagés restent tant qu'au moins une sauvegarde les référence. Toute
+archive restante est vérifiée avant prune. Des anomalies de dépendances,
+de métadonnées, de liens symboliques ou de montages entraînent le refus.
+
+**Limites non certifiées :** verrouillage distribué NFS/SMB et reprise après
+coupure réelle, restauration multi-sous-volume et EFI, très gros volumes,
+environnement KDE Wayland réel. Ne pas activer de politique automatique de
+suppression sur le NAS avant qualification indépendante. L'outil original
+Btrfs Assistant et les sauvegardes existantes restent inchangés.

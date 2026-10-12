@@ -51,6 +51,13 @@ int main() {
   REQUIRE(casInitArguments(casPath, false).contains("init"));
   REQUIRE(casInitArguments("/", false).isEmpty());
   REQUIRE(casListArguments(casPath).contains("list"));
+  REQUIRE(casPrunePreviewArguments(casPath, "snap-root-123").contains("--name"));
+  REQUIRE(!casPrunePreviewArguments(casPath).contains("--name"));
+  REQUIRE(casPrunePreviewArguments(casPath, "../oops").isEmpty());
+  REQUIRE(casPrunePreviewArguments("relative", "snap-root-123").isEmpty());
+  REQUIRE(casPruneConfirmArguments(casPath, "snap-root-123", QString(64, 'a')).contains("--confirm-plan"));
+  REQUIRE(casPruneConfirmArguments(casPath, "snap-root-123", "stale").isEmpty());
+
   REQUIRE(casSendArguments(casPath, "root", 123, sourcePath, false, QString(), 0, false).contains("send"));
   const auto casIncremental=casSendArguments(casPath, "root", 123, sourcePath, true, parentPath, 122, false);
   REQUIRE(casIncremental.contains("--parent"));
