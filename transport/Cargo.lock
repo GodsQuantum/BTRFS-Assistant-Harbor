@@ -298,6 +298,7 @@ dependencies = [
  "clap",
  "fastcdc",
  "fs2",
+ "libc",
  "serde",
  "serde_json",
  "sha2",

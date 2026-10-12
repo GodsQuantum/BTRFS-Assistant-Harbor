@@ -1,5 +1,8 @@
 #include "util/RemoteBackupPlan.h"
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <sys/stat.h>
 #include <QRegularExpression>
 #include <QUuid>
 namespace {
@@ -61,5 +64,102 @@ QStringList previewRestoreArguments(const QString &target, const QString &archiv
 QStringList listArguments(const QString &target) {
     if (!safePath(target)) return {};
     return {QStringLiteral("raw"), QStringLiteral("list"), target, QStringLiteral("--json")};
+}
+}
+
+
+namespace HarborRemote {
+QStringList transfersArguments(const QString &target) {
+    if (!safePath(target)) return {};
+    return {QStringLiteral("raw"), QStringLiteral("checkpoint-v2"), QStringLiteral("list"), QStringLiteral("--target"), target};
+}
+QStringList resumeArguments(const QString &target, const QString &archive, const QString &transferId, bool allowLocal) {
+    const QUuid uuid(transferId);
+    if (!safePath(target) || !safeArchive(archive) || uuid.isNull() ||
+        uuid.toString(QUuid::WithoutBraces) != transferId) return {};
+    QStringList args{QStringLiteral("raw"), QStringLiteral("checkpoint-v2"), QStringLiteral("resume"),
+                     QStringLiteral("--target"), target, QStringLiteral("--name"), archive,
+                     QStringLiteral("--transfer-id"), transferId, QStringLiteral("--experimental")};
+    if (allowLocal) args << QStringLiteral("--allow-local");
+    return args;
+}
+}
+
+
+namespace HarborRemote {
+bool trustedBackendExecutable(const QString &path) {
+    if (!safePath(path)) return false;
+    QFileInfo info(path);
+    if (!info.exists() || !info.isFile() || !info.isExecutable()) return false;
+    const QString realPath = info.canonicalFilePath();
+    if (!(realPath.startsWith(QLatin1String("/usr/bin/")) ||
+          realPath.startsWith(QLatin1String("/usr/local/bin/")))) return false;
+    const auto safeOwnerAndMode = [](const QString &candidate, bool executable) {
+        struct stat st {};
+        const QByteArray encoded = QFile::encodeName(candidate);
+        if (::stat(encoded.constData(), &st) != 0 || st.st_uid != 0 || (st.st_mode & 0022) != 0)
+            return false;
+        if (executable && (!S_ISREG(st.st_mode) || (st.st_mode & 0111) == 0))
+            return false;
+        if (!executable && !S_ISDIR(st.st_mode))
+            return false;
+        return true;
+    };
+    if (!safeOwnerAndMode(realPath, true)) return false;
+    // Reject replaced/bad permissions on directories controlling the executable.
+    QString parent = QFileInfo(realPath).absolutePath();
+    while (!parent.isEmpty()) {
+        if (!safeOwnerAndMode(parent, false)) return false;
+        if (parent == QLatin1String("/")) break;
+        parent = QFileInfo(parent).absolutePath();
+    }
+    return true;
+}
+}
+
+namespace HarborRemote {
+QStringList casInitArguments(const QString &repo, bool allowLocal) {
+    if (!safePath(repo)) return {};
+    QStringList args{QStringLiteral("init"), QStringLiteral("--repo"), repo};
+    if (allowLocal) args << QStringLiteral("--allow-local");
+    return args;
+}
+QStringList casListArguments(const QString &repo) {
+    if (!safePath(repo)) return {};
+    return {QStringLiteral("list"), QStringLiteral("--repo"), repo};
+}
+QStringList casSendArguments(const QString &repo, const QString &config, unsigned number,
+                             const QString &snapshot, bool incremental,
+                             const QString &parentSnapshot, unsigned parentNumber, bool allowLocal) {
+    const QString name = archiveName(config, number);
+    if (name.isEmpty() || !safePath(repo) || !safePath(snapshot)) return {};
+    QStringList args{QStringLiteral("send"), QStringLiteral("--repo"), repo,
+                     QStringLiteral("--name"), name,
+                     QStringLiteral("--snapshot"), snapshot,
+                     QStringLiteral("--experimental"), QStringLiteral("--retries"), QStringLiteral("5")};
+    if (incremental) {
+        const QString parentName = archiveName(config, parentNumber);
+        if (parentName.isEmpty() || !safePath(parentSnapshot) ||
+            parentSnapshot == snapshot || parentNumber >= number) return {};
+        args << QStringLiteral("--parent") << parentSnapshot
+             << QStringLiteral("--parent-archive") << parentName;
+    }
+    if (allowLocal) args << QStringLiteral("--allow-local");
+    return args;
+}
+QStringList casVerifyArguments(const QString &repo, const QString &name) {
+    if (!safePath(repo) || !safeArchive(name)) return {};
+    return {QStringLiteral("verify-stream"), QStringLiteral("--repo"), repo,
+            QStringLiteral("--name"), name};
+}
+QStringList casPreviewArguments(const QString &repo, const QString &name, const QString &staging) {
+    if (!safePath(repo) || !safeArchive(name) || !safePath(staging)) return {};
+    return {QStringLiteral("receive"), QStringLiteral("--repo"), repo,
+            QStringLiteral("--name"), name, QStringLiteral("--staging"), staging, QStringLiteral("--preview")};
+}
+QStringList casConfirmArguments(const QString &repo, const QString &name, const QString &staging) {
+    if (!safePath(repo) || !safeArchive(name) || !safePath(staging)) return {};
+    return {QStringLiteral("receive"), QStringLiteral("--repo"), repo,
+            QStringLiteral("--name"), name, QStringLiteral("--staging"), staging, QStringLiteral("--confirm")};
 }
 }
