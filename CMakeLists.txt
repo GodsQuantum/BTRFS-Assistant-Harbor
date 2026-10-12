@@ -52,4 +52,4 @@ add_test(NAME remote-backup-plan COMMAND test-remote-backup-plan)
 add_test(NAME harbor-release-version
          COMMAND $<TARGET_FILE:btrfs-assistant-harbor-bin> --version)
 set_tests_properties(harbor-release-version PROPERTIES
-                     PASS_REGULAR_EXPRESSION "0.1.0-alpha6")
+                     PASS_REGULAR_EXPRESSION "0.1.0-alpha7")

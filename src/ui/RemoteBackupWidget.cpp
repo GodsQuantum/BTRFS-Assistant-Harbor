@@ -21,6 +21,7 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QVBoxLayout>
 
@@ -252,7 +253,33 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
         appendOutput(QString::fromUtf8(data));
     });
     connect(m_process, &QProcess::readyReadStandardError, this, [this] {
-        appendOutput(QString::fromUtf8(m_process->readAllStandardError()));
+        m_stderrBuffer.append(m_process->readAllStandardError());
+        if (m_stderrBuffer.size() > 65536) {
+            appendOutput(tr("Backend diagnostic line exceeded 64 KiB; truncating."));
+            m_stderrBuffer.clear();
+            return;
+        }
+        static const QRegularExpression bytesPattern(QStringLiteral("^HARBOR_PROGRESS_BYTES=([0-9]+)$"));
+        while (true) {
+            const qsizetype newline = m_stderrBuffer.indexOf('\n');
+            if (newline < 0) break;
+            const QString line = QString::fromUtf8(m_stderrBuffer.left(newline)).trimmed();
+            m_stderrBuffer.remove(0, newline + 1);
+            const auto match = bytesPattern.match(line);
+            if (match.hasMatch()) {
+                bool parsed = false;
+                const qulonglong bytes = match.captured(1).toULongLong(&parsed);
+                if (parsed && m_transferTimer.isValid()) {
+                    const qint64 ms = qMax<qint64>(m_transferTimer.elapsed(), 1);
+                    const double gib = double(bytes) / (1024.0 * 1024.0 * 1024.0);
+                    const double mibps = (double(bytes) / (1024.0 * 1024.0)) / (double(ms) / 1000.0);
+                    m_state->setText(tr("Source stream read: %1 GiB — average %2 MiB/s (raw; total unknown)")
+                                         .arg(gib, 0, 'f', 2).arg(mibps, 0, 'f', 1));
+                }
+            } else if (!line.isEmpty()) {
+                appendOutput(line);
+            }
+        }
     });
     connect(m_process, &QProcess::finished, this, &RemoteBackupWidget::actionFinished);
     connect(m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError err) {
@@ -320,6 +347,8 @@ void RemoteBackupWidget::launch(const QStringList &arguments, const QString &pur
     }
     m_purpose = purpose;
     m_stdout.clear();
+    m_stderrBuffer.clear();
+    m_transferTimer.start();
     m_send->setEnabled(false);
     m_state->setText(tr("Running: %1").arg(purpose));
     m_process->setProgram(cli);

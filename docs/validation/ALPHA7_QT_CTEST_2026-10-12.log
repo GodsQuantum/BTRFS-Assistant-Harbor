@@ -1,0 +1,9 @@
+Test project /tmp/harbor-qt-progress-qa
+    Start 1: remote-backup-plan
+1/2 Test #1: remote-backup-plan ...............   Passed    0.06 sec
+    Start 2: harbor-release-version
+2/2 Test #2: harbor-release-version ...........   Passed    0.02 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Total Test time (real) =   0.08 sec

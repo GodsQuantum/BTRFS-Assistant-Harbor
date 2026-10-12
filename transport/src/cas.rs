@@ -319,6 +319,26 @@ impl Repository {
         })
     }
 
+    /// Repository-side read lease, held for the *entire* restoration.
+    /// Future destructive GC must acquire the same file's exclusive lock.
+    /// This guarantees exclusion on filesystems that correctly implement
+    /// flock(); remote NFS/SMB semantics require independent qualification.
+    pub fn read_lease(&self) -> Result<File> {
+        self.guard()?;
+        let path = self.root.join(".harbor-repo.lock");
+        ensure!(!path.is_symlink(), "unsafe repository lock path");
+        let fd = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .open(path)?;
+        FileExt::lock_shared(&fd)?;
+        self.guard()?;
+        Ok(fd)
+    }
+
     fn lock(&self) -> Result<File> {
         self.guard()?;
         let lock_path = self.root.join(".harbor-repo.lock");
@@ -398,7 +418,7 @@ impl Repository {
         stream: R,
         eof_success: F,
     ) -> Result<IngestStats> {
-        self.ingest_inner(name, stream, eof_success, None)
+        self.ingest_inner(name, stream, eof_success, None, &mut |_: u64| {})
     }
 
     pub fn ingest_snapshot<R: Read, F: FnOnce() -> bool>(
@@ -408,7 +428,20 @@ impl Repository {
         eof_success: F,
         identity: SnapshotIdentity,
     ) -> Result<IngestStats> {
-        self.ingest_inner(name, stream, eof_success, Some(identity))
+        self.ingest_inner(name, stream, eof_success, Some(identity), &mut |_: u64| {})
+    }
+
+    /// Report bytes already read from the Btrfs send stream (not destination
+    /// bytes and not a forecast of final compressed size).
+    pub fn ingest_snapshot_with_progress<R: Read, F: FnOnce() -> bool, P: FnMut(u64)>(
+        &self,
+        name: &str,
+        stream: R,
+        eof_success: F,
+        identity: SnapshotIdentity,
+        mut progress: P,
+    ) -> Result<IngestStats> {
+        self.ingest_inner(name, stream, eof_success, Some(identity), &mut progress)
     }
 
     fn ingest_inner<R: Read, F: FnOnce() -> bool>(
@@ -417,6 +450,7 @@ impl Repository {
         stream: R,
         eof_success: F,
         identity: Option<SnapshotIdentity>,
+        progress: &mut dyn FnMut(u64),
     ) -> Result<IngestStats> {
         let manifest_path = self.manifest_path(name)?;
         let _lock = self.lock()?;
@@ -467,6 +501,7 @@ impl Repository {
                 reused_objects += 1;
             }
             entries.push(entry);
+            progress(raw_size);
         }
         ensure!(
             eof_success(),

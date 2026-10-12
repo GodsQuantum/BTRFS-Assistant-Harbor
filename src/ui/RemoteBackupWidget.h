@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QProcess>
+#include <QElapsedTimer>
 #include <QWidget>
 #include <functional>
 
@@ -42,6 +43,8 @@ private:
     QPushButton *m_send;
     QProcess *m_process;
     QByteArray m_stdout;
+    QByteArray m_stderrBuffer;
+    QElapsedTimer m_transferTimer;
     QString m_purpose;
     QStringList m_pendingRestore;
 };

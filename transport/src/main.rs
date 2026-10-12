@@ -307,11 +307,21 @@ fn run_send(
             let mut source = child.stdout.take().context("send stdout was not piped")?;
             let result = {
                 let _owner = RepoAccess::begin()?;
-                fresh.ingest_snapshot(
+                let mut last_report = std::time::Instant::now();
+                fresh.ingest_snapshot_with_progress(
                     name,
                     &mut source,
                     || child.wait().is_ok_and(|status| status.success()),
                     identity.clone(),
+                    |bytes| {
+                        if last_report.elapsed() >= Duration::from_millis(750) {
+                            // Framed, parseable progress on stderr. A retry
+                            // starts at zero; the Qt UI labels this as bytes
+                            // read from source, not remote bytes committed.
+                            eprintln!("HARBOR_PROGRESS_BYTES={bytes}");
+                            last_report = std::time::Instant::now();
+                        }
+                    },
                 )
             };
             drop(source);
@@ -340,6 +350,7 @@ fn run_send(
 }
 
 fn verify_btrfs_stream(repo: &Repository, name: &str) -> Result<()> {
+    let _lease = repo.read_lease()?;
     // A valid incremental stream is not a recoverable backup when its base
     // manifest or any of its ancestors is absent/corrupt. Scheduled jobs use
     // verify-stream for idempotency and parent selection, so first validate
@@ -389,6 +400,7 @@ fn recover_file(repo: &Repository, name: &str, output: &Path) -> Result<()> {
         output.is_absolute() && !output.is_symlink() && output != Path::new("/"),
         "output must be an explicit absolute new file"
     );
+    let _lease = repo.read_lease()?;
     repo.verify(name)?;
     let mut stream = OpenOptions::new()
         .write(true)
@@ -428,9 +440,10 @@ fn recover_btrfs(
             && staging.read_dir()?.next().is_none(),
         "restore staging must be an empty absolute real directory, not system root"
     );
-    let chain = {
+    let (chain, _lease) = {
         let _owner = RepoAccess::begin()?;
-        repo.verified_restore_chain(name)?
+        let lease = repo.read_lease()?;
+        (repo.verified_restore_chain(name)?, lease)
     };
     if preview {
         println!(
