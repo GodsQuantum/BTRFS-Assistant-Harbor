@@ -71,6 +71,34 @@ class CasScheduleTests(unittest.TestCase):
         with patch.object(cas.subprocess,'run',return_value=SimpleNamespace(stdout=json.dumps(self.snapper))),patch.object(cas,'is_readonly_snapshot',return_value=False):
             with self.assertRaises(RuntimeError):
                 cas.build_send(self.profile)
+    def test_multi_hour_cas_transfers_are_not_killed_by_python_timeout(self):
+        # systemd owns stopping/cancelling jobs, not an arbitrary 7200s
+        # Python deadline that makes large first backups impossible.
+        with (patch.object(cas, 'build_send',
+                           return_value=['harbor-transport', 'send']),
+              patch.object(cas.subprocess, 'run',
+                           return_value=SimpleNamespace(returncode=0)) as runner):
+            self.assertEqual(cas.run_cas_profile(self.profile), 0)
+        self.assertNotIn('timeout', runner.call_args.kwargs)
+
+    def test_long_archive_verification_is_not_killed_after_180_seconds(self):
+        calls = []
+        def fake(command, **kwargs):
+            calls.append((command, kwargs))
+            if command[0] == 'snapper':
+                return SimpleNamespace(stdout=json.dumps(self.snapper), returncode=0)
+            if command[1] == 'list':
+                return SimpleNamespace(stdout=json.dumps([{'name': 'snap-root-12'}]), returncode=0)
+            if command[1] == 'verify-stream':
+                return SimpleNamespace(returncode=0)
+            raise AssertionError(command)
+        with patch.object(cas.subprocess, 'run', side_effect=fake), patch.object(
+                cas, 'is_readonly_snapshot', return_value=True):
+            self.assertIsNone(cas.build_send(self.profile))
+        verified = [kwargs for args, kwargs in calls if 'verify-stream' in args]
+        self.assertTrue(verified)
+        self.assertTrue(all('timeout' not in kwargs for kwargs in verified))
+
     def test_run_inherits_authenticated_uid(self):
         with patch.object(cas,'build_send',return_value=['harbor-transport','send','--repo','/mnt/backup']),patch.object(cas.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as run:
             self.assertEqual(cas.run_cas_profile(self.profile),0)

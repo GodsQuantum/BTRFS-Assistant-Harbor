@@ -417,7 +417,7 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
               tr("CAS archive chain verified. Receive every required snapshot into the selected empty Btrfs staging directory? "
                  "This will not activate a system rollback.")) == QMessageBox::Yes) {
             QStringList apply = m_pendingRestore;
-            const int position = apply.indexOf(QStringLiteral("--preview"));
+            const qsizetype position = apply.indexOf(QStringLiteral("--preview"));
             if (position >= 0) apply[position] = QStringLiteral("--confirm");
             launch(apply, QStringLiteral("cas-receive"), QStringLiteral("harbor-transport"));
         }

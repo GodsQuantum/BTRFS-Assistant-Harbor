@@ -1,4 +1,4 @@
-# Btrfs Assistant Harbor — fork expérimental 0.1.0alpha5
+# Btrfs Assistant Harbor — fork expérimental 0.1.0alpha6
 
 Le fork conserve Btrfs Assistant 2.3.2 et Snapper comme gestionnaires de snapshots et des restaurations locales. Il ajoute un onglet de sauvegardes distantes avec deux moteurs indépendants.
 
@@ -51,3 +51,13 @@ ne prouvent pas une restauration intégrale EFI/boot ni les performances
 sur les sauvegardes personnelles de plusieurs centaines de GiB.
 Le mode CAS est toujours un format distinct du Harbor checkpoint-v2
 historique. N'utilisez pas l'alpha5 comme unique sauvegarde.
+
+
+## Correctifs de certification alpha6
+
+Les tâches systemd ne sont plus limitées arbitrairement à deux heures,
+et le contrôle cryptographique d'un grand flux CAS n'est plus tué au bout
+de 180 secondes. Le gestionnaire systemd peut interrompre un job au besoin
+et les verrous/délais de reconnexion du moteur restent applicables.
+Deux nouveaux tests reproduisent ces limites sur alpha5 puis confirment
+leur disparition. L'interface indique le même numéro alpha6 que le paquet.
