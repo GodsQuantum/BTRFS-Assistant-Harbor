@@ -70,7 +70,7 @@ int main(int argc, char *argv[])
         app.setWindowIcon(QIcon(":/icons/btrfs-assistant.svg"));
 
         QTranslator translator;
-        if (!translator.load("btrfsassistant_" + QLocale::system().name(), "/usr/share/btrfs-assistant/translations")) {
+        if (!translator.load("btrfsassistant_" + QLocale::system().name(), "/usr/share/btrfs-assistant-harbor/translations")) {
             QTextStream(stdout) << QCoreApplication::translate("main", "Warning: No translations available") << Qt::endl;
             ;
         }
