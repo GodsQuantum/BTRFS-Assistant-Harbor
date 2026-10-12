@@ -1,0 +1,9 @@
+Test project /home/arezki/Dev/build-btrfs-assistant-harbor-chainfix
+    Start 1: remote-backup-plan
+1/2 Test #1: remote-backup-plan ...............   Passed    0.01 sec
+    Start 2: harbor-release-version
+2/2 Test #2: harbor-release-version ...........   Passed    0.01 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Total Test time (real) =   0.02 sec

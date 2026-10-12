@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import uuid
 
 ARCHIVE_RE = re.compile(r"^snap-([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})-([1-9][0-9]*)$")
 
@@ -45,6 +46,20 @@ def is_readonly_snapshot(path: Path) -> bool:
                            capture_output=True, text=True, timeout=12, check=False)
     return check.returncode == 0 and check.stdout.strip() == "ro=true"
 
+def snapshot_uuid(path: Path) -> str:
+    """Read the immutable Btrfs snapshot UUID, not a recycled Snapper number."""
+    result = subprocess.run(
+        ["btrfs", "subvolume", "show", str(path)],
+        capture_output=True, text=True, timeout=30, check=True)
+    for line in result.stdout.splitlines():
+        key, separator, value = line.strip().partition(":")
+        if separator and key == "UUID":
+            parsed = uuid.UUID(value.strip())
+            if parsed.int == 0:
+                break
+            return str(parsed)
+    raise RuntimeError("Snapshot UUID cannot be established safely")
+
 def build_send(profile, snapper_bin="snapper", cas_bin="harbor-transport") -> list[str] | None:
     snapshots = subprocess.run([snapper_bin, "--jsonout", "-c", profile.config,
                                 "list", "--disable-used-space"],
@@ -64,6 +79,27 @@ def build_send(profile, snapper_bin="snapper", cas_bin="harbor-transport") -> li
              if isinstance(item, dict) and isinstance(item.get("name"), str)
              and ARCHIVE_RE.fullmatch(item["name"])}
     if name in saved:
+        # Snapper can reuse a snapshot number after pruning. An existing
+        # immutable archive with that numeric name may represent a DIFFERENT
+        # source. Checking only its content hashes would falsely mark the
+        # newly created snapshot as backed up. Never silently skip it.
+        matches = [item for item in archives if isinstance(item, dict)
+                   and item.get("name") == name]
+        if len(matches) != 1:
+            raise RuntimeError("Duplicate CAS archive name in inventory")
+        saved_uuid = matches[0].get("source_uuid")
+        if not isinstance(saved_uuid, str):
+            raise RuntimeError("Existing CAS archive lacks Btrfs source UUID; cannot skip")
+        try:
+            expected_uuid = str(uuid.UUID(saved_uuid))
+        except ValueError as exc:
+            raise RuntimeError("Invalid archived source UUID") from exc
+        if expected_uuid != snapshot_uuid(latest_path):
+            raise RuntimeError(
+                "Snapper snapshot number reused: CAS archive UUID differs from current source; "
+                "refusing to skip an unsaved snapshot. Preserve old archive and select a "
+                "collision-safe new archive name before proceeding."
+            )
         # A manifest alone does not establish validity; never silently skip
         # a corrupted backup and call the schedule successful.
         subprocess.run([cas_bin, "verify-stream", "--repo", profile.target,
@@ -71,8 +107,27 @@ def build_send(profile, snapper_bin="snapper", cas_bin="harbor-transport") -> li
         return None
     argv = [cas_bin, "send", "--repo", profile.target, "--name", name,
             "--snapshot", str(latest_path), "--experimental", "--retries", "8"]
-    parent = next(((num, path) for num, path in available[1:]
-                   if f"snap-{profile.config}-{num}" in saved), None)
+    # Snapper can also recycle the number of an older candidate parent.
+    # Never send a delta against an archived parent with a different Btrfs
+    # UUID. Fall back to a complete send; retaining the previous archive
+    # is mandatory because it may anchor older incremental chains.
+    indexed = {item["name"]: item for item in archives if isinstance(item, dict)
+               and isinstance(item.get("name"), str) and item["name"] in saved}
+    parent = None
+    for number, path in available[1:]:
+        candidate = indexed.get(f"snap-{profile.config}-{number}")
+        if candidate is None:
+            continue
+        archived_uuid = candidate.get("source_uuid")
+        if not isinstance(archived_uuid, str):
+            continue
+        try:
+            recorded = str(uuid.UUID(archived_uuid))
+        except ValueError:
+            continue
+        if recorded == snapshot_uuid(path):
+            parent = (number, path)
+            break
     if parent is not None:
         number, path = parent
         parent_archive = f"snap-{profile.config}-{number}"
