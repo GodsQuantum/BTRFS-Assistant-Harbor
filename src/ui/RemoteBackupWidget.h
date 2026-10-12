@@ -38,6 +38,7 @@ private:
     QComboBox *m_frequency;
     QCheckBox *m_allowLocal;
     QListWidget *m_archives;
+    QListWidget *m_machineSets;
     QPlainTextEdit *m_log;
     QLabel *m_state;
     QPushButton *m_send;
