@@ -31,6 +31,8 @@ class Profile:
     target: str
     frequency: str
     allow_local: bool = False
+    engine: str = "checkpoint-v2"
+    owner_uid: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.config, str) or CONFIG_RE.fullmatch(self.config) is None:
@@ -45,26 +47,43 @@ class Profile:
             raise ValueError("Unsupported systemd schedule")
         if type(self.allow_local) is not bool:
             raise ValueError("allow_local must be boolean")
+        if self.engine not in ("checkpoint-v2", "cas"):
+            raise ValueError("Unsupported transport engine")
+        if self.engine == "cas":
+            if type(self.owner_uid) is not int or not 1 <= self.owner_uid <= 65534:
+                raise ValueError("CAS schedule needs authenticated non-root desktop UID")
+        elif self.owner_uid is not None:
+            raise ValueError("legacy schedule does not store owner UID")
 
     @property
     def profile_id(self) -> str:
-        return str(uuid.uuid5(NAMESPACE, self.config + "\n" + self.target))
+        identity = self.config + "\n" + self.target
+        if self.engine == "cas":
+            identity += "\ncas"
+        return str(uuid.uuid5(NAMESPACE, identity))
 
     def as_dict(self) -> dict:
-        return {
-            "version": 1,
+        payload = {
+            "version": 1 if self.engine == "checkpoint-v2" else 2,
             "profile_id": self.profile_id,
             "config": self.config,
             "target": self.target,
             "frequency": self.frequency,
             "allow_local": self.allow_local,
         }
+        if self.engine == "cas":
+            payload.update(engine="cas", owner_uid=self.owner_uid)
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict) -> "Profile":
-        if not isinstance(data, dict) or data.get("version") != 1:
+        if not isinstance(data, dict) or data.get("version") not in (1, 2):
             raise ValueError("Unsupported or damaged profile")
-        profile = cls(data["config"], data["target"], data["frequency"], data["allow_local"])
+        if data["version"] == 1:
+            profile = cls(data["config"], data["target"], data["frequency"], data["allow_local"])
+        else:
+            profile = cls(data["config"], data["target"], data["frequency"],
+                          data["allow_local"], data.get("engine"), data.get("owner_uid"))
         if data.get("profile_id") != profile.profile_id:
             raise ValueError("Profile identity does not match stored values")
         return profile
@@ -165,6 +184,41 @@ def load_profile(profile_id: str, root: Path = CONFIG_DIR) -> Profile:
     return Profile.from_dict(json.loads(file.read_text()))
 
 
+def remove_profile(profile_id: str, config_dir: Path, unit_dir: Path,
+                   *, activate: bool = True) -> list[Path]:
+    """Disable one profile's timer, then remove only its three own files."""
+    profile = load_profile(profile_id, config_dir)
+    prefix = f"btrfs-assistant-harbor-{profile.profile_id}"
+    paths = [config_dir / f"{profile.profile_id}.json",
+             unit_dir / f"{prefix}.service", unit_dir / f"{prefix}.timer"]
+    for path in paths:
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("Unsafe or missing schedule profile component")
+    if activate:
+        subprocess.run(["systemctl", "disable", "--now", f"{prefix}.timer"], check=True)
+    for path in paths:
+        path.unlink()
+    if activate:
+        subprocess.run(["systemctl", "daemon-reload"], check=True)
+    return paths
+
+
+def list_profiles(config_dir: Path = CONFIG_DIR) -> list[dict]:
+    """Enumerate only recognized, validated profiles, without following symlinks."""
+    output = []
+    if not config_dir.exists():
+        return output
+    for file in sorted(config_dir.glob("*.json"))[:1000]:
+        if file.is_symlink() or not file.is_file():
+            continue
+        try:
+            profile = load_profile(file.stem, config_dir)
+        except (ValueError, OSError, KeyError, TypeError):
+            continue
+        output.append(profile.as_dict())
+    return output
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
@@ -173,12 +227,32 @@ def main(argv: list[str] | None = None) -> int:
     install.add_argument("--target", required=True)
     install.add_argument("--frequency", choices=sorted(FREQUENCIES), required=True)
     install.add_argument("--allow-local", action="store_true")
+    install.add_argument("--engine", choices=["checkpoint-v2", "cas"], default="checkpoint-v2")
     install.add_argument("--enable", action="store_true")
     run = sub.add_parser("run")
     run.add_argument("--profile-id", required=True)
+    remove = sub.add_parser("remove")
+    remove.add_argument("--profile-id", required=True)
+    sub.add_parser("list")
     args = parser.parse_args(argv)
+    if args.action == "list":
+        print(json.dumps(list_profiles()))
+        return 0
+    if args.action == "remove":
+        removed = remove_profile(args.profile_id, CONFIG_DIR, UNIT_DIR)
+        print(json.dumps({"removed": [str(p) for p in removed]}))
+        return 0
     if args.action == "install":
-        profile = Profile(args.snapper_config, args.target, args.frequency, args.allow_local)
+        owner_uid = None
+        if args.engine == "cas":
+            # Polkit supplies the original desktop UID. Refuse root-only
+            # scheduling with ambiguous NFS ownership rather than guessing.
+            uid_value = os.environ.get("PKEXEC_UID")
+            if uid_value is None or not uid_value.isdecimal():
+                raise ValueError("CAS timer requires PKEXEC_UID from Polkit")
+            owner_uid = int(uid_value)
+        profile = Profile(args.snapper_config, args.target, args.frequency,
+                          args.allow_local, args.engine, owner_uid)
         installed = install_profile(profile, CONFIG_DIR, UNIT_DIR, str(Path(__file__).resolve()))
         print(json.dumps({"profile": profile.profile_id, "files": [str(p) for p in installed]}))
         if args.enable:
@@ -187,6 +261,9 @@ def main(argv: list[str] | None = None) -> int:
                             f"btrfs-assistant-harbor-{profile.profile_id}.timer"], check=True)
         return 0
     profile = load_profile(args.profile_id)
+    if profile.engine == "cas":
+        from cas_schedule import run_cas_profile
+        return run_cas_profile(profile)
     cli = shutil.which("harbor-checkpoint-v2")
     if not cli:
         print("Harbor CLI is missing from the service PATH", file=sys.stderr)

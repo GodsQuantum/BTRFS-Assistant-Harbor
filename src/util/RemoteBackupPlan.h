@@ -3,6 +3,9 @@
 #include <QStringList>
 namespace HarborRemote {
 QString profileId(const QString &config, const QString &target);
+QString profileIdForEngine(const QString &config, const QString &target, bool cas);
+QStringList scheduleInstallerArguments(const QString &config, const QString &target,
+                                       const QString &frequency, bool allowLocal, bool cas);
 QString archiveName(const QString &config, unsigned number);
 QStringList sendArguments(const QString &config, unsigned number, const QString &target, bool allowLocal);
 QStringList scheduleArguments(const QString &config, const QString &target, bool allowLocal);

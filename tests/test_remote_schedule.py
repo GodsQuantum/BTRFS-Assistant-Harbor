@@ -56,6 +56,39 @@ class ScheduleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             sched.Profile.from_dict(data)
 
+    def test_cas_profile_has_distinct_identity_and_uid(self):
+        cas = sched.Profile("root", "/mnt/Cloud Backup", "daily", False, "cas", 1000)
+        self.assertNotEqual(self.profile.profile_id, cas.profile_id)
+        self.assertEqual(cas.as_dict()["version"], 2)
+        self.assertEqual(sched.Profile.from_dict(cas.as_dict()), cas)
+        self.assertIn("OnCalendar=daily", sched.timer_unit(cas, "daily"))
+        self.assertIn("Restart=on-failure", sched.service_unit(cas, "/usr/bin/btrfs-assistant-harbor-schedule"))
+        with self.assertRaises(ValueError):
+            sched.Profile("root", "/mnt/Cloud Backup", "daily", False, "cas", 0)
+        with self.assertRaises(ValueError):
+            sched.Profile("root", "/mnt/Cloud Backup", "daily", False, "cas", None)
+        tampered = cas.as_dict()
+        tampered["owner_uid"] = 0
+        with self.assertRaises(ValueError):
+            sched.Profile.from_dict(tampered)
+
+    def test_disable_schedule_only_deletes_its_owned_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profiles = root / "profiles"
+            units = root / "units"
+            first = sched.Profile("root", "/mnt/NFS", "daily")
+            second = sched.Profile("home", "/mnt/NFS", "weekly")
+            owned = sched.install_profile(first, profiles, units, "/usr/bin/btrfs-assistant-harbor-schedule")
+            retained = sched.install_profile(second, profiles, units, "/usr/bin/btrfs-assistant-harbor-schedule")
+            removed = sched.remove_profile(first.profile_id, profiles, units, activate=False)
+            self.assertEqual(owned, removed)
+            self.assertTrue(all(not p.exists() for p in removed))
+            self.assertTrue(all(p.exists() for p in retained))
+            self.assertEqual(len(sched.list_profiles(profiles)), 1)
+            with self.assertRaises((ValueError, FileNotFoundError)):
+                sched.remove_profile(first.profile_id, profiles, units, activate=False)
+
     def test_staging_files_written_only_in_explicit_temp_roots(self):
         with tempfile.TemporaryDirectory() as tmp:
             etc = Path(tmp) / "etc"

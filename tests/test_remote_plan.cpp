@@ -67,6 +67,16 @@ int main() {
   REQUIRE(!trustedBackendExecutable("/tmp/harbor-masquerade"));
   REQUIRE(!trustedBackendExecutable("/home/arezki/bin/btrfs-backup-ng"));
   REQUIRE(!trustedBackendExecutable("/usr/bin/../../tmp/harbor-masquerade"));
+  const auto casId = profileIdForEngine("root", "/mnt/backup", true);
+  REQUIRE(!casId.isEmpty());
+  REQUIRE(casId != profileIdForEngine("root", "/mnt/backup", false));
+  const auto casSchedule = scheduleInstallerArguments("root", "/mnt/backup", "daily", false, true);
+  REQUIRE(casSchedule.contains("--engine"));
+  REQUIRE(casSchedule.contains("cas"));
+  REQUIRE(!casSchedule.contains("--allow-local"));
+  REQUIRE(scheduleInstallerArguments("root", "/mnt/backup", "hourly", true, true).contains("--allow-local"));
+  REQUIRE(!scheduleInstallerArguments("root", "/mnt/backup", "daily", false, false).contains("--engine"));
+  REQUIRE(scheduleInstallerArguments("root", "/mnt/backup", "everyminute", false, true).isEmpty());
   const QStringList verify = verifyArguments("/mnt/backup", "snap-root-123");
   REQUIRE(verify.contains("--json"));
   REQUIRE(verify.contains("--snapshot"));

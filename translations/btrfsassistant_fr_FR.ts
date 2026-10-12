@@ -46,5 +46,11 @@
     <message><source>Initialize CAS</source><translation>Initialiser CAS</translation></message>
     <message><source>Busy</source><translation>Opération en cours</translation></message>
     <message><source>Backend not trusted</source><translation>Moteur non fiable</translation></message>
+    <message><source>Disable schedule</source><translation>Désactiver la planification</translation></message>
+    <message><source>Scheduled backups</source><translation>Sauvegardes planifiées</translation></message>
+    <message><source>Choose a valid Snapper config, destination and frequency.</source><translation>Choisissez une configuration Snapper, une destination et une fréquence valides.</translation></message>
+    <message><source>Choose an existing Snapper configuration and destination.</source><translation>Choisissez une configuration Snapper et une destination existantes.</translation></message>
+    <message><source>Stop and remove the automatic timer for this configuration and destination? No snapshot or backup files will be deleted.</source><translation>Arrêter et supprimer la tâche planifiée pour cette configuration et destination ? Aucun snapshot ni fichier de sauvegarde ne sera supprimé.</translation></message>
+    <message><source>Install and enable an automatic %1 transfer for %2? It will use the selected engine. Snapper snapshots will not be created or deleted.</source><translation>Installer un transfert automatique %1 pour %2 avec le moteur choisi ? Aucun snapshot Snapper ne sera créé ni supprimé.</translation></message>
 </context>
 </TS>

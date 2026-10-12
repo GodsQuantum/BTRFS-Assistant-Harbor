@@ -82,6 +82,8 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     auto *interrupted = new QPushButton(tr("Interrupted transfers"), this);
     auto *resume = new QPushButton(tr("Resume selected"), this);
     auto *schedule = new QPushButton(tr("Enable schedule"), this);
+    auto *unschedule = new QPushButton(tr("Disable schedule"), this);
+    auto *schedules = new QPushButton(tr("Scheduled backups"), this);
     auto *initCas = new QPushButton(tr("Initialize CAS destination"), this);
     auto *verify = new QPushButton(tr("Verify selected archive"), this);
     auto *recover = new QPushButton(tr("Preview recovery"), this);
@@ -94,6 +96,8 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     actions->addWidget(recover, 1, 1);
     actions->addWidget(schedule, 1, 2);
     actions->addWidget(initCas, 1, 3);
+    actions->addWidget(schedules, 2, 0);
+    actions->addWidget(unschedule, 2, 1);
     layout->addLayout(actions);
     layout->addWidget(new QLabel(tr("Select a completed archive to verify/recover, or an interrupted transfer to resume"), this));
     m_archives->setMinimumHeight(100);
@@ -108,9 +112,8 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
         m_configs->addItems(m_snapper->configs());
     }
     connect(m_configs, &QComboBox::currentTextChanged, this, [this] { refreshSnapshots(); });
-    connect(m_backend, &QComboBox::currentIndexChanged, this, [this, schedule, resume, interrupted, initCas] {
+    connect(m_backend, &QComboBox::currentIndexChanged, this, [this, resume, interrupted, initCas] {
         const bool cas = isCasMode();
-        schedule->setEnabled(!cas);
         resume->setEnabled(!cas);
         interrupted->setEnabled(!cas);
         initCas->setEnabled(cas);
@@ -186,19 +189,34 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
             launch(arguments, QStringLiteral("resume"));
     });
     connect(schedule, &QPushButton::clicked, this, [this] {
-        const auto args = HarborRemote::scheduleArguments(m_configs->currentText(), m_target->text(), m_allowLocal->isChecked());
+        const QStringList args = HarborRemote::scheduleInstallerArguments(
+            m_configs->currentText(), m_target->text(), m_frequency->currentData().toString(),
+            m_allowLocal->isChecked(), isCasMode());
         if (args.isEmpty()) {
-            QMessageBox::warning(this, tr("Invalid schedule"), tr("Select a valid Snapper config and destination."));
+            QMessageBox::warning(this, tr("Invalid schedule"), tr("Choose a valid Snapper config, destination and frequency."));
             return;
         }
         if (QMessageBox::question(this, tr("Install systemd timer"),
-                tr("Install and enable an automatic %1 transfer for %2? No snapshot is created now.")
+                tr("Install and enable an automatic %1 transfer for %2? It will use the selected engine. Snapper snapshots will not be created or deleted.")
                     .arg(m_frequency->currentText(), m_configs->currentText())) != QMessageBox::Yes) return;
-        QStringList install{QStringLiteral("install"), QStringLiteral("--snapper-config"), m_configs->currentText(),
-                            QStringLiteral("--target"), m_target->text(), QStringLiteral("--frequency"),
-                            m_frequency->currentData().toString(), QStringLiteral("--enable")};
-        if (m_allowLocal->isChecked()) install << QStringLiteral("--allow-local");
-        launch(install, QStringLiteral("schedule"), QStringLiteral("btrfs-assistant-harbor-schedule"));
+        launch(args, QStringLiteral("schedule"), QStringLiteral("btrfs-assistant-harbor-schedule"));
+    });
+    connect(schedules, &QPushButton::clicked, this, [this] {
+        launch({QStringLiteral("list")}, QStringLiteral("list-schedules"),
+               QStringLiteral("btrfs-assistant-harbor-schedule"));
+    });
+    connect(unschedule, &QPushButton::clicked, this, [this] {
+        const QString id = HarborRemote::profileIdForEngine(
+            m_configs->currentText(), m_target->text(), isCasMode());
+        if (id.isEmpty()) {
+            QMessageBox::warning(this, tr("Invalid schedule"), tr("Choose an existing Snapper configuration and destination."));
+            return;
+        }
+        if (QMessageBox::question(this, tr("Disable schedule"),
+                tr("Stop and remove the automatic timer for this configuration and destination? No snapshot or backup files will be deleted.")) != QMessageBox::Yes)
+            return;
+        launch({QStringLiteral("remove"), QStringLiteral("--profile-id"), id},
+               QStringLiteral("unschedule"), QStringLiteral("btrfs-assistant-harbor-schedule"));
     });
     connect(verify, &QPushButton::clicked, this, [this] {
         if (isCasMode()) {

@@ -150,3 +150,32 @@ nor Cloud9 production mounts/backups were changed.
 First alpha4 use is a GUI/lab test after old backup finishes, NOT a
 sole trusted production backup. Package source commit differs from this
 later documentation-only handoff commit.
+
+
+## 12 octobre 2026 — validation NFS et planification alpha5
+
+PASS NFSv3 : VM client Alpine, véritable montage NFSv3 vers serveur
+UNFS3 à stockage persistant, sauvegarde complète + incrémentale,
+pause du serveur APRÈS trois objets écrits, reprise, vérification
+et restauration des fichiers exacts, refus d'écriture sur fallback local.
+Script e2e_nfs3_unfs3_fault.py, exit code 0.
+
+PASS NFSv4.1 : deux VM Alpine indépendantes, serveur nfsd du noyau
+Linux exportant son propre disque ext4, client Btrfs NFSv4.1. Envoi
+complet + incrémental, pause du processus VM du serveur APRÈS trois
+objets écrits, reprise, btrfs receive, comparaison exacte et refus de
+fallback hors montage. Script e2e_nfs4_kernel_fault.py, exit code 0.
+
+PASS SMB3 : laboratoire antérieur arrêté/redémarré en pleine écriture,
+flux et fichiers restaurés et validés. Les tests reflètent des coupures
+temporaires de laboratoire, PAS la topologie NFS personnelle.
+
+PASS planification : modes checkpoint-v2 et CAS, choix horaire, quotidien,
+hebdomadaire, systemd-analyze verify pour six combinaisons. 6 tests
+cas_schedule et 9 tests remote_schedule. Un nouveau test garantit la
+vérification du snapshot parent CAS avant tout incrémental.
+
+Ne jamais modifier les montages Cloud9/Pegasus pour ces essais.
+Le paquet alpha5 contient le fork Qt, le moteur historique autonome,
+le CAS Rust et les modules de planification. Source du paquet =
+commit de code en fin de livraison, distinct du commit documentaire.
