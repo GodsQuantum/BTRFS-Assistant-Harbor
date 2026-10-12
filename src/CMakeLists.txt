@@ -49,3 +49,8 @@ install(PROGRAMS ${PROJECT_SOURCE_DIR}/backend/harbor-checkpoint-v2
         DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES ${PROJECT_SOURCE_DIR}/vendor/harbor-legacy/LICENSE-MIT
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/btrfs-assistant-harbor)
+
+
+# CAS scheduler shared by the root-owned systemd profile runner.
+install(FILES ${PROJECT_SOURCE_DIR}/backend/cas_schedule.py
+        DESTINATION ${CMAKE_INSTALL_BINDIR})

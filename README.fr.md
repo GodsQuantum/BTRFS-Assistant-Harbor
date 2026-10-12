@@ -1,4 +1,4 @@
-# Btrfs Assistant Harbor — fork expérimental 0.1.0
+# Btrfs Assistant Harbor — fork expérimental 0.1.0alpha5
 
 Le fork conserve Btrfs Assistant 2.3.2 et Snapper comme gestionnaires de snapshots et des restaurations locales. Il ajoute un onglet de sauvegardes distantes avec deux moteurs indépendants.
 
@@ -27,3 +27,27 @@ Le test réel automatisé transport/tests/vm/e2e_alpine_btrfs.py utilise une VM 
 - Valider sécurité SSH, restauration fichier par fichier, benchmark réaliste et paquets Arch/DEB/RPM/AppImage.
 
 Ne pas écraser l'installation Btrfs Assistant d'origine, arrêter une sauvegarde en cours, ni substituer ce prototype à une sauvegarde de production.
+
+
+## Tests réseau Linux de la version alpha5
+
+Le laboratoire a validé sur des systèmes de fichiers réels : SMB3 avec
+Samba, NFSv3 avec un serveur UNFS3 à stockage persistant, et NFSv4.1
+avec un serveur NFS du noyau Linux dans une seconde VM Alpine.
+Chaque scénario vérifie un envoi Btrfs complet et incrémental, un arrêt
+temporaire du serveur après plusieurs blocs réellement écrits, sa
+reprise, le flux natif et les fichiers reçus, et le refus d'écrire dans
+le dossier local lorsque le montage réseau a disparu.
+
+Planification CAS : Snapper reste propriétaire de ses snapshots. Le
+timer systemd parcourt les snapshots existants, envoie le dernier en
+lecture seule, vérifie l'archive parent avant tout envoi incrémental et
+vérifie de nouveau une sauvegarde déjà présente. Deux moteurs disposent
+de timers distincts, avec planification horaire, quotidienne ou
+hebdomadaire, affichage et désactivation depuis l'onglet distant.
+
+Important : ces tests ne changent pas les montages réels de Pegasus et
+ne prouvent pas une restauration intégrale EFI/boot ni les performances
+sur les sauvegardes personnelles de plusieurs centaines de GiB.
+Le mode CAS est toujours un format distinct du Harbor checkpoint-v2
+historique. N'utilisez pas l'alpha5 comme unique sauvegarde.

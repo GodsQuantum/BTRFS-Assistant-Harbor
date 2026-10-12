@@ -1,7 +1,7 @@
 # Maintainer: Btrfs Assistant Harbor community
 # Development snapshot, independently buildable on Arch/CachyOS.
 pkgname=btrfs-assistant-harbor
-pkgver=0.1.0alpha4
+pkgver=0.1.0alpha5
 pkgrel=1
 pkgdesc='Btrfs Assistant fork with Snapper remote backup, Harbor checkpoint-v2 and Rust FastCDC CAS'
 arch=('x86_64')

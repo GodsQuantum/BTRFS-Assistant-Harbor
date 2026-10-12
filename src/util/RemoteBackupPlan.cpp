@@ -163,3 +163,28 @@ QStringList casConfirmArguments(const QString &repo, const QString &name, const 
             QStringLiteral("--name"), name, QStringLiteral("--staging"), staging, QStringLiteral("--confirm")};
 }
 }
+
+namespace HarborRemote {
+QString profileIdForEngine(const QString &config, const QString &target, bool cas) {
+    if (!cas) return profileId(config, target);
+    if (!safeConfig(config) || !safePath(target)) return {};
+    static const QUuid namespaceId(QStringLiteral("{18e0b70e-dced-4a95-9179-8b45efbd3f51}"));
+    return QUuid::createUuidV5(namespaceId,
+        (config + QLatin1Char('\n') + target + QLatin1String("\ncas")).toUtf8())
+        .toString(QUuid::WithoutBraces);
+}
+QStringList scheduleInstallerArguments(const QString &config, const QString &target,
+                                       const QString &frequency, bool allowLocal, bool cas) {
+    if (profileIdForEngine(config,target,cas).isEmpty() ||
+        (frequency != QLatin1String("hourly") && frequency != QLatin1String("daily") &&
+         frequency != QLatin1String("weekly"))) return {};
+    QStringList args{QStringLiteral("install"),
+                     QStringLiteral("--snapper-config"), config,
+                     QStringLiteral("--target"), target,
+                     QStringLiteral("--frequency"), frequency,
+                     QStringLiteral("--enable")};
+    if (cas) args << QStringLiteral("--engine") << QStringLiteral("cas");
+    if (allowLocal) args << QStringLiteral("--allow-local");
+    return args;
+}
+}
