@@ -1,0 +1,88 @@
+   Compiling harbor-transport v0.1.0 (/home/arezki/Dev/BTRFS-Assistant-Harbor-QA-ChainFix/transport)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.99s
+     Running unittests src/lib.rs (/tmp/harbor-cargo-progress-qa/debug/deps/harbor_transport-f8d2bdcc7c6925db)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/tmp/harbor-cargo-progress-qa/debug/deps/harbor_transport-907720f64cf3edee)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cas_tests.rs (/tmp/harbor-cargo-progress-qa/debug/deps/cas_tests-05e5aa33aa9a44d9)
+
+running 13 tests
+test unsafe_archive_names_are_rejected ... ok
+test repo_marker_is_required_to_avoid_offline_mount_fallback ... ok
+test private_backup_objects_and_manifests ... ok
+test completed_same_archive_is_idempotent ... ok
+test mismatched_final_archive_never_overwrites ... ok
+test corrupted_remote_object_before_commit_does_not_publish_manifest ... ok
+test shared_restore_lease_blocks_exclusive_ingest_until_reader_exits ... ok
+test valid_existing_same_raw_chunk_with_other_zstd_level_must_be_reused ... ok
+test progress_events_are_monotonic_and_measure_source_bytes_only ... ok
+test mid_stream_timeout_does_not_publish_and_next_attempt_reuses_committed_objects ... ok
+test corrupt_object_is_rejected_before_recovery_writes_anything ... ok
+test changed_input_still_completes_coherent_manifest_after_failure ... ok
+test failed_send_does_not_publish_but_resend_reuses_chunks ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.77s
+
+     Running tests/chain_verify_tests.rs (/tmp/harbor-cargo-progress-qa/debug/deps/chain_verify_tests-41736b963c963f33)
+
+running 3 tests
+test native_stream_check_rejects_missing_incremental_parent ... ok
+test native_stream_check_rejects_corrupted_parent_even_if_child_hash_is_valid ... ok
+test native_stream_check_validates_base_and_child_not_just_child ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/cli_tests.rs (/tmp/harbor-cargo-progress-qa/debug/deps/cli_tests-e0c36975b57a207c)
+
+running 7 tests
+test incremental_send_requires_parent_archive_reference_before_source_checks ... ok
+test cli_refuses_missing_repository_and_invalid_names ... ok
+test list_cas_archives_is_json_and_does_not_modify_repository ... ok
+test cli_never_sends_live_non_btrfs_dir_as_snapshot ... ok
+test receive_preview_reports_verified_chain_without_writing_staging ... ok
+test native_btrfs_stream_validation_refuses_synthetic_bytes ... ok
+test cli_synthetic_archive_roundtrip_and_no_overwrite ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/identity_tests.rs (/tmp/harbor-cargo-progress-qa/debug/deps/identity_tests-c262eb0cd308efab)
+
+running 6 tests
+test rejects_missing_parent_link_self_parent_and_bad_protocol ... ok
+test verify_does_not_recreate_missing_objects_directory ... ok
+test rejects_identity_switch_even_if_stream_bytes_identical ... ok
+test stores_source_provenance_and_parent_link ... ok
+test incremental_restore_chain_is_ordered_and_refuses_missing_parent ... ok
+test rejects_child_when_parent_not_saved_or_wrong ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/mount_probe_tests.rs (/tmp/harbor-cargo-progress-qa/debug/deps/mount_probe_tests-dbd8f2ccdfcebfa1)
+
+running 3 tests
+test probe_rejects_ambiguous_or_malformed_mountinfo ... ok
+test probe_resolves_escaped_paths_and_nested_mounts ... ok
+test probe_selects_deepest_mountpoint_not_first_matching ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/retry_tests.rs (/tmp/harbor-cargo-progress-qa/debug/deps/retry_tests-376a02b6784dddd8)
+
+running 7 tests
+test backoff_after_transient_nfs_disconnect_then_succeeds ... ok
+test stale_estale_errors_are_retryable_but_permission_errors_fail_closed ... ok
+test permanent_source_uuid_mismatch_is_never_retried ... ok
+test transient_network_eio_is_bounded_and_output_must_still_verify ... ok
+test upper_bound_prevents_accidental_unbounded_retries ... ok
+test transient_cifs_eagain_after_server_restart_is_retried ... ok
+test timeout_failure_has_finite_attempt_limit ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

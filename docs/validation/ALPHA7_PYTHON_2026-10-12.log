@@ -1,0 +1,25 @@
+test_existing_incremental_parent_is_verified_first (test_cas_schedule.CasScheduleTests.test_existing_incremental_parent_is_verified_first) ... ok
+test_idempotent_completed_backup_must_verify (test_cas_schedule.CasScheduleTests.test_idempotent_completed_backup_must_verify) ... ok
+test_long_archive_verification_is_not_killed_after_180_seconds (test_cas_schedule.CasScheduleTests.test_long_archive_verification_is_not_killed_after_180_seconds) ... ok
+test_multi_hour_cas_transfers_are_not_killed_by_python_timeout (test_cas_schedule.CasScheduleTests.test_multi_hour_cas_transfers_are_not_killed_by_python_timeout) ... ok
+test_no_shell_no_ro_snapshot_refused (test_cas_schedule.CasScheduleTests.test_no_shell_no_ro_snapshot_refused) ... ok
+test_parses_config_scope_and_excludes_rw (test_cas_schedule.CasScheduleTests.test_parses_config_scope_and_excludes_rw) ... ok
+test_reused_parent_number_is_not_used_for_incremental (test_cas_schedule.CasScheduleTests.test_reused_parent_number_is_not_used_for_incremental) ... ok
+test_reused_snapper_number_never_silently_skips_new_source (test_cas_schedule.CasScheduleTests.test_reused_snapper_number_never_silently_skips_new_source) ... ok
+test_run_inherits_authenticated_uid (test_cas_schedule.CasScheduleTests.test_run_inherits_authenticated_uid) ... ok
+test_snapshot_uuid_reads_btrfs_identity (test_cas_schedule.CasScheduleTests.test_snapshot_uuid_reads_btrfs_identity) ... ok
+test_source_selection_without_shell_and_with_verified_parent (test_cas_schedule.CasScheduleTests.test_source_selection_without_shell_and_with_verified_parent) ... ok
+test_cas_profile_has_distinct_identity_and_uid (test_remote_schedule.ScheduleTests.test_cas_profile_has_distinct_identity_and_uid) ... ok
+test_cli_argv_is_constant_and_has_no_shell (test_remote_schedule.ScheduleTests.test_cli_argv_is_constant_and_has_no_shell) ... ok
+test_disable_schedule_only_deletes_its_owned_files (test_remote_schedule.ScheduleTests.test_disable_schedule_only_deletes_its_owned_files) ... ok
+test_frequencies (test_remote_schedule.ScheduleTests.test_frequencies) ... ok
+test_id_stable_and_valid (test_remote_schedule.ScheduleTests.test_id_stable_and_valid) ... ok
+test_profile_serialization_round_trip (test_remote_schedule.ScheduleTests.test_profile_serialization_round_trip) ... ok
+test_staging_files_written_only_in_explicit_temp_roots (test_remote_schedule.ScheduleTests.test_staging_files_written_only_in_explicit_temp_roots) ... ok
+test_units_have_safe_exec_and_retry (test_remote_schedule.ScheduleTests.test_units_have_safe_exec_and_retry) ... ok
+test_validation_rejects_unsafe_inputs (test_remote_schedule.ScheduleTests.test_validation_rejects_unsafe_inputs) ... ok
+
+----------------------------------------------------------------------
+Ran 20 tests in 0.016s
+
+OK

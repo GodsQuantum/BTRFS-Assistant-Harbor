@@ -242,3 +242,52 @@ fn corrupted_remote_object_before_commit_does_not_publish_manifest() {
         "unsafe to publish manifest before remote objects are verified"
     );
 }
+
+#[test]
+fn progress_events_are_monotonic_and_measure_source_bytes_only() {
+    let temp = TempDir::new().unwrap();
+    let repo = Repository::initialize(temp.path()).unwrap();
+    let data = vec![0xabu8; 3 * 1024 * 1024];
+    let mut samples = Vec::new();
+    repo.ingest_snapshot_with_progress(
+        "progress",
+        Cursor::new(&data),
+        || true,
+        harbor_transport::cas::SnapshotIdentity {
+            source_uuid: uuid::Uuid::new_v4(),
+            parent_uuid: None,
+            parent_archive: None,
+            protocol: 2,
+        },
+        |count| samples.push(count),
+    )
+    .unwrap();
+    assert!(!samples.is_empty());
+    assert_eq!(*samples.last().unwrap(), data.len() as u64);
+    assert!(samples.windows(2).all(|a| a[0] < a[1]));
+    assert_eq!(repo.verify("progress").unwrap(), data.len() as u64);
+}
+
+#[test]
+fn shared_restore_lease_blocks_exclusive_ingest_until_reader_exits() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let temp = TempDir::new().unwrap();
+    let repository = Repository::initialize(temp.path()).unwrap();
+    let lease = repository.read_lease().unwrap();
+    let path = temp.path().to_owned();
+    let (tx, rx) = mpsc::channel();
+    let task = std::thread::spawn(move || {
+        let repo = Repository::open(&path).unwrap();
+        let result = repo.ingest("after-reader", Cursor::new(b"stream"), || true);
+        tx.send(result.is_ok()).unwrap();
+    });
+    assert!(
+        rx.recv_timeout(Duration::from_millis(120)).is_err(),
+        "writer must not pass exclusive repository lock while restore is reading"
+    );
+    drop(lease);
+    assert!(rx.recv_timeout(Duration::from_secs(5)).unwrap());
+    task.join().unwrap();
+    assert_eq!(repository.verify("after-reader").unwrap(), 6);
+}

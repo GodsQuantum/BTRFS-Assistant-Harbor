@@ -1,4 +1,4 @@
-# Btrfs Assistant Harbor — fork expérimental 0.1.0alpha6
+# Btrfs Assistant Harbor — fork expérimental 0.1.0alpha7
 
 Le fork conserve Btrfs Assistant 2.3.2 et Snapper comme gestionnaires de snapshots et des restaurations locales. Il ajoute un onglet de sauvegardes distantes avec deux moteurs indépendants.
 
@@ -61,3 +61,13 @@ de 180 secondes. Le gestionnaire systemd peut interrompre un job au besoin
 et les verrous/délais de reconnexion du moteur restent applicables.
 Deux nouveaux tests reproduisent ces limites sur alpha5 puis confirment
 leur disparition. L'interface indique le même numéro alpha6 que le paquet.
+
+
+## Préversion alpha7 — essais contrôlés, pas une garantie de restauration universelle
+
+- Chaînes incrémentales CAS vérifiées intégralement (parents et flux natifs).
+- Les numéros Snapper recyclés sont contrôlés par UUID.
+- Pendant les longues sauvegardes CAS, l'interface affiche les octets **bruts lus** et un débit moyen observé, et non un faux pourcentage ni une ETA.
+- Les restaurations CAS conservent un verrou partagé du dépôt jusqu'à leur fin. Ce mécanisme est testé localement, pas certifié sur les NFS/SMB de production.
+- Le GC/rétention destructrice CAS, l'inventaire machine complet EFI/boot, la restauration bare-metal, les connexions SSH et les ACL NFS de production restent hors couverture de cette préversion.
+- Btrfs Assistant officiel et ses configurations Snapper existantes sont préservés et restent installables en parallèle.

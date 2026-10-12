@@ -1,0 +1,132 @@
+[0/2] Re-checking globbed directories...
+[1/40] Automatic MOC and UIC for target test-remote-backup-plan
+[2/40] Building CXX object CMakeFiles/test-remote-backup-plan.dir/test-remote-backup-plan_autogen/mocs_compilation.cpp.o
+[3/40] Automatic MOC and UIC for target btrfs-assistant-harbor-bin
+[4/40] Generating .lupdate/__/translations/btrfsassistant_de_DE.ts.stamp
+Scanning directory '/home/arezki/Dev/BTRFS-Assistant-Harbor-QA-ChainFix/src'...
+Updating '../../../home/arezki/Dev/BTRFS-Assistant-Harbor-QA-ChainFix/translations/btrfsassistant_de_DE.ts'...
+    Found 357 source text(s) (87 new and 270 already existing)
+    Kept 4 obsolete entries
+    Same-text heuristic provided 6 translation(s)
+[5/40] Generating .lupdate/__/translations/btrfsassistant_fr_FR.ts.stamp
+Scanning directory '/home/arezki/Dev/BTRFS-Assistant-Harbor-QA-ChainFix/src'...
+Updating '../../../home/arezki/Dev/BTRFS-Assistant-Harbor-QA-ChainFix/translations/btrfsassistant_fr_FR.ts'...
+    Found 357 source text(s) (308 new and 49 already existing)
+    Same-text heuristic provided 4 translation(s)
+[6/40] Generating .lupdate/__/translations/btrfsassistant_ja.ts.stamp
+Scanning directory '/home/arezki/Dev/BTRFS-Assistant-Harbor-QA-ChainFix/src'...
+Updating '../../../home/arezki/Dev/BTRFS-Assistant-Harbor-QA-ChainFix/translations/btrfsassistant_ja.ts'...
+    Found 357 source text(s) (88 new and 269 already existing)
+    Kept 1 obsolete entries
+    Same-text heuristic provided 4 translation(s)
+[7/40] Generating .lupdate/__/translations/btrfsassistant_ru.ts.stamp
+Scanning directory '/home/arezki/Dev/BTRFS-Assistant-Harbor-QA-ChainFix/src'...
+Updating '../../../home/arezki/Dev/BTRFS-Assistant-Harbor-QA-ChainFix/translations/btrfsassistant_ru.ts'...
+    Found 357 source text(s) (84 new and 273 already existing)
+    Kept 1 obsolete entries
+    Same-text heuristic provided 4 translation(s)
+[8/40] Generating .lupdate/__/translations/btrfsassistant_zh_CN.ts.stamp
+Scanning directory '/home/arezki/Dev/BTRFS-Assistant-Harbor-QA-ChainFix/src'...
+Updating '../../../home/arezki/Dev/BTRFS-Assistant-Harbor-QA-ChainFix/translations/btrfsassistant_zh_CN.ts'...
+    Found 357 source text(s) (84 new and 273 already existing)
+    Kept 1 obsolete entries
+    Same-text heuristic provided 4 translation(s)
+[9/40] Generating btrfsassistant_de_DE.qm
+Updating '/tmp/harbor-qt-progress-qa/src/btrfsassistant_de_DE.qm'...
+    Generated 276 translation(s) (270 finished and 6 unfinished)
+    Ignored 81 untranslated source text(s)
+[10/40] Generating btrfsassistant_fr_FR.qm
+Updating '/tmp/harbor-qt-progress-qa/src/btrfsassistant_fr_FR.qm'...
+    Generated 53 translation(s) (49 finished and 4 unfinished)
+    Ignored 304 untranslated source text(s)
+[11/40] Generating btrfsassistant_ja.qm
+Updating '/tmp/harbor-qt-progress-qa/src/btrfsassistant_ja.qm'...
+    Generated 273 translation(s) (269 finished and 4 unfinished)
+    Ignored 84 untranslated source text(s)
+[12/40] Generating btrfsassistant_ru.qm
+Updating '/tmp/harbor-qt-progress-qa/src/btrfsassistant_ru.qm'...
+    Generated 277 translation(s) (273 finished and 4 unfinished)
+    Ignored 80 untranslated source text(s)
+[13/40] Generating btrfsassistant_zh_CN.qm
+Updating '/tmp/harbor-qt-progress-qa/src/btrfsassistant_zh_CN.qm'...
+    Generated 273 translation(s) (269 finished and 4 unfinished)
+    Ignored 84 untranslated source text(s)
+[14/40] Automatic RCC for ../icons/icons.qrc
+[15/40] Building CXX object CMakeFiles/test-remote-backup-plan.dir/tests/test_remote_plan.cpp.o
+[16/40] Building CXX object CMakeFiles/test-remote-backup-plan.dir/src/util/RemoteBackupPlan.cpp.o
+[17/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/btrfs-assistant-harbor-bin_autogen/mocs_compilation.cpp.o
+[18/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/main.cpp.o
+[19/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/ui/RemoteBackupWidget.cpp.o
+[20/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/ui/MainWindow.cpp.o
+[21/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/ui/Cli.cpp.o
+[22/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/ui/DiffViewer.cpp.o
+[23/40] Building Harbor FastCDC Rust transport
+   Compiling libc v0.2.190
+   Compiling find-msvc-tools v0.1.14
+   Compiling shlex v2.0.1
+   Compiling proc-macro2 v1.0.107
+   Compiling version_check v0.9.5
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling pkg-config v0.3.34
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.229
+   Compiling utf8parse v0.2.2
+   Compiling cfg-if v1.0.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling zmij v1.0.23
+   Compiling getrandom v0.4.3
+   Compiling colorchoice v1.0.5
+   Compiling anstyle v1.0.14
+   Compiling anstyle-query v1.1.5
+   Compiling zstd-safe v7.3.0
+   Compiling anyhow v1.0.104
+   Compiling serde v1.0.229
+   Compiling anstyle-parse v1.0.0
+   Compiling clap_lex v1.1.1
+   Compiling serde_json v1.0.154
+   Compiling heck v0.5.0
+   Compiling generic-array v0.14.7
+   Compiling strsim v0.11.1
+   Compiling itoa v1.0.18
+   Compiling anstream v1.0.0
+   Compiling cpufeatures v0.2.17
+   Compiling memchr v2.8.3
+   Compiling arrayvec v0.7.8
+   Compiling constant_time_eq v0.4.2
+   Compiling cpufeatures v0.3.1
+   Compiling fastcdc v5.0.0
+   Compiling clap_builder v4.6.7
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling syn v3.0.8
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling jobserver v0.1.35
+   Compiling fs2 v0.4.3
+   Compiling cc v1.8.0
+   Compiling uuid v1.28.0
+   Compiling zstd-sys v2.1.1+zstd.1.5.7
+   Compiling blake3 v1.8.7
+   Compiling serde_derive v1.0.229
+   Compiling clap_derive v4.6.7
+   Compiling clap v4.6.7
+   Compiling zstd v0.13.3
+   Compiling harbor-transport v0.1.0 (/home/arezki/Dev/BTRFS-Assistant-Harbor-QA-ChainFix/transport)
+    Finished `release` profile [optimized] target(s) in 34.56s
+[24/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/ui/FileBrowser.cpp.o
+[25/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/ui/SnapshotSubvolumeDialog.cpp.o
+[26/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/ui/RestoreConfirmDialog.cpp.o
+[27/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/model/SubvolModel.cpp.o
+[28/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/util/BtrfsStatus.cpp.o
+[29/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/util/BtrfsMaintenance.cpp.o
+[30/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/util/Settings.cpp.o
+[31/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/util/Btrfs.cpp.o
+[32/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/util/System.cpp.o
+[33/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/util/RemoteBackupPlan.cpp.o
+[34/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/util/Snapper.cpp.o
+[35/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/btrfs-assistant-harbor-bin_autogen/KGPS6WV3FN/qrc_icons.cpp.o
+[36/40] Linking CXX executable test-remote-backup-plan
+[37/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/util/CsvParser.cpp.o
+[38/40] Building CXX object src/CMakeFiles/btrfs-assistant-harbor-bin.dir/widgets/FilterLineEdit.cpp.o
+[39/40] Linking CXX executable src/btrfs-assistant-harbor-bin
