@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Dedicated fork wrapper: no shell evaluation of user-supplied arguments.
+set -euo pipefail
+owned_runtime=""
+if [[ "$(id -u)" == "0" && -z "${XDG_RUNTIME_DIR:-}" ]]; then
+    owned_runtime="$(mktemp -d)"
+    export XDG_RUNTIME_DIR="$owned_runtime"
+fi
+cleanup() {
+    if [[ -n "$owned_runtime" ]]; then
+        rmdir -- "$owned_runtime" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+params=()
+for arg in "$@"; do
+    case "$arg" in
+        --xdg-desktop=*) export XDG_CURRENT_DESKTOP="${arg#*=}" ;;
+        --xdg-runtime=*) export XDG_RUNTIME_DIR="${arg#*=}" ;;
+        --platformtheme=*) export QT_QPA_PLATFORMTHEME="${arg#*=}" ;;
+        --platform=*) export QT_QPA_PLATFORM="${arg#*=}" ;;
+        --display=*) export WAYLAND_DISPLAY="${arg#*=}" ;;
+        --style-override=*) export QT_STYLE_OVERRIDE="${arg#*=}" ;;
+        *) params+=("$arg") ;;
+    esac
+done
+btrfs-assistant-harbor-bin "${params[@]}"

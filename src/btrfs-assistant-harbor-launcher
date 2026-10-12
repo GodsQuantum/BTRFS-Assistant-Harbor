@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Safely forward the existing graphical environment to the polkit wrapper.
+# No eval, no shell expansion of untrusted desktop variables.
+set -euo pipefail
+params=(btrfs-assistant-harbor)
+if [[ -n "${XDG_CURRENT_DESKTOP:-}" ]]; then
+    params+=("--xdg-desktop=${XDG_CURRENT_DESKTOP}")
+fi
+if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    params+=("--display=${XDG_RUNTIME_DIR:-}/${WAYLAND_DISPLAY}")
+    if [[ -n "${QT_QPA_PLATFORM:-}" ]]; then
+        params+=("--platform=${QT_QPA_PLATFORM}")
+    fi
+else
+    params+=("--xdg-runtime=${XDG_RUNTIME_DIR:-}")
+fi
+if [[ -n "${QT_QPA_PLATFORMTHEME:-}" ]]; then
+    params+=("--platformtheme=${QT_QPA_PLATFORMTHEME}")
+fi
+if [[ -n "${QT_STYLE_OVERRIDE:-}" ]]; then
+    params+=("--style-override=${QT_STYLE_OVERRIDE}")
+fi
+exec pkexec "${params[@]}"

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Btrfs Assistant Harbor
+Name[fr]=Btrfs Assistant Harbor
+Comment=Btrfs, Snapper and verified remote snapshot backups
+Comment[fr]=Gestion Btrfs et Snapper avec sauvegardes distantes vérifiées
+Exec=btrfs-assistant-harbor-launcher
+Terminal=false
+Type=Application
+Icon=btrfs-assistant-harbor
+Categories=System;Utility;
+NoDisplay=false

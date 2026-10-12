@@ -14,8 +14,8 @@
 
 void setApplicationInfo()
 {
-    QCoreApplication::setApplicationName(QCoreApplication::translate("main", "Btrfs Assistant"));
-    QCoreApplication::setApplicationVersion("2.3.2");
+    QCoreApplication::setApplicationName(QCoreApplication::translate("main", "Btrfs Assistant Harbor"));
+    QCoreApplication::setApplicationVersion("0.1.0-dev");
 }
 
 int main(int argc, char *argv[])
@@ -92,7 +92,7 @@ int main(int argc, char *argv[])
         }
 
         // Set the desktop name for Wayland
-        QGuiApplication::setDesktopFileName("btrfs-assistant");
+        QGuiApplication::setDesktopFileName("btrfs-assistant-harbor");
 
         // If Btrfs Maintenance is installed, instantiate the btrfsMaintenance object
         std::unique_ptr<BtrfsMaintenance> btrfsMaintenance;
