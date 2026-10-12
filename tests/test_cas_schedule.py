@@ -26,11 +26,11 @@ class CasScheduleTests(unittest.TestCase):
             if cmd[0]=='snapper':
                 return SimpleNamespace(stdout=json.dumps(self.snapper),returncode=0)
             if cmd[1]=='list':
-                return SimpleNamespace(stdout=json.dumps([{'name':'snap-root-11'}]),returncode=0)
+                return SimpleNamespace(stdout=json.dumps([{'name':'snap-root-11', 'source_uuid':'10e91316-632c-435f-9275-acfb760017db'}]),returncode=0)
             if cmd[1]=='verify-stream':
                 return SimpleNamespace(returncode=0)
             raise AssertionError(cmd)
-        with patch.object(cas.subprocess,'run',side_effect=fake),patch.object(cas,'is_readonly_snapshot',return_value=True):
+        with patch.object(cas.subprocess,'run',side_effect=fake),patch.object(cas,'is_readonly_snapshot',return_value=True),patch.object(cas,'snapshot_uuid',return_value='10e91316-632c-435f-9275-acfb760017db'):
             argv=cas.build_send(self.profile)
         self.assertEqual(argv[:3],['harbor-transport','send','--repo'])
         self.assertIn('/.snapshots/12/snapshot',argv)
@@ -44,29 +44,86 @@ class CasScheduleTests(unittest.TestCase):
             if cmd[0]=='snapper':
                 return SimpleNamespace(stdout=json.dumps(self.snapper),returncode=0)
             if cmd[1]=='list':
-                return SimpleNamespace(stdout=json.dumps([{'name':'snap-root-11'}]),returncode=0)
+                return SimpleNamespace(stdout=json.dumps([{'name':'snap-root-11', 'source_uuid':'10e91316-632c-435f-9275-acfb760017db'}]),returncode=0)
             if cmd[1]=='verify-stream':
                 return SimpleNamespace(stdout='',returncode=0)
             raise AssertionError(cmd)
-        with patch.object(cas.subprocess,'run',side_effect=fake),patch.object(cas,'is_readonly_snapshot',return_value=True):
+        with patch.object(cas.subprocess,'run',side_effect=fake),patch.object(cas,'is_readonly_snapshot',return_value=True),patch.object(cas,'snapshot_uuid',return_value='10e91316-632c-435f-9275-acfb760017db'):
             argv=cas.build_send(self.profile)
         self.assertIn('--parent-archive',argv)
         self.assertEqual([cmd[1] for cmd in commands if cmd[0]=='harbor-transport'],
                          ['list','verify-stream'])
         self.assertEqual(commands[-1][-1],'snap-root-11')
 
+    def test_reused_parent_number_is_not_used_for_incremental(self):
+        # The archived parent UUID belongs to a past snapshot that Snapper
+        # deleted, even though the number 11 is available again.
+        calls = []
+        def fake(cmd, **kwargs):
+            calls.append(cmd)
+            if cmd[0] == 'snapper':
+                return SimpleNamespace(stdout=json.dumps(self.snapper))
+            if cmd[1] == 'list':
+                return SimpleNamespace(stdout=json.dumps([{
+                    'name':'snap-root-11',
+                    'source_uuid':'10e91316-632c-435f-9275-acfb760017db'
+                }]))
+            if cmd[1] == 'verify-stream':
+                return SimpleNamespace(returncode=0)
+            raise AssertionError(cmd)
+        with patch.object(cas.subprocess,'run', side_effect=fake), \
+             patch.object(cas, 'is_readonly_snapshot', return_value=True), \
+             patch.object(cas, 'snapshot_uuid', return_value='cffcb9f9-2557-42ca-9aab-19a478459b06'):
+            args = cas.build_send(self.profile)
+        self.assertNotIn('--parent', args)
+        self.assertNotIn('--parent-archive', args)
+        self.assertFalse(any('verify-stream' in command for command in calls))
+
+    def test_snapshot_uuid_reads_btrfs_identity(self):
+        canonical = '10e91316-632c-435f-9275-acfb760017db'
+        with patch.object(cas.subprocess, 'run', return_value=SimpleNamespace(
+            stdout='/snapshot\n\tName: snapshot\n\tUUID: '+canonical+'\n\tParent UUID: -\n')) as runner:
+            self.assertEqual(cas.snapshot_uuid(Path('/snap')), canonical)
+        self.assertEqual(runner.call_args.args[0], ['btrfs','subvolume','show','/snap'])
+        with patch.object(cas.subprocess, 'run', return_value=SimpleNamespace(
+            stdout='\tUUID: -\n')):
+            with self.assertRaises((RuntimeError, ValueError)):
+                cas.snapshot_uuid(Path('/snap'))
+
     def test_idempotent_completed_backup_must_verify(self):
         def fake(cmd,**kwargs):
             if cmd[0]=='snapper':
                 return SimpleNamespace(stdout=json.dumps(self.snapper))
             if cmd[1]=='list':
-                return SimpleNamespace(stdout=json.dumps([{'name':'snap-root-12'}]))
+                return SimpleNamespace(stdout=json.dumps([{'name':'snap-root-12', 'source_uuid':'10e91316-632c-435f-9275-acfb760017db'}]))
             if cmd[1]=='verify-stream':
                 return SimpleNamespace(returncode=0)
             raise AssertionError(cmd)
-        with patch.object(cas.subprocess,'run',side_effect=fake) as runner,patch.object(cas,'is_readonly_snapshot',return_value=True):
+        with patch.object(cas.subprocess,'run',side_effect=fake) as runner,patch.object(cas,'is_readonly_snapshot',return_value=True),patch.object(cas,'snapshot_uuid',return_value='10e91316-632c-435f-9275-acfb760017db'):
             self.assertIsNone(cas.build_send(self.profile))
         self.assertTrue(any('verify-stream' in call.args[0] for call in runner.call_args_list))
+    def test_reused_snapper_number_never_silently_skips_new_source(self):
+        # Snapper snapshot numbers can be reused after local prune. An
+        # archive named snap-root-12 may belong to a completely different
+        # readonly subvolume than today's snap-root-12.
+        old_uuid = "10e91316-632c-435f-9275-acfb760017db"
+        new_uuid = "cffcb9f9-2557-42ca-9aab-19a478459b06"
+        def fake(cmd, **kwargs):
+            if cmd[0] == "snapper":
+                return SimpleNamespace(stdout=json.dumps(self.snapper))
+            if cmd[1] == "list":
+                return SimpleNamespace(stdout=json.dumps([
+                    {"name": "snap-root-12", "source_uuid": old_uuid}
+                ]))
+            if cmd[1] == "verify-stream":
+                return SimpleNamespace(returncode=0)
+            raise AssertionError(cmd)
+        with patch.object(cas.subprocess, 'run', side_effect=fake), \
+             patch.object(cas, 'is_readonly_snapshot', return_value=True), \
+             patch.object(cas, 'snapshot_uuid', return_value=new_uuid):
+            with self.assertRaisesRegex(RuntimeError, "reus|UUID|identity"):
+                cas.build_send(self.profile)
+
     def test_no_shell_no_ro_snapshot_refused(self):
         with patch.object(cas.subprocess,'run',return_value=SimpleNamespace(stdout=json.dumps(self.snapper))),patch.object(cas,'is_readonly_snapshot',return_value=False):
             with self.assertRaises(RuntimeError):
@@ -88,12 +145,13 @@ class CasScheduleTests(unittest.TestCase):
             if command[0] == 'snapper':
                 return SimpleNamespace(stdout=json.dumps(self.snapper), returncode=0)
             if command[1] == 'list':
-                return SimpleNamespace(stdout=json.dumps([{'name': 'snap-root-12'}]), returncode=0)
+                return SimpleNamespace(stdout=json.dumps([{'name': 'snap-root-12', 'source_uuid':'10e91316-632c-435f-9275-acfb760017db'}]), returncode=0)
             if command[1] == 'verify-stream':
                 return SimpleNamespace(returncode=0)
             raise AssertionError(command)
         with patch.object(cas.subprocess, 'run', side_effect=fake), patch.object(
-                cas, 'is_readonly_snapshot', return_value=True):
+                cas, 'is_readonly_snapshot', return_value=True), patch.object(
+                cas, 'snapshot_uuid', return_value='10e91316-632c-435f-9275-acfb760017db'):
             self.assertIsNone(cas.build_send(self.profile))
         verified = [kwargs for args, kwargs in calls if 'verify-stream' in args]
         self.assertTrue(verified)

@@ -340,32 +340,47 @@ fn run_send(
 }
 
 fn verify_btrfs_stream(repo: &Repository, name: &str) -> Result<()> {
-    repo.verify(name)?;
-    let mut child = Command::new(BTRFS_BINARY)
-        .arg("receive")
-        .arg("--dump")
-        .arg("-e")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("cannot run Btrfs stream validator")?;
-    let mut input = child
-        .stdin
-        .take()
-        .context("Btrfs validator stdin unavailable")?;
-    let copy = repo.recover_into(name, &mut input);
-    drop(input);
-    if let Err(err) = copy {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(err).context("archive retrieval failed while validating Btrfs stream");
+    // A valid incremental stream is not a recoverable backup when its base
+    // manifest or any of its ancestors is absent/corrupt. Scheduled jobs use
+    // verify-stream for idempotency and parent selection, so first validate
+    // the complete chain and only then run the native parser in base->child
+    // order. Identity-free legacy laboratory archives retain the standalone
+    // stream verifier (they cannot claim incremental recoverability).
+    let archives = if repo.snapshot_identity(name)?.is_some() {
+        repo.verified_restore_chain(name)?
+    } else {
+        repo.verify(name)?;
+        vec![name.to_owned()]
+    };
+    for archive in archives {
+        let mut child = Command::new(BTRFS_BINARY)
+            .arg("receive")
+            .arg("--dump")
+            .arg("-e")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .context("cannot run Btrfs stream validator")?;
+        let mut input = child
+            .stdin
+            .take()
+            .context("Btrfs validator stdin unavailable")?;
+        let copy = repo.recover_into(&archive, &mut input);
+        drop(input);
+        if let Err(err) = copy {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(err).with_context(|| {
+                format!("archive {archive} retrieval failed during native validation")
+            });
+        }
+        let status = child.wait()?;
+        ensure!(
+            status.success(),
+            "Btrfs stream is invalid (native receive --dump rejected archive {archive})"
+        );
     }
-    let status = child.wait()?;
-    ensure!(
-        status.success(),
-        "Btrfs stream is invalid (native receive --dump rejected it)"
-    );
     Ok(())
 }
 
