@@ -21,7 +21,7 @@ Le test réel automatisé transport/tests/vm/e2e_alpine_btrfs.py utilise une VM 
 
 ## Conditions indispensables avant la production
 
-- Valider NFS et SMB avec de vraies coupures, veille, reprise et démontage transitoire ; ne jamais changer les montages existants.
+- SMB3 : coupure puis reprise en cours de transfert validées en laboratoire. NFSv4 : toujours non certifié sur un serveur persistant ; ne jamais changer les montages existants.
 - Tester le contrôle utilisateur complet UID/GID et ACL sur chaque export, y compris les tâches planifiées par le moteur Python historique.
 - Vérifier une restauration complète machine avec sous-volumes indépendants et EFI ; implémenter la rétention et le nettoyage des blocs CAS sans supprimer des parents utilisés.
 - Valider sécurité SSH, restauration fichier par fichier, benchmark réaliste et paquets Arch/DEB/RPM/AppImage.

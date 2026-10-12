@@ -114,3 +114,39 @@ NFS-Ganesha MEM FSAL and a permissions-restricted VFS FSAL. Never claim
 the actual NFS user topology was tested. No production mount or data was
 changed, and test-only Docker/QEMU processes must be cleaned up.
 Read docs/architecture/QA-STATUS-2026-10-12.md.
+
+## 12 October 2026 — alpha4 validated package delivery
+
+FROZEN PACKAGE SOURCE Git commit:
+6cd25b6f389de2d6c86871ce32b8676bf43e236b.
+Source btrfs-assistant-harbor-0.1.0alpha4.tar.gz SHA256:
+2f1cab1d71a731d7ef034bedfed7c3247fd49069a2b3b620e3afaaf7783543ef.
+Native Arch/CachyOS package:
+btrfs-assistant-harbor-0.1.0alpha4-1-x86_64.pkg.tar.zst SHA256:
+980b4330d56b365e77ad283522bc60505890f45adf42f85ec8124522de898d31.
+
+DELIVERED, NOT INSTALLED on Cloud9 downloads:
+ /srv/storage/cloud/arezki/Téléchargements/Logiciels/Système/BTRFS Harbor/
+ A TESTER - Btrfs Assistant Harbor Fork - Alpha4/
+Contains package, source, PKGBUILD, SHA256SUMS and French test README.
+arezki create/rename/delete permissions verified. Previous alpha3 retained.
+
+Native Arch makepkg validation: 1 Qt CTest, 7 Python tests, 34 Rust
+tests, pacman -U, both CLI smoke tests, Qt offscreen French, ldd.
+Alpine QEMU real Btrfs: full/delta send, receive, file comparison,
+malformed parent and object rejection, UID 1000 passed.
+Real SMB3: server stopped and restarted during preflight, and later
+after 3 compressed CAS objects had landed: both passed with retry
+and restored byte-for-byte contents.
+
+NOT CERTIFIED: production NFS, bare-metal EFI/boot, CAS retention/GC,
+legacy scheduled Python ownership on NFS, and real KDE GUI on Pegasus.
+Ganesha MEM FSAL gave inconsistent compressed bytes, now detected
+BEFORE completion by CAS readback. Ganesha VFS required privileges
+unavailable in nested Docker/LXC and guest kernel nfsd probe did not
+complete; do not misreport NFS as tested successfully. Neither Pegasus
+nor Cloud9 production mounts/backups were changed.
+
+First alpha4 use is a GUI/lab test after old backup finishes, NOT a
+sole trusted production backup. Package source commit differs from this
+later documentation-only handoff commit.
