@@ -1,3 +1,17 @@
+> **Btrfs Assistant Harbor fork — experimental, LXC 700 only (12 October 2026)**
+>
+> This worktree is a fork of Btrfs Assistant **2.3.2** (GPL-3.0), retaining
+> upstream Snapper/local rollback features. A new **Remote backups** tab
+> delegates selection to Snapper and remote transport to the external Harbor
+> `btrfs-backup-ng` CLI. A **separate experimental Rust FastCDC CAS transport**
+> lives under `transport/` and is **not yet deployed or enabled by the GUI**.
+> Do not install over a production Btrfs Assistant or stop a running backup.
+>
+> See [Research and architecture](docs/architecture/REMOTE-BACKUP-DESIGN-2026-10-12.md)
+> and [test status](docs/architecture/QA-STATUS-2026-10-12.md).
+>
+---
+
 # Btrfs Assistant
 
 ## Overview

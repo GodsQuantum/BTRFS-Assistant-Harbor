@@ -1,5 +1,6 @@
 set(UI_SRC
     ui/MainWindow.ui ui/MainWindow.h ui/MainWindow.cpp
+    ui/RemoteBackupWidget.h ui/RemoteBackupWidget.cpp
     ui/Cli.h ui/Cli.cpp
     ui/DiffViewer.ui ui/DiffViewer.h ui/DiffViewer.cpp
     ui/FileBrowser.ui ui/FileBrowser.h ui/FileBrowser.cpp

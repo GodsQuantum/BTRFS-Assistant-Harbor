@@ -4,6 +4,7 @@ set(UTIL_SRC
     util/BtrfsMaintenance.h util/BtrfsMaintenance.cpp
     util/Settings.h util/Settings.cpp
     util/Snapper.h util/Snapper.cpp
+    util/RemoteBackupPlan.h util/RemoteBackupPlan.cpp
     util/System.h util/System.cpp
     util/CsvParser.h util/CsvParser.cpp
 )

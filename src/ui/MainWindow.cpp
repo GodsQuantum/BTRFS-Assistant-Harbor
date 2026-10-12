@@ -1,4 +1,5 @@
 #include "ui/MainWindow.h"
+#include "ui/RemoteBackupWidget.h"
 #include "model/SubvolModel.h"
 #include "ui/FileBrowser.h"
 #include "ui/RestoreConfirmDialog.h"
@@ -51,6 +52,7 @@ MainWindow::MainWindow(Btrfs *btrfs, BtrfsMaintenance *btrfsMaintenance, Snapper
     : QMainWindow(parent), m_ui(new Ui::MainWindow), m_btrfs(btrfs), m_btrfsMaint(btrfsMaintenance), m_snapper(snapper)
 {
     m_ui->setupUi(this);
+    m_ui->tabWidget_mainWindow->addTab(new RemoteBackupWidget(snapper, this), tr("Remote backups"));
     // Always start on the BTRFS tab, regardless what is the currentIndex in the .ui file
     m_ui->tabWidget_mainWindow->setCurrentWidget(m_ui->tab_btrfs);
 
