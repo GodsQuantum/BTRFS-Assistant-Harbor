@@ -50,4 +50,8 @@ private:
     QStringList m_pendingRestore;
     QString m_pendingPruneArchive;
     QString m_pendingPruneRepo;
+    QString m_machineListRepo;
+    QString m_machinePreviewRepo;
+    QString m_machinePreviewStaging;
+    QString m_machinePreviewId;
 };

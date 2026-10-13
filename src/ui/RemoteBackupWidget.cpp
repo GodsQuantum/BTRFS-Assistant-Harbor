@@ -1,5 +1,6 @@
 #include "ui/RemoteBackupWidget.h"
 #include "util/RemoteBackupPlan.h"
+#include "util/MachineSetProtocol.h"
 #include "util/Snapper.h"
 
 #include <QCheckBox>
@@ -114,8 +115,10 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     auto *machineBox = new QGroupBox(tr("Whole-computer backup sets — checkpoint-v2 (QA)"), this);
     auto *machineLayout = new QVBoxLayout(machineBox);
     auto *machineActions = new QHBoxLayout();
+    auto *auditMachine = new QPushButton(tr("Audit backup coverage"), machineBox);
     auto *listMachines = new QPushButton(tr("List machine backup sets"), machineBox);
     auto *previewMachine = new QPushButton(tr("Preview staged machine restore"), machineBox);
+    machineActions->addWidget(auditMachine);
     machineActions->addWidget(listMachines);
     machineActions->addWidget(previewMachine);
     machineLayout->addLayout(machineActions);
@@ -201,6 +204,9 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
                "Existing legacy archives are not modified.")) == QMessageBox::Yes)
             launch(args, QStringLiteral("cas-init"), QStringLiteral("harbor-transport"));
     });
+    connect(auditMachine, &QPushButton::clicked, this, [this] {
+        launch(HarborRemote::machineInventoryArguments(), QStringLiteral("machine-inventory"));
+    });
     connect(listMachines, &QPushButton::clicked, this, [this] {
         const auto args = HarborRemote::machineSetListArguments(m_target->text());
         if (args.isEmpty()) {
@@ -208,6 +214,7 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
                 tr("Select an absolute checkpoint-v2 repository before listing machine sets."));
             return;
         }
+        m_machineListRepo = m_target->text();
         launch(args, QStringLiteral("machine-set-list"));
     });
     connect(previewMachine, &QPushButton::clicked, this, [this] {
@@ -227,6 +234,9 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
                    "This operation never changes the running system."));
             return;
         }
+        m_machinePreviewRepo = m_target->text();
+        m_machinePreviewStaging = m_staging->text();
+        m_machinePreviewId = id;
         launch(args, QStringLiteral("machine-set-preview"));
     });
     connect(inventory, &QPushButton::clicked, this, &RemoteBackupWidget::listArchives);
@@ -477,52 +487,79 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
     m_state->setText(ok ? tr("Operation finished: %1").arg(m_purpose)
                         : tr("Operation failed: %1 (exit %2)").arg(m_purpose).arg(code));
     if (!ok) return;
-    if (m_purpose == QLatin1String("machine-set-list")) {
+    if (m_purpose == QLatin1String("machine-inventory")) {
         QJsonParseError error{};
         const auto doc = QJsonDocument::fromJson(m_stdout, &error);
-        if (error.error != QJsonParseError::NoError || !doc.isArray() || doc.array().size() > 1024) {
-            appendOutput(tr("Machine-set inventory invalid or too large; keeping the previous list."));
+        if (error.error != QJsonParseError::NoError || !doc.isObject()) {
+            appendOutput(tr("Invalid filesystem inventory response."));
+            return;
+        }
+        const auto obj = doc.object();
+        const int count = obj.value(QStringLiteral("included_btrfs_count")).toInt(-1);
+        const auto warnings = obj.value(QStringLiteral("warnings")).toArray();
+        const bool complete = obj.value(QStringLiteral("inventory_complete")).toBool(false);
+        if (obj.value(QStringLiteral("schema_version")).toInt() != 1 ||
+            count < 0 || count > 1024 || warnings.size() > 1024) {
+            appendOutput(tr("Unsupported machine inventory schema or invalid counts."));
+            return;
+        }
+        QStringList details;
+        for (const auto &message : warnings) {
+            if (!message.isString()) {
+                appendOutput(tr("Invalid machine inventory warning; refusing result."));
+                return;
+            }
+            if (details.size() < 8) details << message.toString().left(240);
+        }
+        const QString summary = tr("Detected %1 included Btrfs volumes.\nCoverage inventory: %2.\n"
+                                   "Bootable bare-metal recovery: NOT CERTIFIED.\n%3")
+            .arg(count).arg(complete ? tr("complete for supported mount types")
+                                     : tr("incomplete — backup must be refused"))
+            .arg(details.join(QStringLiteral("\n")));
+        if (complete) QMessageBox::information(this, tr("Machine coverage audit"), summary);
+        else QMessageBox::warning(this, tr("Missing machine coverage"), summary);
+        return;
+    }
+    if (m_purpose == QLatin1String("machine-set-list")) {
+        if (m_machineListRepo != m_target->text()) {
+            appendOutput(tr("Machine-set catalog destination changed while reading; refusing stale catalog."));
+            return;
+        }
+        QList<HarborMachineProtocol::BackupSet> list;
+        QString error;
+        if (!HarborMachineProtocol::catalog(m_stdout, &list, &error)) {
+            appendOutput(tr("Machine-set catalog rejected: %1").arg(error));
             return;
         }
         m_machineSets->clear();
-        for (const auto &row : doc.array()) {
-            if (!row.isObject()) continue;
-            const auto obj = row.toObject();
-            const QString id = obj.value(QStringLiteral("set_id")).toString();
-            const QUuid uuid(id);
-            if (uuid.isNull() || uuid.toString(QUuid::WithoutBraces) != id) continue;
-            const QString state = obj.value(QStringLiteral("status")).toString();
-            if (!state.startsWith(QLatin1String("completed_"))) continue;
-            const int volumes = obj.value(QStringLiteral("members")).toInt();
-            const int bootFiles = obj.value(QStringLiteral("boot_partitions")).toInt();
-            if (volumes < 1 || volumes > 1024 || bootFiles < 0 || bootFiles > 64) continue;
+        for (const auto &record : list) {
             auto *item = new QListWidgetItem(
                 tr("%1 — %2 Btrfs volumes, %3 boot-file sets — QA; NOT bootable")
-                    .arg(id).arg(volumes).arg(bootFiles), m_machineSets);
-            item->setData(Qt::UserRole, id);
-            item->setData(Qt::UserRole + 1, m_target->text());
+                    .arg(record.id).arg(record.volumes).arg(record.bootFiles), m_machineSets);
+            item->setData(Qt::UserRole, record.id);
+            item->setData(Qt::UserRole + 1, m_machineListRepo);
         }
         return;
     }
     if (m_purpose == QLatin1String("machine-set-preview")) {
-        QJsonParseError error{};
-        const auto doc = QJsonDocument::fromJson(m_stdout, &error);
-        const auto obj = doc.object();
-        const auto volumes = obj.value(QStringLiteral("plan")).toArray();
-        const auto boot = obj.value(QStringLiteral("boot_plan")).toArray();
-        if (error.error != QJsonParseError::NoError || !doc.isObject() ||
-            obj.value(QStringLiteral("dry_run")).toBool() != true ||
-            obj.value(QStringLiteral("bootable")).toBool(true) != false ||
-            volumes.isEmpty() || volumes.size() > 1024 || boot.size() > 64) {
-            appendOutput(tr("Invalid machine-set preview: refusing any recovery operation."));
+        if (m_machinePreviewRepo != m_target->text() ||
+            m_machinePreviewStaging != m_staging->text() ||
+            m_machinePreviewId.isEmpty()) {
+            appendOutput(tr("Machine-set preview destination, staging or selection changed; refusing stale result."));
+            return;
+        }
+        HarborMachineProtocol::RestorePreview plan;
+        QString error;
+        if (!HarborMachineProtocol::preview(m_stdout, m_machinePreviewStaging, &plan, &error)) {
+            appendOutput(tr("Machine restore preview rejected: %1").arg(error));
             return;
         }
         QMessageBox::information(this, tr("Validated staged recovery preview"),
-            tr("Archive and staging preconditions validated by the backend. "
-               "Plan: %1 Btrfs volumes, %2 separate boot-file sets. "
-               "No files have been restored and no bootable system is promised. "
-               "Bare-metal recovery requires the separate, tested rescue workflow.")
-                .arg(volumes.size()).arg(boot.size()));
+            tr("Backend preflight validated: %1 separate Btrfs volumes, %2 boot-file archives.\n"
+               "Original mount points (first 12): %3\n"
+               "Nothing was restored. A bootable computer is NOT promised. "
+               "Bare-metal recovery still requires validated ReaR/EFI rescue.")
+                .arg(plan.volumesCount).arg(plan.bootFiles).arg(plan.mounts.join(QStringLiteral(", "))));
         return;
     }
     if (m_purpose == QLatin1String("cas-prune-preview")) {

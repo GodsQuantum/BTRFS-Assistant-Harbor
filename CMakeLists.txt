@@ -46,6 +46,11 @@ add_executable(test-remote-backup-plan
 target_include_directories(test-remote-backup-plan PRIVATE src)
 target_link_libraries(test-remote-backup-plan PRIVATE Qt6::Core)
 add_test(NAME remote-backup-plan COMMAND test-remote-backup-plan)
+add_executable(test-machine-set-protocol
+    tests/test_machine_set_protocol.cpp src/util/MachineSetProtocol.cpp)
+target_include_directories(test-machine-set-protocol PRIVATE src)
+target_link_libraries(test-machine-set-protocol PRIVATE Qt6::Core)
+add_test(NAME machine-set-protocol COMMAND test-machine-set-protocol)
 
 # An installed binary must identify the actual build, not a stale -dev
 # version. This test also exercises CLI startup without a Btrfs mount.

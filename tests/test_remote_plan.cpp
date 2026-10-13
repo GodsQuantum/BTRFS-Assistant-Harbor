@@ -52,6 +52,8 @@ int main() {
   REQUIRE(casInitArguments("/", false).isEmpty());
   REQUIRE(casListArguments(casPath).contains("list"));
   const QString machineSetId("a5d970db-9664-4be8-a0fb-bb1e93c60ec3");
+  REQUIRE(machineInventoryArguments().size() == 3);
+  REQUIRE(machineInventoryArguments().last() == "machine-inventory");
   REQUIRE(machineSetListArguments("/mnt/legacy").contains("set-list"));
   REQUIRE(machineSetListArguments("/").isEmpty());
   const auto machinePlan = machineSetPreviewArguments("/mnt/legacy", machineSetId, "/mnt/staging");

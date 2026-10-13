@@ -94,27 +94,64 @@ echo HARBOR_NEGATIVE_TESTS_FAIL_CLOSED
 
 PRUNE = r"""#!/bin/sh
 set -eu
-# An incremental's required base must never disappear, even with explicit intent.
-if /tmp/harbor-transport prune --repo /mnt/share/cas --name base-vm; then
+# 9p VM hostshare must permit dry-run but reject all destructive GC even
+# when the plan token was produced by a correct, current dry-run.
+shared_plan="$(/tmp/harbor-transport prune --repo /mnt/share/cas --name next-vm)"
+shared_token="$(printf '%s' "$shared_plan" | jq -r '.plan.plan_sha256')"
+test "${#shared_token}" = 64
+if /tmp/harbor-transport prune --repo /mnt/share/cas --name next-vm --confirm-plan "$shared_token"; then
+    echo UNSAFE_9P_DESTRUCTIVE_GC_ACCEPTED
+    exit 35
+fi
+test -f /mnt/share/cas/manifests/next-vm.json
+# GC must use a verified LOCAL Btrfs repo. A 9p share has no certified
+# distributed lock semantics and is intentionally disallowed for prune.
+repo=/mnt/fs/cas-gc-qa
+mkdir -p "$repo"
+chown 1000:1000 "$repo"
+export PKEXEC_UID=1000
+/tmp/harbor-transport init --repo "$repo" --allow-local
+/tmp/harbor-transport send --repo "$repo" --name base-vm --snapshot /mnt/fs/base --experimental --allow-local --retries 0
+/tmp/harbor-transport send --repo "$repo" --name next-vm --snapshot /mnt/fs/next --parent /mnt/fs/base --parent-archive base-vm --experimental --allow-local --retries 0
+if /tmp/harbor-transport prune --repo $repo --name base-vm; then
     echo DELETED_REQUIRED_PARENT
     exit 31
 fi
-/tmp/harbor-transport verify-stream --repo /mnt/share/cas --name next-vm
-/tmp/harbor-transport prune --repo /mnt/share/cas --name next-vm > /tmp/plan.json
+/tmp/harbor-transport verify-stream --repo $repo --name next-vm
+/tmp/harbor-transport prune --repo $repo --name next-vm > /tmp/plan.json
 token="$(jq -r '.plan.plan_sha256' /tmp/plan.json)"
 test "${#token}" = 64
-if /tmp/harbor-transport prune --repo /mnt/share/cas --name next-vm --confirm-plan "$(printf 'f%.0s' $(seq 1 64))"; then
+if /tmp/harbor-transport prune --repo $repo --name next-vm --confirm-plan "$(printf 'f%.0s' $(seq 1 64))"; then
     echo STALE_TOKEN_ACCEPTED
     exit 32
 fi
-/tmp/harbor-transport prune --repo /mnt/share/cas --name next-vm --confirm-plan "$token"
-test ! -e /mnt/share/cas/manifests/next-vm.json
-/tmp/harbor-transport verify-stream --repo /mnt/share/cas --name base-vm
+/tmp/harbor-transport prune --repo $repo --name next-vm --confirm-plan "$token"
+test ! -e $repo/manifests/next-vm.json
+/tmp/harbor-transport verify-stream --repo $repo --name base-vm
 mkdir -p /mnt/fs/gc-restored
-/tmp/harbor-transport receive --repo /mnt/share/cas --name base-vm --staging /mnt/fs/gc-restored --confirm
+/tmp/harbor-transport receive --repo $repo --name base-vm --staging /mnt/fs/gc-restored --confirm
 printf '%s\n' 'original' | cmp - /mnt/fs/gc-restored/base/docs/one.txt
 test "$(readlink /mnt/fs/gc-restored/base/docs/symlink.txt)" = "one.txt"
 echo HARBOR_PRUNE_PRESERVES_PARENT_AND_RESTORE
+"""
+
+MULTIVOLUME = r"""#!/bin/sh
+set -eu
+# A root Btrfs snapshot never embeds an independently mounted nested
+# subvolume. Back up and restore the second filesystem member separately.
+test -f /mnt/fs/work/nested/secret.txt
+test ! -e /mnt/fs/gc-restored/base/nested/secret.txt
+btrfs subvolume snapshot -r /mnt/fs/work/nested /mnt/fs/nested-ro
+/tmp/harbor-transport send --repo /mnt/share/cas --name nested-volume-vm --snapshot /mnt/fs/nested-ro --experimental --allow-local --retries 0
+/tmp/harbor-transport verify-stream --repo /mnt/share/cas --name nested-volume-vm
+mkdir -p /mnt/fs/multi-volume-restore
+/tmp/harbor-transport receive --repo /mnt/share/cas --name nested-volume-vm --staging /mnt/fs/multi-volume-restore --preview
+test -z "$(ls -A /mnt/fs/multi-volume-restore)"
+/tmp/harbor-transport receive --repo /mnt/share/cas --name nested-volume-vm --staging /mnt/fs/multi-volume-restore --confirm
+cmp /mnt/fs/work/nested/secret.txt /mnt/fs/multi-volume-restore/nested-ro/secret.txt
+btrfs property get -ts /mnt/fs/multi-volume-restore/nested-ro ro | grep -q 'ro=true'
+/tmp/harbor-transport verify-stream --repo /mnt/share/cas --name base-vm
+echo HARBOR_TWO_DISTINCT_BTRFS_MEMBERS_VERIFIED
 """
 
 def require_binary(path: str) -> None:
@@ -165,6 +202,7 @@ def main() -> None:
         (share / "prepare.sh").write_text(PREPARE)
         (share / "negative.sh").write_text(NEGATIVE)
         (share / "prune.sh").write_text(PRUNE)
+        (share / "multi-volume.sh").write_text(MULTIVOLUME)
         qemu = [
             "qemu-system-x86_64", "-machine", "q35,accel=tcg", "-cpu", "qemu64",
             "-m", "768", "-smp", "2",
@@ -197,6 +235,7 @@ def main() -> None:
             (share / "cas-no-parent" / "manifests/base-vm.json").unlink()
             run_guest(child, "negative.sh", "FAIL_CLOSED", 120)
             run_guest(child, "prune.sh", "PRUNE_RESTORE", 150)
+            run_guest(child, "multi-volume.sh", "MULTI_VOLUME", 150)
             child.sendline(b"poweroff")
             child.expect(pexpect.EOF, timeout=45)
             print("PASS E2E QEMU BTRFS ISOLATED", flush=True)
