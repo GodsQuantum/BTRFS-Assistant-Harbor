@@ -6,7 +6,7 @@
 - Harbor CAS sent and verified root Btrfs read-only snapshot stream; archived ESP FAT32 separately with SHA256.
 - New blank disk and independent OVMF variables: sfdisk, mkfs.vfat, mkfs.btrfs; Harbor verified stream, previewed and received Btrfs subvolume, copied it to writable root @; restored EFI archive after checksum; reconciled fstab UUIDs; installed GRUB with Btrfs kernel path /@/boot/vmlinuz-virt.
 - Installer ISO detached; fresh OVMF booted recovered disk, login reached. Final test turned off tty echo and required explicit shell exit code zero for EFI, Btrfs root, restored marker file, kernel, initramfs and EFI executable.
-- Reproducible source: transport/tests/vm/e2e_uefi_btrfs_disaster_recovery.py; log logs-alpha9-20261013/qemu-uefi-full-root-esp-disaster-recovery-r5.log.
+- Reproducible source: transport/tests/vm/e2e_uefi_btrfs_disaster_recovery.py. Full QA logs remain in the private canonical Cloud9 project directory (docs/validation/logs-alpha9-20261013), not in this public Git repository.
 
 ## Limits
 This certifies **scripted** disk reconstruction in isolated QEMU, not ReaR automated disk/bootloader recovery or a generated ReaR ISO. No destructive network CAS GC certification, and no user hardware was touched.
