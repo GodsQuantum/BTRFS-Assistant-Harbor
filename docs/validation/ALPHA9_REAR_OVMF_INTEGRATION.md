@@ -50,7 +50,19 @@ peut n'être autorisé qu'avec `BACKUP=NETFS`.
 - ReaR `rear checklayout` : https://relax-and-recover.org/usage/
 - Firmware OVMF : https://github.com/tianocore/edk2/blob/master/OvmfPkg/QEMU_PV_VARS.md
 
-## Statut
-**SPEC uniquement.** Aucun test de boot après restauration encore réalisé;
-la GUI alpha9 ne lance que l'inventaire, la consultation de sets et la
-prévisualisation du staging. Ne pas exposer de formatage de disque.
+## Statut actualisé le 13 octobre 2026 à 09 h 28
+**PASS: sauvegarde Harbor CAS et restauration GPT + ESP + Btrfs sur DISQUE QEMU VIERGE.**
+Test source: transport/tests/vm/e2e_uefi_btrfs_disaster_recovery.py ;
+log: docs/validation/logs-alpha9-20261013/qemu-uefi-full-root-esp-disaster-recovery-r5.log.
+Le système Alpine restauré démarre sous un OVMF neuf, sans ISO, avec vérification
+du noyau, initramfs, fstab, ESP et marqueur source. Le script de test a
+reconstitué le partitionnement et GRUB; **ceci ne valide PAS ReaR**.
+
+**NON CERTIFIÉ / bloquant pour stable:** création et démarrage d'un véritable
+ISO ReaR portant le binaire Harbor, les dépendances Python et les hooks ;
+ReaR doit reconstituer les partitions et déclencher la copie du jeu de
+sauvegarde sélectionné dans /mnt/local avant finalisation boot. Les chemins
+de configuration et du hook attendus par rear_iso_v2 ne sont pas encore
+installés par le paquet Qt. La GUI alpha9 ne lance pas de formatage : seulement
+inventaire/consultation/prévisualisation staging. Aucun backup production,
+mount NFS, Snapper original ou poste Pegasus modifié.
