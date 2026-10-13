@@ -1,11 +1,11 @@
 # Maintainer: Btrfs Assistant Harbor community
 # Development snapshot, independently buildable on Arch/CachyOS.
 pkgname=btrfs-assistant-harbor
-pkgver=0.1.0alpha8
+pkgver=0.1.0alpha9
 pkgrel=1
 pkgdesc='Btrfs Assistant fork with Snapper remote backup, Harbor checkpoint-v2 and Rust FastCDC CAS'
 arch=('x86_64')
-url='https://gitlab.com/btrfs-assistant/btrfs-assistant'
+url='https://github.com/GodsQuantum/BTRFS-Assistant-Harbor'
 license=('GPL-3.0-or-later' 'MIT')
 depends=('qt6-base' 'btrfs-progs' 'snapper' 'polkit' 'python' 'python-filelock' 'python-rich' 'zstd')
 makedepends=('cmake' 'ninja' 'qt6-tools' 'qt6-declarative' 'rust' 'pkgconf')
@@ -23,6 +23,7 @@ check() {
     ctest --test-dir "${srcdir}/build" --output-on-failure
     PYTHONPATH="${srcdir}/btrfs-assistant-harbor" python -m unittest discover -s "${srcdir}/btrfs-assistant-harbor/tests" -p test_remote_schedule.py
     PYTHONPATH="${srcdir}/btrfs-assistant-harbor" python -m unittest discover -s "${srcdir}/btrfs-assistant-harbor/tests" -p test_cas_schedule.py
+    PYTHONPATH="${srcdir}/btrfs-assistant-harbor/vendor/harbor-legacy" python -m unittest discover -s "${srcdir}/btrfs-assistant-harbor/tests" -p test_rear_bridge.py
     cargo test --locked --manifest-path "${srcdir}/btrfs-assistant-harbor/transport/Cargo.toml" --all-targets
 }
 package() {
