@@ -5,6 +5,7 @@ set(UTIL_SRC
     util/Settings.h util/Settings.cpp
     util/Snapper.h util/Snapper.cpp
     util/RemoteBackupPlan.h util/RemoteBackupPlan.cpp
+    util/MachineSetProtocol.h util/MachineSetProtocol.cpp
     util/System.h util/System.cpp
     util/CsvParser.h util/CsvParser.cpp
 )

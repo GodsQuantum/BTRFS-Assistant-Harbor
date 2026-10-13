@@ -14,6 +14,7 @@ QStringList previewRestoreArguments(const QString &target, const QString &archiv
 QStringList listArguments(const QString &target);
 bool trustedBackendExecutable(const QString &path);
 // Legacy checkpoint-v2 machine sets: read-only catalog and staged-restore preview.
+QStringList machineInventoryArguments();  // native readonly Btrfs/EFI coverage audit
 QStringList machineSetListArguments(const QString &target);
 QStringList machineSetPreviewArguments(const QString &target, const QString &setId, const QString &staging);
 QStringList casInitArguments(const QString &repo, bool allowLocal);

@@ -208,6 +208,10 @@ QStringList casPruneConfirmArguments(const QString &repo, const QString &archive
 // Harbor machine-set integration calls the existing checkpoint-v2 backend,
 // not an additional bridge or invented service. Both operations are read-only.
 namespace HarborRemote {
+QStringList machineInventoryArguments() {
+    return {QStringLiteral("raw"), QStringLiteral("checkpoint-v2"),
+            QStringLiteral("machine-inventory")};
+}
 QStringList machineSetListArguments(const QString &target) {
     if (!safePath(target)) return {};
     return {QStringLiteral("raw"), QStringLiteral("checkpoint-v2"),

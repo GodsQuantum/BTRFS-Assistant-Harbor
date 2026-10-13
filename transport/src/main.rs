@@ -169,6 +169,17 @@ enum Action {
     },
 }
 
+/// A CAS prune depends on a repository-wide exclusive flock. Only
+/// explicitly recognized LOCAL filesystems are accepted for destructive GC.
+/// Network, user-space and unknown future filesystems fail closed until an
+/// independently proven cross-client lock protocol is implemented.
+fn destructive_prune_fs_allowed(kind: &str) -> bool {
+    matches!(
+        kind.to_ascii_lowercase().as_str(),
+        "btrfs" | "ext4" | "ext3" | "ext2" | "xfs" | "zfs" | "f2fs" | "bcachefs" | "tmpfs"
+    )
+}
+
 fn gate_target(root: &Path, allow_local: bool) -> Result<()> {
     ensure!(root.is_absolute(), "repository root must be absolute");
     let root_stat = std::fs::symlink_metadata(root)
@@ -586,6 +597,11 @@ fn execute(action: Action) -> Result<()> {
             let _owner = RepoAccess::begin()?;
             let repository = Repository::open(&repo)?;
             let (status, plan) = if let Some(expected) = confirm_plan {
+                let fs_kind = actual_filesystem(&repo)?;
+                ensure!(
+                    destructive_prune_fs_allowed(&fs_kind),
+                    "destructive CAS pruning on network filesystem {fs_kind} is disabled until multi-client NFS/SMB locks are certified; dry-run remains supported"
+                );
                 ("pruned", repository.gc_confirm(&names, &expected)?)
             } else {
                 ("dry-run", repository.gc_preview(&names)?)
@@ -622,5 +638,37 @@ fn main() {
     if let Err(error) = execute(cli.action) {
         eprintln!("harbor-transport: {error:#}");
         std::process::exit(2);
+    }
+}
+
+#[cfg(test)]
+mod remote_prune_safety_tests {
+    use super::destructive_prune_fs_allowed;
+    #[test]
+    fn network_lock_modes_are_not_assumed_to_be_distributed() {
+        for kind in [
+            "nfs",
+            "nfs4",
+            "NFS4",
+            "cifs",
+            "smb3",
+            "fuse.sshfs",
+            "fuse.rclone",
+            "ceph",
+            "glusterfs",
+            "9p",
+            "overlay",
+            "unknown-rpc-fs",
+        ] {
+            assert!(!destructive_prune_fs_allowed(kind), "unsafe remote {kind}");
+        }
+    }
+    #[test]
+    fn filesystem_types_used_by_existing_local_tests_still_work() {
+        for kind in [
+            "btrfs", "ext4", "ext3", "ext2", "xfs", "zfs", "f2fs", "bcachefs", "tmpfs",
+        ] {
+            assert!(destructive_prune_fs_allowed(kind), "local fixture {kind}");
+        }
     }
 }
