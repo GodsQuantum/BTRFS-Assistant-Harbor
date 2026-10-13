@@ -29,8 +29,12 @@ int main() {
     bad.insert("bootable", true);
     CHECK(!catalog(encoded(QJsonArray{bad}), &records, &error));
     bad = row; bad.insert("status", "pending");
-    CHECK(!catalog(encoded(QJsonArray{bad}), &records, &error));
+    CHECK(catalog(encoded(QJsonArray{bad}), &records, &error));
+    CHECK(records.size() == 1 && !records[0].complete);
     bad = row; bad.insert("status", "completed_but_fake");
+    CHECK(catalog(encoded(QJsonArray{bad}), &records, &error));
+    CHECK(records.size() == 1 && !records[0].complete);
+    bad = row; bad.insert("status", "../malicious");
     CHECK(!catalog(encoded(QJsonArray{bad}), &records, &error));
     bad = row; bad.insert("status", "completed_btrfs_only");
     CHECK(!catalog(encoded(QJsonArray{bad}), &records, &error));

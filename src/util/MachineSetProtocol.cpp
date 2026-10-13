@@ -55,11 +55,12 @@ bool catalog(const QByteArray &response, QList<BackupSet> *result, QString *erro
         const auto status = item.value(QStringLiteral("status")).toString();
         const auto members = item.value(QStringLiteral("members"));
         const auto boot = item.value(QStringLiteral("boot_partitions"));
+        static const QRegularExpression safeStatus(QStringLiteral("^[a-z_]{1,64}$"));
+        const bool complete = status == QLatin1String("completed_btrfs_only") ||
+                              status == QLatin1String("completed_btrfs_and_boot_files");
         if (!canonicalUuid(id) || seen.contains(id) ||
-            !(status == QLatin1String("completed_btrfs_only") ||
-              status == QLatin1String("completed_btrfs_and_boot_files")) ||
-            !members.isDouble() || !boot.isDouble())
-            return fail(error, QStringLiteral("Invalid, duplicate or incomplete machine-set row"));
+            !safeStatus.match(status).hasMatch() || !members.isDouble() || !boot.isDouble())
+            return fail(error, QStringLiteral("Invalid or duplicate machine-set row"));
         const int count = members.toInt(-1);
         const int bootCount = boot.toInt(-1);
         if (count < 1 || count > 1024 || bootCount < 0 || bootCount > 64 ||
@@ -69,7 +70,7 @@ bool catalog(const QByteArray &response, QList<BackupSet> *result, QString *erro
             item.value(QStringLiteral("bootable")).toBool(true))
             return fail(error, QStringLiteral("Machine-set counts or bootability invalid"));
         seen.insert(id);
-        found.append({id,status,count,bootCount});
+        found.append({id,status,count,bootCount,complete});
     }
     *result = found;
     return true;
