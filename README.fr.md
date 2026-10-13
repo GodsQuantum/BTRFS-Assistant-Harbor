@@ -1,4 +1,4 @@
-# Btrfs Assistant Harbor — fork expérimental 0.1.0alpha7
+# Btrfs Assistant Harbor — préversion expérimentale 0.1.0alpha9
 
 Le fork conserve Btrfs Assistant 2.3.2 et Snapper comme gestionnaires de snapshots et des restaurations locales. Il ajoute un onglet de sauvegardes distantes avec deux moteurs indépendants.
 
@@ -93,3 +93,27 @@ coupure réelle, restauration multi-sous-volume et EFI, très gros volumes,
 environnement KDE Wayland réel. Ne pas activer de politique automatique de
 suppression sur le NAS avant qualification indépendante. L'outil original
 Btrfs Assistant et les sauvegardes existantes restent inchangés.
+
+
+## Alpha9 — restauration réelle QEMU certifiée, ReaR encore bloquant
+
+En octobre 2026, test isolé complet **PASS** : installation d'une VM
+GPT + partition EFI FAT32 + racine Btrfs, sauvegarde de la racine avec
+Harbor CAS et de l'ESP séparément, réception intégrale sur un second
+disque virtuel VIERGE, nouvelle partition EFI, nouveau système Btrfs,
+recréation du sous-volume racine, correction UUID et GRUB, puis vrai
+redémarrage OVMF sans ISO et comparaison des fichiers restaurés.
+Résultat : R5 exit 0; voir
+docs/validation/QA_ALPHA9_UEFI_DISASTER_RECOVERY_R5_20261013.md.
+
+Après R5 : 50 tests Rust, 33 Python, 3 Qt et Clippy sans avertissement,
+plus test NFSv4 à deux clients à identifiants uniques.
+Le nettoyage CAS destructif reste strictement refusé sur NFS/SMB.
+
+**Important :** la restauration du disque a été *scriptée par la QA*,
+pas par ReaR. L'ISO ReaR ne contient pas encore tous les composants
+Harbor nécessaires, et son parcours EXTERNAL_RESTORE n'a PAS été prouvé
+en VM. Ce fork reste une préversion; ne pas s'en servir comme seule
+sauvegarde ni certifier la récupération automatique d'un PC.
+Btrfs Assistant original et tous les snapshots/partages de l'utilisateur
+restent intacts.
