@@ -534,8 +534,15 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
         m_machineSets->clear();
         for (const auto &record : list) {
             auto *item = new QListWidgetItem(
-                tr("%1 — %2 Btrfs volumes, %3 boot-file sets — QA; NOT bootable")
-                    .arg(record.id).arg(record.volumes).arg(record.bootFiles), m_machineSets);
+                tr("%1 — %2 Btrfs volumes, %3 boot-file sets — %4 — NOT bootable")
+                    .arg(record.id).arg(record.volumes).arg(record.bootFiles)
+                    .arg(record.complete ? tr("QA staging preview available")
+                                         : tr("INCOMPLETE: %1").arg(record.status)),
+                m_machineSets);
+            if (!record.complete) {
+                item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
+                item->setToolTip(tr("Incomplete machine backup set: preview restore unavailable."));
+            }
             item->setData(Qt::UserRole, record.id);
             item->setData(Qt::UserRole + 1, m_machineListRepo);
         }

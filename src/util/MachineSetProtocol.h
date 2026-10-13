@@ -9,6 +9,7 @@ struct BackupSet {
     QString status;
     int volumes = 0;
     int bootFiles = 0;
+    bool complete = false;
 };
 struct RestorePreview {
     int volumesCount = 0;
