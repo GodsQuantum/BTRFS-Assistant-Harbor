@@ -24,6 +24,7 @@ check() {
     PYTHONPATH="${srcdir}/btrfs-assistant-harbor" python -m unittest discover -s "${srcdir}/btrfs-assistant-harbor/tests" -p test_remote_schedule.py
     PYTHONPATH="${srcdir}/btrfs-assistant-harbor" python -m unittest discover -s "${srcdir}/btrfs-assistant-harbor/tests" -p test_cas_schedule.py
     PYTHONPATH="${srcdir}/btrfs-assistant-harbor/vendor/harbor-legacy" python -m unittest discover -s "${srcdir}/btrfs-assistant-harbor/tests" -p test_rear_bridge.py
+    PYTHONPATH="${srcdir}/btrfs-assistant-harbor/vendor/harbor-legacy" python -m unittest discover -s "${srcdir}/btrfs-assistant-harbor/tests" -p test_rear_recovery_profile.py
     cargo test --locked --manifest-path "${srcdir}/btrfs-assistant-harbor/transport/Cargo.toml" --all-targets
 }
 package() {

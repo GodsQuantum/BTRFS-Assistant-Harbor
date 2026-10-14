@@ -38,9 +38,22 @@ install(PROGRAMS
     "${HARBOR_RUST_TARGET_DIR}/release/harbor-transport"
     DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
+# Experimental ReaR 2.9 integration, installed alongside the fork.
+# The user's /etc/rear/local.conf is never overwritten.
+install(PROGRAMS "${PROJECT_SOURCE_DIR}/backend/recovery/harbor-rear-restore"
+        DESTINATION lib/btrfs-harbor/recovery)
+install(FILES "${PROJECT_SOURCE_DIR}/backend/recovery/local.example.conf"
+        DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/btrfs-harbor/rear"
+        RENAME local.conf)
+install(FILES "${PROJECT_SOURCE_DIR}/backend/recovery/rear-rescue.example.conf"
+        DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/btrfs-harbor/rear")
+
 message(STATUS "Btrfs Assistant will be built for install into ${CMAKE_INSTALL_PREFIX}")
 
 enable_testing()
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME rear-recovery-profile-safety
+         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_rear_recovery_profile.py")
 add_executable(test-remote-backup-plan
     tests/test_remote_plan.cpp src/util/RemoteBackupPlan.cpp)
 target_include_directories(test-remote-backup-plan PRIVATE src)
