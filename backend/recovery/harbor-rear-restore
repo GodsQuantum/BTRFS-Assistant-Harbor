@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Experimental ReaR EXTERNAL_RESTORE profile: 1 x Btrfs / + 1 x EFI/vfat.
+# ReaR owns partition creation and mount; Harbor never partitions disks.
+set -euo pipefail
+export LC_ALL=C
+fail() { printf 'HARBOR_REAR_FAIL:%s\n' "$1" >&2; exit 71; }
+[[ "$(id -u)" == 0 ]] || fail NOT_ROOT
+[[ -f /etc/rear/rescue.conf && ! -L /etc/rear/rescue.conf ]] || fail NOT_REAR_RESCUE
+[[ -d /sys/firmware/efi && "$(uname -m)" == x86_64 ]] || fail UEFI_AMD64_REQUIRED
+profile_file=/etc/btrfs-harbor/rear-rescue.conf
+[[ -f "$profile_file" && ! -L "$profile_file" ]] || fail MISSING_EXPLICIT_PROFILE
+[[ "$(stat -c %u "$profile_file")" == 0 ]] || fail PROFILE_NOT_OWNED_BY_ROOT
+[[ "$(stat -c %a "$profile_file")" =~ ^(600|640|644)$ ]] || fail PROFILE_PERMISSIONS_UNTRUSTED
+# The root-owned profile must be supplied explicitly when building the ISO.
+source "$profile_file"
+[[ "$HARBOR_REAR_PROFILE" == single-root-uefi-grub-v1 ]] || fail UNSUPPORTED_PROFILE
+for value in "$HARBOR_REAR_REPO" "$HARBOR_REAR_ESP_ARCHIVE" "$HARBOR_REAR_ESP_SHA256"; do
+  [[ "$value" == /* && ! -L "$value" ]] || fail UNSAFE_REPOSITORY_PATH
+done
+[[ "$HARBOR_REAR_ARCHIVE" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,119}$ ]] || fail INVALID_ARCHIVE_NAME
+[[ "$HARBOR_REAR_SNAPSHOT" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,119}$ ]] || fail INVALID_SOURCE_NAME
+[[ "$HARBOR_REAR_GRUB_ID" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$ ]] || fail INVALID_GRUB_ID
+root=/mnt/local
+[[ -d "$root" && ! -L "$root" ]] || fail REAR_ROOT_MISSING
+[[ "$(findmnt -rn -o FSTYPE --mountpoint "$root")" == btrfs ]] || fail REAR_ROOT_NOT_BTRFS
+[[ "$(findmnt -rn -o FSTYPE --mountpoint "$root/boot/efi")" == vfat ]] || fail REAR_ESP_NOT_FAT32
+[[ -s "$HARBOR_REAR_REPO/manifests/$HARBOR_REAR_ARCHIVE.json" ]] || fail CAS_MANIFEST_MISSING
+[[ -s "$HARBOR_REAR_ESP_ARCHIVE" && -s "$HARBOR_REAR_ESP_SHA256" ]] || fail ESP_ARCHIVE_MISSING
+[[ -x /usr/bin/harbor-transport ]] || fail TRANSPORT_CLI_MISSING
+# Refuse unsigned GRUB for Secure Boot; this profile is NOT Secure Boot certified.
+shopt -s nullglob
+for sb in /sys/firmware/efi/efivars/SecureBoot-*; do
+  [[ -r "$sb" ]] || fail SECURE_BOOT_NOT_CERTIFIED
+  secure_boot_value="$(od -An -tu1 -j4 -N1 "$sb" | tr -d ' \n')" || fail SECURE_BOOT_STATUS_UNREADABLE
+  [[ "$secure_boot_value" == 0 ]] || fail SECURE_BOOT_NOT_CERTIFIED
+done
+shopt -u nullglob
+printf 'HARBOR_REAR_PRECHECK_PASS\n'
+(cd "$(dirname "$HARBOR_REAR_ESP_ARCHIVE")"; sha256sum -c "$HARBOR_REAR_ESP_SHA256") || fail ESP_HASH_MISMATCH
+/usr/bin/harbor-transport verify-stream --repo "$HARBOR_REAR_REPO" --name "$HARBOR_REAR_ARCHIVE" || fail CAS_VERIFICATION_FAILED
+stage="$root/.harbor-rear-staging"
+[[ ! -e "$stage" && ! -L "$stage" ]] || fail STAGING_ALREADY_EXISTS
+mkdir -m 0700 "$stage"
+/usr/bin/harbor-transport receive --repo "$HARBOR_REAR_REPO" --name "$HARBOR_REAR_ARCHIVE" --staging "$stage" --preview || fail RECEIVE_PREVIEW_FAILED
+/usr/bin/harbor-transport receive --repo "$HARBOR_REAR_REPO" --name "$HARBOR_REAR_ARCHIVE" --staging "$stage" --confirm || fail RECEIVE_FAILED
+src="$stage/$HARBOR_REAR_SNAPSHOT"
+[[ -d "$src" && ! -L "$src" && -f "$src/etc/os-release" && -f "$src/etc/fstab" ]] || fail RESTORED_ROOT_NOT_FOUND
+[[ -z "$(find "$stage" -mindepth 1 -maxdepth 1 ! -name "$HARBOR_REAR_SNAPSHOT" -print -quit)" ]] || fail ADDITIONAL_VOLUME_UNSUPPORTED
+[[ "$(btrfs subvolume list -o "$src" | wc -l)" == 0 ]] || fail NESTED_SUBVOLUMES_UNSUPPORTED
+# This profile cannot cover independent mounts or nested Btrfs subvolumes.
+awk '
+  /^[[:space:]]*#/ || NF < 4 { next }
+  $3 == "swap" || $3 == "proc" || $3 == "tmpfs" || $3 == "devpts" || $3 == "sysfs" || $3 == "iso9660" { next }
+  $4 ~ /(^|,)noauto(,|$)/ { next }
+  $2 != "/" && $2 != "/boot/efi" { found=1; print "Unsupported independent mount " $2 > "/dev/stderr" }
+  END { exit found }
+' "$src/etc/fstab" || fail INDEPENDENT_MOUNT_UNSUPPORTED
+cp -a "$src"/. "$root"/ || fail ROOT_COPY_FAILED
+[[ -x "$root/usr/sbin/grub-install" ]] || fail RESTORED_GRUB_NOT_PRESENT
+[[ -d "$root/var/log" ]] || fail RESTORED_LOG_DIRECTORY_MISSING
+[[ -f "$root/etc/fstab" ]] || fail ROOT_COPY_INCOMPLETE
+tar -tzf "$HARBOR_REAR_ESP_ARCHIVE" | while IFS= read -r entry; do
+  case "/$entry" in *"/../"*|*"/./"*|//*) exit 21;; esac
+done || fail UNSAFE_ESP_ARCHIVE
+tar -xzf "$HARBOR_REAR_ESP_ARCHIVE" -C "$root/boot/efi" || fail ESP_EXTRACTION_FAILED
+[[ -s "$root/boot/efi/EFI/BOOT/BOOTX64.EFI" ]] || fail EFI_FALLBACK_MISSING
+# Critical: old EFI/debian/grubx64.efi may retain a stale embedded GRUB prefix.
+for dir in dev proc sys run; do
+  mkdir -p "$root/$dir"
+  if ! mountpoint -q "$root/$dir"; then
+    mount --rbind "/$dir" "$root/$dir" || fail "BIND_MOUNT_$dir"
+  fi
+done
+chroot "$root" /usr/sbin/grub-install --target=x86_64-efi \
+  --efi-directory=/boot/efi --bootloader-id="$HARBOR_REAR_GRUB_ID" --no-nvram \
+  > "$root/var/log/harbor-rear-grub-standard.log" 2>&1 || fail STANDARD_GRUB_INSTALL_FAILED
+[[ -s "$root/boot/efi/EFI/$HARBOR_REAR_GRUB_ID/grubx64.efi" ]] || fail STANDARD_GRUB_MISSING
+chroot "$root" /usr/sbin/grub-install --target=x86_64-efi \
+  --efi-directory=/boot/efi --removable --no-nvram \
+  > "$root/var/log/harbor-rear-grub-fallback.log" 2>&1 || fail FALLBACK_GRUB_INSTALL_FAILED
+[[ -s "$root/boot/efi/EFI/BOOT/BOOTX64.EFI" ]] || fail FALLBACK_GRUB_MISSING
+sync
+printf 'HARBOR_REAR_RESTORED_ROOT_ESP_GRUB_OK\n'
