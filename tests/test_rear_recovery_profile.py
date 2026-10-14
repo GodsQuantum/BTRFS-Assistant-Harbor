@@ -1,5 +1,7 @@
 """ReaR single-root rescue guard regression tests; never touch any block device."""
+import io
 import os
+import tarfile
 from pathlib import Path
 import re
 import subprocess
@@ -70,6 +72,38 @@ class ReaRSafetyTests(unittest.TestCase):
                     capture_output=True, text=True, timeout=8, check=False,
                 )
                 self.assertEqual(result.returncode != 0, bool(should_fail), data)
+
+    def test_esp_archive_accepts_normal_dot_prefix_and_rejects_traversal(self):
+        source = HOOK.read_text()
+        match = re.search(
+            r'(?ms)^validate_esp_archive_paths\(\) \{\n.*?^\}\n', source
+        )
+        self.assertIsNotNone(match)
+        function_text = match.group(0)
+        cases = [
+            (["./", "./EFI/", "./EFI/BOOT/", "./EFI/BOOT/BOOTX64.EFI"], True),
+            (["../evil"], False),
+            (["./EFI/../../evil"], False),
+            (["/absolute/file"], False),
+            (["./EFI/./bad"], False),
+        ]
+        with tempfile.TemporaryDirectory(prefix="harbor-esp-list-safety-") as tmp:
+            archive = Path(tmp) / "esp.tar.gz"
+            for names, expected_good in cases:
+                with tarfile.open(archive, "w:gz") as tar:
+                    for member in names:
+                        data = b"qa-fixture"
+                        info = tarfile.TarInfo(member)
+                        info.size = len(data)
+                        tar.addfile(info, io.BytesIO(data))
+                result = subprocess.run(
+                    ["bash", "-c",
+                     "set -euo pipefail; " + function_text +
+                     chr(10) + 'validate_esp_archive_paths "$1"',
+                     "bash", str(archive)],
+                    capture_output=True, text=True, check=False, timeout=10,
+                )
+                self.assertEqual(result.returncode == 0, expected_good, names)
 
     def test_install_is_explicit_and_does_not_replace_system_rear_config(self):
         cmake = CMAKE.read_text()

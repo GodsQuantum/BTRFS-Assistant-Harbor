@@ -20,6 +20,8 @@ set(CMAKE_AUTOUIC_SEARCH_PATHS src/ui)
 find_package(QT NAMES Qt6 COMPONENTS Widgets LinguistTools REQUIRED)
 find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Widgets LinguistTools REQUIRED)
 
+# Register subdirectory UI tests before adding the GUI build directory.
+enable_testing()
 add_subdirectory(src)
 add_subdirectory(icons)
 
@@ -50,7 +52,6 @@ install(FILES "${PROJECT_SOURCE_DIR}/backend/recovery/rear-rescue.example.conf"
 
 message(STATUS "Btrfs Assistant will be built for install into ${CMAKE_INSTALL_PREFIX}")
 
-enable_testing()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME rear-recovery-profile-safety
          COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_rear_recovery_profile.py")
