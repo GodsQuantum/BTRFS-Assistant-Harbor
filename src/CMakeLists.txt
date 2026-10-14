@@ -37,6 +37,19 @@ find_library(BTRFSUTIL_LIB btrfsutil)
 target_link_libraries(btrfs-assistant-harbor-bin PRIVATE Qt${QT_VERSION_MAJOR}::Widgets ${BTRFSUTIL_LIB})
 target_compile_options(btrfs-assistant-harbor-bin PRIVATE -Wall -Wextra -Wconversion)
 
+# Non-destructive user GUI test: no Snapper repo or destructive actions.
+find_package(Qt6 COMPONENTS Test REQUIRED)
+add_executable(test-harbor-gui-user-smoke
+    ${PROJECT_SOURCE_DIR}/tests/test_gui_user_smoke.cpp
+    ${UI_SRC} ${MODEL_SRC} ${UTIL_SRC} ${WIDGETS_SRC}
+    ${PROJECT_SOURCE_DIR}/icons/icons.qrc)
+target_include_directories(test-harbor-gui-user-smoke PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test-harbor-gui-user-smoke PRIVATE Qt6::Widgets Qt6::Test ${BTRFSUTIL_LIB})
+add_test(NAME gui-user-workflow-smoke
+         COMMAND ${CMAKE_COMMAND} -E env QT_QPA_PLATFORM=offscreen
+                 $<TARGET_FILE:test-harbor-gui-user-smoke>)
+
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_options(btrfs-assistant-harbor-bin PRIVATE -Werror)
 endif()

@@ -1,67 +1,65 @@
-> **Btrfs Assistant Harbor fork — experimental, LXC 700 only (12 October 2026)**
->
-> This worktree is a fork of Btrfs Assistant **2.3.2** (GPL-3.0), retaining
-> upstream Snapper/local rollback features. A new **Remote backups** tab
-> delegates selection to Snapper and remote transport to the external Harbor
-> `btrfs-backup-ng` CLI. A **separate experimental Rust FastCDC CAS transport**
-> lives under `transport/` and is now selectable as a **separate experimental GUI backend**, not certified for production.
-> Do not install over a production Btrfs Assistant or stop a running backup. See README.fr.md.
->
-> See [Research and architecture](docs/architecture/REMOTE-BACKUP-DESIGN-2026-10-12.md)
-> and [test status](docs/architecture/QA-STATUS-2026-10-12.md).
->
----
+# Btrfs Assistant Harbor
 
-# Btrfs Assistant
+**Btrfs Assistant 2.3.2 fork with Snapper-aware remote backups, a Rust CAS engine and an opt-in ReaR recovery helper.**
 
-## Overview
-Btrfs Assistant is a GUI management tool to make managing a Btrfs filesystem easier.  The primary features it offers are:
-* An easy to read overview of Btrfs metadata
-* A simple view of subvolumes with or without Snapper/Timeshift snapshots
-* Run and monitor scrub and balance operations
-* A pushbutton method for removing subvolumes
-* A management front-end for Snapper with enhanced restore functionality
-	* View, create and delete snapshots
-	* Restore snapshots in a variety of situations
-	  * When the filesystem is mounted in a different distro
-	  * When booted off a snapshot
-	  * From a live ISO
-	* View, create, edit, remove Snapper configurations
-	* Browse snapshots and restore individual files
-	* Browse diffs of a single file across snapshot versions
-	* Manage Snapper systemd units
-* A front-end for Btrfs Maintenance
-	* Manage systemd units
-	* Easily manage configuration for defrag, balance and scrub settings
+[Français](README.fr.md) · [Getting started](docs/guides/GETTING_STARTED.md) · [UEFI recovery](docs/guides/RECUPERATION_REAR_FR.md) · [Test status](docs/VALIDATION.md) · [Development](docs/DEVELOPMENT.md)
 
-### Screenshots
-![image](/uploads/21da59577c3e8a101347cf0d59569c09/image.png)
+> **0.1.0-alpha9 — prerelease, not universal stable.** Recovery has been tested on disposable QEMU virtual disks, not arbitrary physical user hardware. Preserve a separate, verified backup. This fork installs alongside the original Btrfs Assistant.
 
-![image](/uploads/41aa431b6a0de85bc70b84d90da392ea/image.png)
+## Features
 
-![image](/uploads/65b6004c3257d66154828259a0fed47d/image.png)
+| Area | What works | Boundary |
+| --- | --- | --- |
+| Btrfs and Snapper | Existing upstream snapshot browsing, local rollback, subvolume management and maintenance | Snapper owns local snapshots |
+| Checkpoint v2 | Legacy Harbor remote backups, interrupted-transfer inventory and systemd schedules | This format is NOT interchangeable with CAS |
+| Harbor CAS | Rust FastCDC/BLAKE3 chunk deduplication, zstd, Btrfs full/incremental send, chain validation and staged recovery | Source must be read-only Btrfs; destination a dedicated initialized repository |
+| Retention | Read-only preview, explicit matching confirmation token, protection of parent archives and shared chunks | Destructive pruning on NFS/SMB is refused until verified distributed locking |
+| Machine rescue | Real ReaR 2.9 ISO recovery and automatic GRUB standard/fallback repair | Only x86-64 UEFI, one Btrfs root, FAT32 ESP, GRUB, Secure Boot OFF |
 
-![image](/uploads/d255a9d9839ba8633b8e911858f4b48f/image.png)
+The **Remote backups** tab exposes both engines, verification, recovery preview, schedules, CAS retention and historical machine-set inventory. It does not replace the original Btrfs Assistant nor reconfigure user mounts.
 
-![image](/uploads/429be74e9fb92088697944d23a1def1d/image.png)
+## Build and inspect safely
 
-![image](/uploads/ea3940775576a3a0ef7f205b8f2fd77a/image.png)
+Prerequisites: Linux x86-64, C++17, CMake, Ninja, Qt6 Widgets and LinguistTools, libbtrfsutil, btrfs-progs, Rust/Cargo and Python 3. Snapper and polkit are needed for supported user workflows.
 
-## Installing
+    git clone https://github.com/GodsQuantum/BTRFS-Assistant-Harbor.git
+    cd BTRFS-Assistant-Harbor
+    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+    cmake --build build --parallel 4
+    QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
+    DESTDIR="$PWD/staging" cmake --install build
 
-It is packaged as `btrfs-assistant` in Arch, Debian, Fedora, Ubuntu and many other distros.  You can see the packaging status below.
+Review the staged files, then install a distribution-compatible package only after testing it in a disposable environment. Never overwrite your existing Btrfs Assistant package. Open **Btrfs Assistant Harbor** from the desktop launcher; the launcher handles privilege elevation. The separate CAS CLI documents itself via **harbor-transport --help**.
 
-## Packaging Status
-[![Packaging status](https://repology.org/badge/vertical-allrepos/btrfs-assistant.svg)](https://repology.org/project/btrfs-assistant/versions)
+## Start a backup
 
-## Contributing
-Contributions are welcome!
+1. Create or select an existing **read-only** Snapper snapshot.
+2. In **Remote backups**, choose the Snapper configuration and snapshot, and select either checkpoint-v2 or Harbor CAS. Use **different** repository directories.
+3. Specify an existing accessible destination; for CAS use **Initialize CAS destination** in a dedicated directory.
+4. Click **Send selected snapshot**, then **List remote backups** and **Verify selected archive**.
+5. Preview recovery only into a **new, empty Btrfs staging directory**, never the active system.
+6. CAS removal always starts with a dry-run. Review the plan before an explicit confirmation; network GC remains prohibited.
 
-Please see [CONTRIBUTING.md](docs/CONTRIBUTING.md) for more details.
+The ReaR rescue integration is **opt-in** and does **not** install a live /etc/rear/local.conf. Read the [rescue guide](docs/guides/RECUPERATION_REAR_FR.md) and test your exact machine topology in a VM before relying on it.
 
-### Development Requirements
-* Qt6 / Qt Design UI
-* C++17
-* Cmake >= 3.5
-* Root user privileges
-* Btrfs filesystem
+## Verification
+
+The project has passed **50 Rust tests, 39 Python tests, 5 Qt CTests including actual backup-widget interaction**, and native QEMU Btrfs transport tests. On 14 October 2026 the product's ReaR helper passed the **real ReaR 2.9** sequence: generate rescue ISO in Debian 13, boot on a blank QEMU disk, rebuild GPT/ESP/Btrfs, invoke the Harbor restore, rebuild both EFI GRUB loaders automatically, reboot without the ISO and verify restored data with exit code 0.
+
+**Not certified:** Secure Boot, encrypted or RAID/LVM layouts, independently mounted multi-volume systems, destructive CAS pruning on NFS/SMB, all firmware/hardware, all distribution packages or large-scale production retention. See [validation and evidence](docs/VALIDATION.md).
+
+## Project structure
+
+- **src/** – native C++/Qt GUI, Btrfs and Snapper compatibility
+- **transport/** – Rust CAS engine, integration tests
+- **backend/** – checkpoint-v2 compatibility, schedules and ReaR recovery script
+- **vendor/harbor-legacy/** – separately licensed legacy Python engine
+- **tests/** – negative and positive checks, including end-user GUI smoke tests
+- **packaging/** – distribution sources
+- **docs/guides/** – use and recovery instructions
+- **docs/validation/** – detailed test evidence
+- **docs/archive/** – historical development notes
+
+## Credits and license
+
+Independent fork of [Btrfs Assistant](https://gitlab.com/btrfs-assistant/btrfs-assistant), GPL-3.0-or-later. The legacy Harbor-compatible Python component includes its own MIT license. See [LICENSE](LICENSE) and the respective vendor license. This repository does not claim upstream endorsement.

@@ -4,6 +4,25 @@
 set -euo pipefail
 export LC_ALL=C
 fail() { printf 'HARBOR_REAR_FAIL:%s\n' "$1" >&2; exit 71; }
+# Inspect the whole tar listing before any target writes. GNU tar normally
+# prefixes its legitimate directory names with "./". Strip only that single
+# leading prefix, but reject absolute paths and all remaining "."/".." nodes.
+validate_esp_archive_paths() {
+  local archive="$1" index entry
+  index="$(mktemp /tmp/harbor-rear-esp-index.XXXXXX)" || return 1
+  if ! tar -tzf "$archive" > "$index"; then
+    rm -f -- "$index"
+    return 1
+  fi
+  while IFS= read -r entry; do
+    entry="${entry#./}"
+    case "$entry" in
+      ''|'.') continue ;;
+      /*|..|../*|*/../*|*/..|./*|*/./*|*/.) rm -f -- "$index"; return 1 ;;
+    esac
+  done < "$index"
+  rm -f -- "$index"
+}
 [[ "$(id -u)" == 0 ]] || fail NOT_ROOT
 [[ -f /etc/rear/rescue.conf && ! -L /etc/rear/rescue.conf ]] || fail NOT_REAR_RESCUE
 [[ -d /sys/firmware/efi && "$(uname -m)" == x86_64 ]] || fail UEFI_AMD64_REQUIRED
@@ -37,6 +56,7 @@ done
 shopt -u nullglob
 printf 'HARBOR_REAR_PRECHECK_PASS\n'
 (cd "$(dirname "$HARBOR_REAR_ESP_ARCHIVE")"; sha256sum -c "$HARBOR_REAR_ESP_SHA256") || fail ESP_HASH_MISMATCH
+validate_esp_archive_paths "$HARBOR_REAR_ESP_ARCHIVE" || fail UNSAFE_ESP_ARCHIVE
 /usr/bin/harbor-transport verify-stream --repo "$HARBOR_REAR_REPO" --name "$HARBOR_REAR_ARCHIVE" || fail CAS_VERIFICATION_FAILED
 stage="$root/.harbor-rear-staging"
 [[ ! -e "$stage" && ! -L "$stage" ]] || fail STAGING_ALREADY_EXISTS
@@ -59,9 +79,6 @@ cp -a "$src"/. "$root"/ || fail ROOT_COPY_FAILED
 [[ -x "$root/usr/sbin/grub-install" ]] || fail RESTORED_GRUB_NOT_PRESENT
 [[ -d "$root/var/log" ]] || fail RESTORED_LOG_DIRECTORY_MISSING
 [[ -f "$root/etc/fstab" ]] || fail ROOT_COPY_INCOMPLETE
-tar -tzf "$HARBOR_REAR_ESP_ARCHIVE" | while IFS= read -r entry; do
-  case "/$entry" in *"/../"*|*"/./"*|//*) exit 21;; esac
-done || fail UNSAFE_ESP_ARCHIVE
 tar -xzf "$HARBOR_REAR_ESP_ARCHIVE" -C "$root/boot/efi" || fail ESP_EXTRACTION_FAILED
 [[ -s "$root/boot/efi/EFI/BOOT/BOOTX64.EFI" ]] || fail EFI_FALLBACK_MISSING
 # Critical: old EFI/debian/grubx64.efi may retain a stale embedded GRUB prefix.
