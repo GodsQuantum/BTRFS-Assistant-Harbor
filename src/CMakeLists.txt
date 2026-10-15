@@ -16,7 +16,11 @@ set(btrfsassistant_SRCS
 
 file(GLOB TS_FILES ${PROJECT_SOURCE_DIR}/translations/*.ts)
 
-qt6_create_translation(FILES_TS ${PROJECT_SOURCE_DIR}/src ${TS_FILES})
+# Only compile reviewed TS catalogs into QM artifacts. Avoid automatic lupdate
+# during normal builds: it rewrites tracked translations with unfinished strings.
+# qt6_add_lrelease exists in Qt >= 6.2 (our minimum Debian13 Qt is 6.8).
+qt6_add_lrelease(TS_FILES ${TS_FILES}
+    QM_FILES_OUTPUT_VARIABLE FILES_TS)
 
 add_executable(btrfs-assistant-harbor-bin
     ${btrfsassistant_SRCS} ${FILES_TS}
