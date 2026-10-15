@@ -108,8 +108,10 @@ QVariant SubvolumeModel::data(const QModelIndex &index, int role) const
     case Column::Generation:
         return QVariant::fromValue<qulonglong>(subvol.generation);
     case Column::ReadOnly:
-        // We want an empty item instead of 'false' value
-        return subvol.isReadOnly() ? QVariant(true) : QVariant();
+        // Human-readable localized text, while keeping a boolean for sorting.
+        return role == Qt::DisplayRole
+                   ? QVariant(subvol.isReadOnly() ? tr("Yes") : tr("No"))
+                   : QVariant(subvol.isReadOnly());
     case Column::FilesystemUuid:
         return subvol.filesystemUuid;
     case Column::Size:

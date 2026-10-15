@@ -154,6 +154,17 @@ fn checked_real_directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
+// Keep network read errors as io::Error in anyhow's causal chain. Parsing
+// directly from a CIFS/NFS reader converts transient EAGAIN/EIO into a
+// serde_json error (line 1 column 1), bypassing bounded transport retry.
+// Malformed JSON remains a permanent integrity failure, never retried.
+fn read_manifest_json<R: Read>(reader: R) -> Result<Manifest> {
+    let mut bytes = Vec::new();
+    reader.take(MAX_MANIFEST + 1).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() as u64 <= MAX_MANIFEST, "oversized manifest");
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
 impl Repository {
     pub fn initialize(root: &Path) -> Result<Self> {
         ensure!(
@@ -252,7 +263,7 @@ impl Repository {
         let manifest_path = self.manifest_path(name)?;
         let f = open_regular(&manifest_path)?;
         ensure!(f.metadata()?.len() <= MAX_MANIFEST, "oversized manifest");
-        let manifest: Manifest = serde_json::from_reader(f)?;
+        let manifest = read_manifest_json(f)?;
         ensure!(
             manifest.format == 1 && manifest.repository == self.id && manifest.name == name,
             "manifest identity mismatch"
@@ -874,5 +885,37 @@ impl Repository {
             output.write_all(&self.read_object(entry)?)?;
         }
         Ok(expected)
+    }
+}
+
+#[cfg(test)]
+mod network_manifest_tests {
+    use super::*;
+    use std::io::{self, Read};
+
+    struct FailingRemoteRead;
+    impl Read for FailingRemoteRead {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::from_raw_os_error(11))
+        }
+    }
+
+    #[test]
+    fn remote_manifest_eagain_retains_underlying_io_error_for_retry() {
+        let err = read_manifest_json(FailingRemoteRead).unwrap_err();
+        assert!(err.chain().any(|cause| {
+            cause
+                .downcast_ref::<io::Error>()
+                .is_some_and(|e| e.raw_os_error() == Some(11))
+        }));
+    }
+
+    #[test]
+    fn malformed_manifest_remains_permanent_parse_error() {
+        let err = read_manifest_json(&b"{broken"[..]).unwrap_err();
+        assert!(
+            !err.chain()
+                .any(|cause| cause.downcast_ref::<io::Error>().is_some())
+        );
     }
 }

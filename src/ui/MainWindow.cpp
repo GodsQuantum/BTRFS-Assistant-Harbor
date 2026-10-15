@@ -54,6 +54,8 @@ MainWindow::MainWindow(Btrfs *btrfs, BtrfsMaintenance *btrfsMaintenance, Snapper
     : QMainWindow(parent), m_ui(new Ui::MainWindow), m_btrfs(btrfs), m_btrfsMaint(btrfsMaintenance), m_snapper(snapper)
 {
     m_ui->setupUi(this);
+    // The custom QLineEdit placeholder must follow the active Qt translator.
+    m_ui->lineEdit_subvolFilter->setPlaceholderText(tr("Filter..."));
     // The remote-backup wizard contains status, schedules and recovery tables.
     // Keep every action reachable on 13-inch laptop screens / high DPI.
     auto *remoteScroll = new QScrollArea(this);
