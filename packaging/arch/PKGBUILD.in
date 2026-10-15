@@ -2,7 +2,7 @@
 # Development snapshot, independently buildable on Arch/CachyOS.
 pkgname=btrfs-assistant-harbor
 pkgver=0.1.0alpha9
-pkgrel=2
+pkgrel=4
 pkgdesc='Btrfs Assistant fork with Snapper remote backup, Harbor checkpoint-v2 and Rust FastCDC CAS'
 arch=('x86_64')
 url='https://github.com/GodsQuantum/BTRFS-Assistant-Harbor'
@@ -25,6 +25,7 @@ check() {
     PYTHONPATH="${srcdir}/btrfs-assistant-harbor" python -m unittest discover -s "${srcdir}/btrfs-assistant-harbor/tests" -p test_cas_schedule.py
     PYTHONPATH="${srcdir}/btrfs-assistant-harbor/vendor/harbor-legacy" python -m unittest discover -s "${srcdir}/btrfs-assistant-harbor/tests" -p test_rear_bridge.py
     PYTHONPATH="${srcdir}/btrfs-assistant-harbor/vendor/harbor-legacy" python -m unittest discover -s "${srcdir}/btrfs-assistant-harbor/tests" -p test_rear_recovery_profile.py
+    PYTHONPATH="${srcdir}/btrfs-assistant-harbor" python -m unittest discover -s "${srcdir}/btrfs-assistant-harbor/tests" -p test_esp_tar_validator.py
     cargo test --locked --manifest-path "${srcdir}/btrfs-assistant-harbor/transport/Cargo.toml" --all-targets
 }
 package() {

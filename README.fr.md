@@ -29,7 +29,9 @@ Prérequis : C++17, Qt6 Widgets/LinguistTools, CMake, Ninja, Rust/Cargo, libbtrf
     QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
     DESTDIR="$PWD/staging" cmake --install build
 
-Inspecter le résultat dans **staging/**. Installer ensuite uniquement un paquet compatible vérifié. Ne pas remplacer le paquet officiel Btrfs Assistant. L'application se lance depuis le menu du bureau ; le CLI CAS dispose de **harbor-transport --help**.
+Inspecter le résultat dans **staging/**. Installer ensuite uniquement un paquet compatible vérifié. Ne pas remplacer le paquet officiel Btrfs Assistant.
+
+**Compatibilité paquets, constat du 15 octobre 2026 :** le paquet DEB alpha9 révision 2 publié sur GitHub exige `libqt6core6t64 >= 6.10.2`, alors que Debian 13 (Trixie) fournit officiellement Qt 6.8.2. Une installation dans une VM Debian 13 a échoué (`apt` RC=100). Ne pas forcer l'installation ni abaisser artificiellement les dépendances : un paquet **recompilé et testé sur Debian 13** reste nécessaire. La restauration Debian 13 via ReaR en ISO a été testée séparément ; elle ne prouve pas la compatibilité du paquet GUI DEB. Ubuntu 26.04, Fedora et Arch doivent encore passer de vrais tests d'installation/upgrade/désinstallation. L'application se lance depuis le menu du bureau ; le CLI CAS dispose de **harbor-transport --help**.
 
 ## Première sauvegarde, sans confusion
 

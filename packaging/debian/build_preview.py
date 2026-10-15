@@ -12,7 +12,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-VERSION = "0.1.0~alpha9-2"
+VERSION = "0.1.0~alpha9-4"
 
 def call(*args: str, cwd: Path | None = None, env: dict | None = None) -> str:
     result = subprocess.run(args, cwd=cwd, env=env, check=True,
@@ -70,6 +70,8 @@ def main():
     )
     control = stage / "DEBIAN/control"
     control.parent.mkdir()
+    # Shared NVMe staging inherits setgid; dpkg-deb requires DEBIAN <=0775.
+    control.parent.chmod(0o755)
     control.write_text(
         "Package: btrfs-assistant-harbor\n"
         f"Version: {VERSION}\n"

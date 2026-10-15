@@ -43,6 +43,7 @@ class ReaRSafetyTests(unittest.TestCase):
             "NESTED_SUBVOLUMES_UNSUPPORTED",
             "CAS_VERIFICATION_FAILED",
             "ESP_HASH_MISMATCH",
+            "harbor-validate-esp-tar",
             "STANDARD_GRUB_INSTALL_FAILED",
             "FALLBACK_GRUB_INSTALL_FAILED",
         ):
