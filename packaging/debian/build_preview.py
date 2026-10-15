@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -21,11 +22,15 @@ def call(*args: str, cwd: Path | None = None, env: dict | None = None) -> str:
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--version", default=VERSION,
+                        help="Debian package version, optionally suffixed for target distro")
     parser.add_argument("--build", required=True, type=Path,
                         help="verified Qt/CMake build directory")
     parser.add_argument("--out", required=True, type=Path,
                         help="empty disposable release output directory")
     args = parser.parse_args()
+    if not re.fullmatch(r"0[.]1[.]0~alpha9-[1-9][0-9]*(?:[+][A-Za-z0-9.]+)?", args.version):
+        parser.error("unsafe or incompatible version")
     project = Path(__file__).resolve().parents[2]
     build = args.build.resolve()
     out = args.out.resolve()
@@ -74,7 +79,7 @@ def main():
     control.parent.chmod(0o755)
     control.write_text(
         "Package: btrfs-assistant-harbor\n"
-        f"Version: {VERSION}\n"
+        f"Version: {args.version}\n"
         "Section: admin\nPriority: optional\nArchitecture: amd64\n"
         "Maintainer: Btrfs Assistant Harbor community <noreply@github.com>\n"
         f"Depends: {deps}\n"
@@ -82,7 +87,7 @@ def main():
         " Experimental alpha release. Local Snapper features are inherited from\n"
         " upstream; UEFI recovery is qualified only on the documented VM profile.\n"
     )
-    target = out / f"btrfs-assistant-harbor_{VERSION}_amd64.deb"
+    target = out / f"btrfs-assistant-harbor_{args.version}_amd64.deb"
     call("dpkg-deb", "--root-owner-group", "--build", str(stage), str(target))
     print("BUILT", target, "bytes", target.stat().st_size)
     print("DEPENDENCIES", deps)

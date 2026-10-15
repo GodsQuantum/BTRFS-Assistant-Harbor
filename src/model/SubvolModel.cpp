@@ -188,18 +188,28 @@ bool SubvolumeFilterModel::includeContainer() const { return m_includeContainer;
 void SubvolumeFilterModel::setIncludeSnapshots(bool includeSnapshots)
 {
     if (m_includeSnapshots != includeSnapshots) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
         beginFilterChange();
         m_includeSnapshots = includeSnapshots;
-        endFilterChange();
+        endFilterChange(QSortFilterProxyModel::Direction::Rows);
+#else
+        m_includeSnapshots = includeSnapshots;
+        invalidateRowsFilter();
+#endif
     }
 }
 
 void SubvolumeFilterModel::setIncludeContainer(bool includeContainer)
 {
     if (m_includeContainer != includeContainer) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
         beginFilterChange();
         m_includeContainer = includeContainer;
-        endFilterChange();
+        endFilterChange(QSortFilterProxyModel::Direction::Rows);
+#else
+        m_includeContainer = includeContainer;
+        invalidateRowsFilter();
+#endif
     }
 }
 
