@@ -6,6 +6,14 @@
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
+#include <QTranslator>
+#include <QMainWindow>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QTabBar>
+#include <QTabWidget>
+#include "ui_MainWindow.h"
+#include "model/SubvolModel.h"
 #include "ui/RemoteBackupWidget.h"
 class HarborGuiUserSmoke : public QObject {
     Q_OBJECT
@@ -68,6 +76,80 @@ private slots:
             staging |= line->placeholderText().contains("Btrfs staging");
         }
         QVERIFY(destination && staging);
+    }
+    void frenchUiAndReadOnlyStatusAreConsistent() {
+        QTranslator translator;
+        const QString qm = QCoreApplication::applicationDirPath()
+                           + "/btrfsassistant_fr_FR.qm";
+        QVERIFY2(translator.load(qm), qPrintable(qm));
+        QCoreApplication::installTranslator(&translator);
+        QCOMPARE(QCoreApplication::translate("MainWindow", "Remote backups"),
+                 QStringLiteral("Sauvegardes distantes"));
+        QCOMPARE(QCoreApplication::translate("MainWindow", "Filter..."),
+                 QString::fromUtf8("Filtrer…"));
+        QCOMPARE(QCoreApplication::translate("RemoteBackupWidget",
+                 "Confirm destructive CAS cleanup"),
+                 QStringLiteral("Confirmer la purge destructive du dépôt CAS"));
+        SubvolumeModel model;
+        Subvolume subvol;
+        subvol.id = 256;
+        subvol.flags = 1;
+        model.addSubvolume(subvol);
+        auto pos = model.index(0, SubvolumeModel::ReadOnly);
+        QCOMPARE(model.data(pos, Qt::DisplayRole).toString(), QStringLiteral("Oui"));
+        QCOMPARE(model.data(pos, SubvolumeModel::Sort).toBool(), true);
+        subvol.flags = 0;
+        model.updateSubvolume(subvol);
+        QCOMPARE(model.data(pos, Qt::DisplayRole).toString(), QStringLiteral("Non"));
+        QCOMPARE(model.data(pos, SubvolumeModel::Sort).toBool(), false);
+        QCoreApplication::removeTranslator(&translator);
+    }
+    void remoteTabIsMouseNavigableAtRealWindowWidth() {
+        QMainWindow host;
+        Ui::MainWindow ui;
+        ui.setupUi(&host);
+        host.resize(946, 717);
+        auto *backupScroll = new QScrollArea;
+        backupScroll->setWidgetResizable(true);
+        backupScroll->setWidget(new RemoteBackupWidget(nullptr));
+        auto *tabs = ui.tabWidget_mainWindow;
+        const int remoteIndex = tabs->addTab(backupScroll, "Sauvegardes distantes");
+        tabs->setTabVisible(tabs->indexOf(ui.tab_btrfsmaintenance), false);
+        tabs->setCurrentIndex(0);
+        host.show();
+        QApplication::processEvents();
+        auto *bar = tabs->tabBar();
+        QVERIFY(bar->isVisible());
+        QVERIFY(bar->isTabEnabled(remoteIndex));
+        const QRect rect = bar->tabRect(remoteIndex);
+        QVERIFY(rect.width() > 60);
+        QVERIFY(rect.right() <= bar->width());
+        QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, rect.center());
+        QTRY_COMPARE(tabs->currentIndex(), remoteIndex);
+        QVERIFY(backupScroll->isVisible());
+    }
+    void remoteBackupScrollableWithRealFrenchLayout() {
+        QTranslator translator;
+        const QString qm = QCoreApplication::applicationDirPath()
+                           + "/btrfsassistant_fr_FR.qm";
+        QVERIFY(translator.load(qm));
+        QCoreApplication::installTranslator(&translator);
+        QScrollArea area;
+        area.setWidgetResizable(true);
+        area.setWidget(new RemoteBackupWidget(nullptr));
+        area.resize(946, 717);
+        area.show();
+        QApplication::processEvents();
+        QVERIFY(area.widget()->isVisible());
+        QVERIFY(area.verticalScrollBar()->maximum() > 0);
+        const QString output = qEnvironmentVariable("HARBOR_GUI_QA_SHOTS");
+        if (!output.isEmpty()) {
+            QVERIFY(area.grab().save(output + "/remote-top.png"));
+            area.verticalScrollBar()->setValue(area.verticalScrollBar()->maximum());
+            QApplication::processEvents();
+            QVERIFY(area.grab().save(output + "/remote-bottom.png"));
+        }
+        QCoreApplication::removeTranslator(&translator);
     }
     void idleAppHasNoUnexpectedProcess() {
         RemoteBackupWidget w(nullptr);

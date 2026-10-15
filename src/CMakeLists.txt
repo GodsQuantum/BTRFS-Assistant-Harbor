@@ -48,6 +48,10 @@ add_executable(test-harbor-gui-user-smoke
     ${UI_SRC} ${MODEL_SRC} ${UTIL_SRC} ${WIDGETS_SRC}
     ${PROJECT_SOURCE_DIR}/icons/icons.qrc)
 target_include_directories(test-harbor-gui-user-smoke PRIVATE ${PROJECT_SOURCE_DIR}/src)
+# The GUI smoke test includes ui_MainWindow.h from tests/, unlike MainWindow.cpp.
+# Resolve the original Designer file from its canonical source directory.
+set_target_properties(test-harbor-gui-user-smoke PROPERTIES
+    AUTOUIC_SEARCH_PATHS "${PROJECT_SOURCE_DIR}/src/ui")
 target_link_libraries(test-harbor-gui-user-smoke PRIVATE Qt6::Widgets Qt6::Test ${BTRFSUTIL_LIB})
 add_test(NAME gui-user-workflow-smoke
          COMMAND ${CMAKE_COMMAND} -E env QT_QPA_PLATFORM=offscreen
