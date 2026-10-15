@@ -29,7 +29,9 @@ Prerequisites: Linux x86-64, C++17, CMake, Ninja, Qt6 Widgets and LinguistTools,
     QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
     DESTDIR="$PWD/staging" cmake --install build
 
-Review the staged files, then install a distribution-compatible package only after testing it in a disposable environment. Never overwrite your existing Btrfs Assistant package. Open **Btrfs Assistant Harbor** from the desktop launcher; the launcher handles privilege elevation. The separate CAS CLI documents itself via **harbor-transport --help**.
+Review the staged files, then install a distribution-compatible package only after testing it in a disposable environment. Never overwrite your existing Btrfs Assistant package.
+
+**Package compatibility warning (15 October 2026):** the published alpha9 revision-2 DEB requires `libqt6core6t64 >= 6.10.2` but Debian 13 (Trixie) officially ships Qt 6.8.2. Installation in a disposable Debian 13 VM **failed** (`apt` exit 100). Do not force packages or falsify dependency versions: a Debian-13-native build and a real install/upgrade/purge test are required. The successful Debian 13 ReaR ISO rescue test is a separate operation and does not certify this GUI DEB. Ubuntu 26.04, Fedora and Arch package lifecycle tests remain open. Open **Btrfs Assistant Harbor** from the desktop launcher; the launcher handles privilege elevation. The separate CAS CLI documents itself via **harbor-transport --help**.
 
 ## Start a backup
 

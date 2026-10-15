@@ -57,6 +57,7 @@ shopt -u nullglob
 printf 'HARBOR_REAR_PRECHECK_PASS\n'
 (cd "$(dirname "$HARBOR_REAR_ESP_ARCHIVE")"; sha256sum -c "$HARBOR_REAR_ESP_SHA256") || fail ESP_HASH_MISMATCH
 validate_esp_archive_paths "$HARBOR_REAR_ESP_ARCHIVE" || fail UNSAFE_ESP_ARCHIVE
+/usr/lib/btrfs-harbor/recovery/harbor-validate-esp-tar "$HARBOR_REAR_ESP_ARCHIVE" || fail UNSAFE_ESP_ARCHIVE
 /usr/bin/harbor-transport verify-stream --repo "$HARBOR_REAR_REPO" --name "$HARBOR_REAR_ARCHIVE" || fail CAS_VERIFICATION_FAILED
 stage="$root/.harbor-rear-staging"
 [[ ! -e "$stage" && ! -L "$stage" ]] || fail STAGING_ALREADY_EXISTS

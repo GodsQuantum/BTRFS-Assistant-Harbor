@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export LC_ALL=C
+fail(){ printf 'HARBOR_ESP_ARCHIVE_UNSAFE:%s\n' "$1" >&2; exit 72; }
+[[ $# == 1 && -f "$1" && ! -L "$1" ]] || fail INVALID_INPUT
+archive=$1
+listing=$(tar -P --quoting-style=escape -tzf "$archive") || fail INVALID_TAR
+[[ -n "$listing" ]] || fail EMPTY_TAR
+count=0
+while IFS= read -r path || [[ -n "$path" ]]; do
+    [[ "$path" == "./" ]] && continue
+    while [[ "$path" == ./* ]]; do path=$(printf '%s' "$path" | cut -c 3-); done
+    [[ -n "$path" && "$path" != /* && "$path" != *'\'* ]] || fail UNSAFE_PATH
+    [[ ! "$path" =~ (^|/)\.\.?(/|$) ]] || fail DOT_DOT_PATH
+    [[ "$path" =~ ^[a-zA-Z0-9_./@+-]+$ ]] || fail UNRECOGNIZED_PATH_CHARACTERS
+    ((count+=1))
+done <<< "$listing"
+[[ "$count" -gt 0 ]] || fail EMPTY_ESP_CONTENTS
+types=$(tar -tvzf "$archive") || fail INVALID_TAR_METADATA
+while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in d*|-*) ;; *) fail LINKS_OR_SPECIAL_FILES_NOT_ALLOWED ;; esac
+done <<< "$types"
+printf 'HARBOR_ESP_ARCHIVE_PATHS_VERIFIED:%s\n' "$count"
