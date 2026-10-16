@@ -25,6 +25,11 @@
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QUuid>
+#include <QTimer>
+#ifdef Q_OS_UNIX
+#include <signal.h>
+#include <unistd.h>
+#endif
 #include <QVBoxLayout>
 
 RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
@@ -34,6 +39,7 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
       m_staging(new QLineEdit(this)), m_frequency(new QComboBox(this)), m_allowLocal(new QCheckBox(tr("Allow explicitly selected local destination"), this)),
       m_archives(new QListWidget(this)), m_machineSets(new QListWidget(this)), m_log(new QPlainTextEdit(this)),
       m_state(new QLabel(tr("Ready: no backup in progress"), this)), m_send(new QPushButton(tr("Send selected snapshot"), this)),
+      m_cancel(new QPushButton(tr("Cancel current operation"), this)),
       m_process(new QProcess(this))
 {
     auto *layout = new QVBoxLayout(this);
@@ -105,6 +111,8 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     actions->addWidget(unschedule, 2, 1);
     actions->addWidget(prune, 2, 2);
     actions->addWidget(sweepOrphans, 2, 3);
+    actions->addWidget(m_cancel, 3, 0, 1, 2);
+    m_cancel->setEnabled(false);
     layout->addLayout(actions);
     layout->addWidget(new QLabel(tr("Select a completed archive to verify/recover, or an interrupted transfer to resume"), this));
     m_archives->setMinimumHeight(100);
@@ -370,12 +378,43 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
             }
         }
     });
+#ifdef Q_OS_UNIX
+    // Give each backup CLI and its btrfs send/receive children their own
+    // session so a cancellation terminates the entire isolated process group.
+    m_process->setUnixProcessParameters(QProcess::UnixProcessFlag::CreateNewSession);
+#endif
+    connect(m_cancel, &QPushButton::clicked, this, [this] {
+        if (m_process->state() == QProcess::NotRunning) return;
+        m_cancelRequested = true;
+        m_cancel->setEnabled(false);
+        m_state->setText(tr("Stopping current operation..."));
+#ifdef Q_OS_UNIX
+        const pid_t processGroup = static_cast<pid_t>(m_process->processId());
+        if (processGroup > 1) {
+            ::kill(-processGroup, SIGTERM);
+            QTimer::singleShot(3000, this, [this, processGroup] {
+                if (m_process->state() != QProcess::NotRunning &&
+                    static_cast<pid_t>(m_process->processId()) == processGroup) {
+                    ::kill(-processGroup, SIGKILL);
+                }
+            });
+        } else {
+            m_process->terminate();
+        }
+#else
+        m_process->terminate();
+        QTimer::singleShot(3000, this, [this] {
+            if (m_process->state() != QProcess::NotRunning) m_process->kill();
+        });
+#endif
+    });
     connect(m_process, &QProcess::finished, this, &RemoteBackupWidget::actionFinished);
     connect(m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError err) {
         if (err == QProcess::FailedToStart) {
             appendOutput(tr("Harbor CLI not found or failed to start: %1").arg(m_process->errorString()));
             m_state->setText(tr("Cannot start Harbor CLI"));
             m_send->setEnabled(true);
+            m_cancel->setEnabled(false);
         }
     });
     refreshSnapshots();
@@ -435,6 +474,8 @@ void RemoteBackupWidget::launch(const QStringList &arguments, const QString &pur
         return;
     }
     m_purpose = purpose;
+    m_cancelRequested = false;
+    m_cancel->setEnabled(true);
     m_stdout.clear();
     m_stderrBuffer.clear();
     m_transferTimer.start();
@@ -483,6 +524,12 @@ QString RemoteBackupWidget::selectedArchive() const
 void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
 {
     m_send->setEnabled(true);
+    m_cancel->setEnabled(false);
+    if (m_cancelRequested) {
+        m_cancelRequested = false;
+        m_state->setText(tr("Operation cancelled; incomplete transfer must be resumed or retried."));
+        return;
+    }
     const bool ok = status == QProcess::NormalExit && code == 0;
     m_state->setText(ok ? tr("Operation finished: %1").arg(m_purpose)
                         : tr("Operation failed: %1 (exit %2)").arg(m_purpose).arg(code));

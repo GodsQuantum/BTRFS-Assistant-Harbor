@@ -513,7 +513,19 @@ Restauration amorçable sur machine nue : NON CERTIFIÉE.
             <source>incomplete — backup must be refused</source>
             <translation>incomplet — sauvegarde refusée</translation>
         </message>
-    </context>
+            <message>
+            <source>Cancel current operation</source>
+            <translation>Annuler l'opération en cours</translation>
+        </message>
+        <message>
+            <source>Stopping current operation...</source>
+            <translation>Arrêt de l'opération en cours…</translation>
+        </message>
+        <message>
+            <source>Operation cancelled; incomplete transfer must be resumed or retried.</source>
+            <translation>Opération annulée : le transfert incomplet doit être repris ou relancé.</translation>
+        </message>
+</context>
     <context>
         <name>Btrfs</name>
         <message>

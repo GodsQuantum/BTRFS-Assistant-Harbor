@@ -1,0 +1,71 @@
+# R29 staging: Native Fedora44 source RPM recipe, not a public release.
+Name: btrfs-assistant-harbor
+Version: 0.1.0
+Release: 0.alpha9.10%{?dist}
+Summary: Btrfs Assistant fork with Snapper and guarded CAS backups
+License: GPL-3.0-or-later AND MIT
+URL: https://github.com/GodsQuantum/BTRFS-Assistant-Harbor
+Source0: btrfs-assistant-harbor-0.1.0alpha9.tar.gz
+BuildArch: x86_64
+BuildRequires: cmake
+BuildRequires: ninja-build
+BuildRequires: gcc-c++
+BuildRequires: qt6-qtbase-devel
+BuildRequires: qt6-qttools-devel
+BuildRequires: rust
+BuildRequires: cargo
+BuildRequires: pkgconf-pkg-config
+BuildRequires: libzstd-devel
+BuildRequires: btrfs-progs-devel
+BuildRequires: python3
+Requires: btrfs-progs
+Requires: snapper
+Requires: polkit
+Requires: python3
+Requires: python3-filelock
+Requires: python3-rich
+Requires: zstd
+Requires: hicolor-icon-theme
+
+%description
+Btrfs Assistant Harbor snapshot management, guarded CAS and experimental
+single-root UEFI GRUB recovery. Secure Boot, LUKS/LVM/RAID, multi-root,
+systemd-boot and destructive network CAS GC are unsupported.
+
+%prep
+%setup -q -n btrfs-assistant-harbor
+
+%build
+export ZSTD_SYS_USE_PKG_CONFIG=1
+export CARGO_BUILD_JOBS=3
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+cmake --build build --parallel 3
+
+%check
+export ZSTD_SYS_USE_PKG_CONFIG=1
+export CARGO_BUILD_JOBS=3
+QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
+cargo test --locked --all-targets --manifest-path transport/Cargo.toml
+
+%install
+DESTDIR=%{buildroot} cmake --install build
+install -Dm644 LICENSE %{buildroot}/usr/share/licenses/btrfs-assistant-harbor/LICENSE-GPL3
+install -Dm644 README.fr.md %{buildroot}/usr/share/doc/btrfs-assistant-harbor/README.fr.md
+
+%files
+/usr/bin/*
+/usr/lib/btrfs-assistant-harbor/
+/usr/lib/btrfs-harbor/
+/usr/share/applications/btrfs-assistant-harbor.desktop
+/usr/share/metainfo/btrfs-assistant-harbor.metainfo.xml
+/usr/share/polkit-1/actions/org.btrfs-assistant-harbor.pkexec.policy
+/usr/share/btrfs-assistant-harbor/
+/usr/share/btrfs-harbor/
+/usr/share/icons/hicolor/scalable/apps/btrfs-assistant-harbor.svg
+%license /usr/share/licenses/btrfs-assistant-harbor/*
+%doc /usr/share/doc/btrfs-assistant-harbor/README.fr.md
+
+%changelog
+* Fri Oct 16 2026 Harbor QA <qa@example.invalid> - 0.1.0-0.alpha9.10
+- R29 native RPM source build, icon file ownership not directory.
+- Cancel action and process-group cleanup need final VM certification.

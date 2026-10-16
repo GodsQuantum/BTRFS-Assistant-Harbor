@@ -42,6 +42,8 @@ private:
     QPlainTextEdit *m_log;
     QLabel *m_state;
     QPushButton *m_send;
+    QPushButton *m_cancel;
+    bool m_cancelRequested = false;
     QProcess *m_process;
     QByteArray m_stdout;
     QByteArray m_stderrBuffer;

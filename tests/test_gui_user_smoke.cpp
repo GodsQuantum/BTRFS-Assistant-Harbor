@@ -5,6 +5,9 @@
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QProcess>
+#ifdef Q_OS_UNIX
+#include <signal.h>
+#endif
 #include <QPushButton>
 #include <QTranslator>
 #include <QMainWindow>
@@ -88,6 +91,8 @@ private slots:
         QCOMPARE(QCoreApplication::translate("MainWindow", "Filter..."),
                  QString::fromUtf8("Filtrer…"));
         QCOMPARE(QCoreApplication::translate("RemoteBackupWidget",
+                 "Cancel current operation"), QStringLiteral("Annuler l'opération en cours"));
+        QCOMPARE(QCoreApplication::translate("RemoteBackupWidget",
                  "Confirm destructive CAS cleanup"),
                  QStringLiteral("Confirmer la purge destructive du dépôt CAS"));
         SubvolumeModel model;
@@ -150,6 +155,30 @@ private slots:
             QVERIFY(area.grab().save(output + "/remote-bottom.png"));
         }
         QCoreApplication::removeTranslator(&translator);
+    }
+    void cancellationTerminatesIsolatedProcessGroup() {
+#ifdef Q_OS_UNIX
+        RemoteBackupWidget w(nullptr);
+        w.show();
+        QApplication::processEvents();
+        auto *cancel = button(w, "Cancel current operation");
+        QVERIFY(cancel);
+        QVERIFY(!cancel->isEnabled());
+        const auto children = w.findChildren<QProcess*>();
+        QCOMPARE(children.size(), 1);
+        auto *process = children[0];
+        process->start(QStringLiteral("/bin/sh"),
+                       {QStringLiteral("-c"), QStringLiteral("sleep 45 & wait")});
+        QVERIFY(process->waitForStarted(5000));
+        const auto group = static_cast<pid_t>(process->processId());
+        QVERIFY(group > 1);
+        cancel->setEnabled(true);
+        QTest::mouseClick(cancel, Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(process->state(), QProcess::NotRunning, 7000);
+        QVERIFY(!cancel->isEnabled());
+        // Closing only the shell would leave "sleep" behind. Reap the group.
+        QTRY_VERIFY_WITH_TIMEOUT(::kill(-group, 0) == -1, 7000);
+#endif
     }
     void idleAppHasNoUnexpectedProcess() {
         RemoteBackupWidget w(nullptr);
