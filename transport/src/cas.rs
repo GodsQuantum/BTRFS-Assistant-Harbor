@@ -8,10 +8,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::Duration;
 use uuid::Uuid;
 
 const MIN_CHUNK: usize = 1024 * 1024;
@@ -163,6 +165,18 @@ fn read_manifest_json<R: Read>(reader: R) -> Result<Manifest> {
     reader.take(MAX_MANIFEST + 1).read_to_end(&mut bytes)?;
     ensure!(bytes.len() as u64 <= MAX_MANIFEST, "oversized manifest");
     Ok(serde_json::from_slice(&bytes)?)
+}
+
+// Linux CIFS may return EINVAL from a stale read handle after a real SMB3
+// link interruption. This narrow exception is permitted ONLY for replaying
+// verified object bytes during the pre-commit readback, never for metadata,
+// malformed payloads, local filesystems, or repository identity changes.
+fn cifs_reconnected_read_errno(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<io::Error>()
+            .is_some_and(|e| e.raw_os_error() == Some(libc::EINVAL))
+    })
 }
 
 impl Repository {
@@ -318,6 +332,21 @@ impl Repository {
             "raw object BLAKE3 mismatch"
         );
         Ok(raw)
+    }
+    fn read_object_before_commit(&self, entry: &Entry, is_cifs: bool) -> Result<Vec<u8>> {
+        // Every retry re-opens the object and validates compressed SHA-256,
+        // uncompressed BLAKE3 and exact sizes. A malformed object or changed
+        // repository identity fails immediately; only CIFS EINVAL is retried.
+        for attempt in 0..=4 {
+            match self.read_object(entry) {
+                Ok(bytes) => return Ok(bytes),
+                Err(error) if is_cifs && cifs_reconnected_read_errno(&error) && attempt < 4 => {
+                    thread::sleep(Duration::from_millis(250 * (1u64 << attempt)));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!("bounded CIFS readback retry returned on final attempt")
     }
     fn inspect_existing_object(&self, hash: &str, raw_size: usize) -> Result<Entry> {
         self.guard()?;
@@ -773,10 +802,11 @@ impl Repository {
         // ALL committed objects and the ordered stream from the repository
         // before publishing an immutable manifest. The readback is a
         // deliberate integrity-over-throughput tradeoff for this release.
+        let is_cifs = crate::mount_probe::actual_filesystem(&self.root)? == "cifs";
         let mut readback_sha256 = Sha256::new();
         for entry in &entries {
             readback_sha256.update(
-                self.read_object(entry)
+                self.read_object_before_commit(entry, is_cifs)
                     .context("remote object readback failed; archive not committed")?,
             );
         }
@@ -908,6 +938,18 @@ mod network_manifest_tests {
                 .downcast_ref::<io::Error>()
                 .is_some_and(|e| e.raw_os_error() == Some(11))
         }));
+    }
+
+    #[test]
+    fn cifs_reconnect_einval_is_only_a_readback_io_exception() {
+        let transient = anyhow::Error::new(io::Error::from_raw_os_error(libc::EINVAL));
+        assert!(cifs_reconnected_read_errno(&transient));
+        for errno in [libc::EACCES, libc::ENOENT, libc::EIO, libc::ESTALE] {
+            let unrelated = anyhow::Error::new(io::Error::from_raw_os_error(errno));
+            assert!(!cifs_reconnected_read_errno(&unrelated));
+        }
+        let integrity_failure = anyhow!("compressed SHA-256 mismatch");
+        assert!(!cifs_reconnected_read_errno(&integrity_failure));
     }
 
     #[test]
