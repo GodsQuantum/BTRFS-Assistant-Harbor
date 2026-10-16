@@ -1,6 +1,6 @@
 # Développement et futures mises à jour
 
-Le dossier Git doit contenir **les sources, tests, packaging et documentation**, jamais les disques QEMU, dépôts de sauvegarde d'essai, caches ou secrets. Les artefacts restent hors Git.
+Le dossier Git doit contenir **les sources, tests, packaging et documentation**, jamais les disques QEMU, dépôts de sauvegarde d'essai, caches ou secrets. Les artefacts restent hors Git. Les points d'entrée pour les prochaines sessions sont la [cartographie technique](PROJECT_MAP.md), les [portes de certification actuelles](validation/RELEASE_GATES_CURRENT_2026-10-16.md) et le `HANDOFF_CURRENT.md` du dossier canonique DEV700. Ne pas confondre les anciens worktrees v0.2.7-rc avec la branche alpha9.
 
 ## Convention de travail
 
@@ -22,6 +22,10 @@ Le dossier Git doit contenir **les sources, tests, packaging et documentation**,
     cargo clippy --locked --all-targets -- -D warnings
 
 Les changements de disque/UEFI exigent **un vrai démarrage d'un système restauré**, pas seulement un résultat positif de tests unitaires ou une génération d'ISO.
+
+## Tests et publication
+
+Les résultats du code actif R29 (et non ceux du tag alpha9 publié) sont regroupés dans [le rapport R29](validation/QA_ALPHA9_R29_GUI_CANCEL_PACKAGING_2026-10-16.md). Avant de nommer une version stable : reconstruire les trois paquets à partir du **dernier commit exact**, valider chaque paquet dans sa VM (installation → mise à niveau → retour arrière → désinstallation), vérifier les SHA-256 et le boot ReaR lorsque le code de récupération a changé, puis relire les portes de sécurité encore PARTIAL. La stabilité universelle ne peut pas être déduite du seul CTest Qt.
 
 ## Méthode de livraison
 
