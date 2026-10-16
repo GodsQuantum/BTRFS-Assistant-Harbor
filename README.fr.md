@@ -2,7 +2,7 @@
 
 **Fork de Btrfs Assistant 2.3.2** intégrant les sauvegardes distantes Snapper, un moteur CAS Rust et une récupération UEFI avec ReaR.
 
-[Guide utilisateur](docs/guides/UTILISATION_FR.md) · [Récupération de machine](docs/guides/RECUPERATION_REAR_FR.md) · [Tests et limites](docs/VALIDATION.md) · [Développement](docs/DEVELOPMENT.md) · [English](README.md)
+[Guide utilisateur](docs/guides/UTILISATION_FR.md) · [Récupération de machine](docs/guides/RECUPERATION_REAR_FR.md) · [Tests et limites](docs/VALIDATION.md) · [Portes de release](docs/validation/RELEASE_GATES_CURRENT_2026-10-16.md) · [Cartographie](docs/PROJECT_MAP.md) · [Développement](docs/DEVELOPMENT.md) · [English](README.md)
 
 > **0.1.0-alpha9 — préversion, pas version stable universelle.** La restauration complète a réussi sur des **disques virtuels QEMU**, pas sur tous les ordinateurs physiques. Conserver une sauvegarde indépendante et vérifiée. Btrfs Assistant officiel et Snapper ne sont pas remplacés.
 
@@ -31,7 +31,7 @@ Prérequis : C++17, Qt6 Widgets/LinguistTools, CMake, Ninja, Rust/Cargo, libbtrf
 
 Inspecter le résultat dans **staging/**. Installer ensuite uniquement un paquet compatible vérifié. Ne pas remplacer le paquet officiel Btrfs Assistant.
 
-**Compatibilité des paquets — checkpoint du 16 octobre 2026 :** le DEB alpha9 révision 2 déjà publié sur GitHub **n'est pas compatible avec Debian 13 (Qt 6.8.2)**. Ne pas le forcer. Un nouveau candidat Debian 13 natif `0.1.0~alpha9-8+deb13` a passé en VM Debian 13 les étapes rev7→rev8→rev7→rev8→purge ainsi que la GUI française X11/HiDPI, code retour zéro. Les paquets Fedora 44 et Arch Linux rev7 ont passé ces cycles dans de vraies VM UEFI/Btrfs ; Fedora rev8 a été compilé et testé en conteneur natif (pas en VM) et Arch rev8 est interrompu pour cause de saturation du NVMe Cloud9. Les trois paquets candidats **ne sont pas encore publiés en stable**. Ubuntu 26.04, KDE/Wayland et le matériel utilisateur restent à qualifier.
+**Compatibilité des paquets — checkpoint du 16 octobre 2026 :** le DEB alpha9 révision 2 déjà publié sur GitHub **n'est pas compatible avec Debian 13 (Qt 6.8.2)**. Ne pas le forcer. Les nouveaux paquets R29 ont été compilés et testés dans de vraies VM UEFI/Btrfs : **Debian 13** `0.1.0~alpha9-9+deb13` (rev7→rev9→rev7→rev9→purge ; GUI X11 française à 125 %), **Fedora 44** `0.1.0-0.alpha9.10.fc44` (rev9→rev10→rev9→rev10→suppression), **Arch Linux** `0.1.0alpha9-9` (rev8→rev9→rev8→rev9→suppression), avec codes retour vérifiés. Voir les [journaux et SHA exacts R29](docs/validation/QA_ALPHA9_R29_GUI_CANCEL_PACKAGING_2026-10-16.md). Les trois paquets candidats **ne sont pas encore publiés en stable**. Ubuntu 26.04, l'environnement KDE Plasma/Wayland complet et le matériel utilisateur restent à qualifier ; un test Qt ciblé sous Weston headless a néanmoins réussi.
 
 ## Première sauvegarde, sans confusion
 
@@ -52,9 +52,11 @@ Il ne s'agit pas d'un bouton de formatage dans la GUI. Le script de secours est 
 
 ## État des tests et avertissements
 
-**53 tests Rust, 47 tests Python et 6 CTest/Qt**, y compris une interaction avec le véritable onglet de sauvegardes en mode sans affichage ; essais complets Btrfs et ReaR en QEMU. [Matrice détaillée](docs/VALIDATION.md).
+Sur le commit `64cc7c2` : Rust all-targets, rustfmt et Clippy strict PASS ; **47 tests Python et 6 CTest/Qt PASS**, y compris navigation, français et annulation d'un groupe de processus. Essais X11/HiDPI, test Qt Wayland Weston headless, CAS/SMB3/NFS, Snapper et ReaR en VM. [Matrice détaillée](docs/VALIDATION.md).
 
-**Non certifié :** Secure Boot, LUKS/LVM/RAID, plusieurs racines/sous-volumes indépendants, suppression CAS sur NFS/SMB avec verrouillage distribué, tout matériel et tous paquets des distributions. Ne jamais considérer un test VM comme une garantie universelle.
+**Snapper en VM :** 22 vérifications réelles (rétention, instantanés pre/post, différences et annulation des changements par undochange) ont réussi en Debian 13 UEFI/Btrfs. Les anciens bancs R30/R31 ont échoué (dépendance et synchronisation), mais trois nouveaux tests **R31b envoi, R32 réception, R33 GC local** ont interrompu brutalement le processus QEMU pendant les opérations, redémarré le disque et vérifié les restaurations, la non-réutilisation du staging partiel et le refus du plan de purge obsolète. Code retour du banc Python 0 pour les trois. [Résultats Snapper R32](docs/validation/QA_ALPHA9_R32_SNAPPER_RECEIVE_2026-10-16.md) et [coupures QEMU R33](docs/validation/QA_ALPHA9_R33_QEMU_POWERLOSS_EVIDENCE_2026-10-16.md).
+
+**Non certifié :** parité ergonomique et fonctionnelle exhaustive de la GUI, annulation par bouton pendant un vrai transfert Btrfs, stress prolongé CPU/RAM/I/O, KDE Plasma Wayland et accessibilité. Les caches et contrôleurs physiques pendant une panne électrique ne sont pas reproduits par QEMU ; Secure Boot, LUKS/LVM/RAID, plusieurs racines système, GC destructif NFS/SMB et matériel physique demeurent non supportés sans démonstration réelle.
 
 ## Organisation
 
