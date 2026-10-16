@@ -16,7 +16,7 @@
 | Rétention CAS | Plan de simulation, confirmation par empreinte, conservation des parents et blocs partagés | Suppression destructive interdite par défaut sur NFS/SMB |
 | ReaR 2.9 | ISO UEFI, reconstruction GPT/Btrfs/ESP, restauration CAS et réparation automatique des deux chargeurs GRUB | Une racine Btrfs simple, ESP FAT32, UEFI x86-64, Secure Boot désactivé |
 
-L'onglet **Remote backups** rassemble les sources Snapper, la destination, les envois, l'inventaire, la vérification, la prévisualisation de récupération, la programmation et la rétention. Les archives des deux moteurs **ne sont pas interchangeables**.
+L'onglet **Sauvegardes distantes** rassemble les sources Snapper, la destination, les envois, l'inventaire, la vérification, la prévisualisation de récupération, la programmation et la rétention. Les archives des deux moteurs **ne sont pas interchangeables**.
 
 ## Compiler sans écraser le système
 
@@ -31,15 +31,15 @@ Prérequis : C++17, Qt6 Widgets/LinguistTools, CMake, Ninja, Rust/Cargo, libbtrf
 
 Inspecter le résultat dans **staging/**. Installer ensuite uniquement un paquet compatible vérifié. Ne pas remplacer le paquet officiel Btrfs Assistant.
 
-**Compatibilité paquets, constat du 15 octobre 2026 :** le paquet DEB alpha9 révision 2 publié sur GitHub exige `libqt6core6t64 >= 6.10.2`, alors que Debian 13 (Trixie) fournit officiellement Qt 6.8.2. Une installation dans une VM Debian 13 a échoué (`apt` RC=100). Ne pas forcer l'installation ni abaisser artificiellement les dépendances : un paquet **recompilé et testé sur Debian 13** reste nécessaire. La restauration Debian 13 via ReaR en ISO a été testée séparément ; elle ne prouve pas la compatibilité du paquet GUI DEB. Ubuntu 26.04, Fedora et Arch doivent encore passer de vrais tests d'installation/upgrade/désinstallation. L'application se lance depuis le menu du bureau ; le CLI CAS dispose de **harbor-transport --help**.
+**Compatibilité des paquets — checkpoint du 16 octobre 2026 :** le DEB alpha9 révision 2 déjà publié sur GitHub **n'est pas compatible avec Debian 13 (Qt 6.8.2)**. Ne pas le forcer. Un nouveau candidat Debian 13 natif `0.1.0~alpha9-8+deb13` a passé en VM Debian 13 les étapes rev7→rev8→rev7→rev8→purge ainsi que la GUI française X11/HiDPI, code retour zéro. Les paquets Fedora 44 et Arch Linux rev7 ont passé ces cycles dans de vraies VM UEFI/Btrfs ; Fedora rev8 a été compilé et testé en conteneur natif (pas en VM) et Arch rev8 est interrompu pour cause de saturation du NVMe Cloud9. Les trois paquets candidats **ne sont pas encore publiés en stable**. Ubuntu 26.04, KDE/Wayland et le matériel utilisateur restent à qualifier.
 
 ## Première sauvegarde, sans confusion
 
 1. Créer ou sélectionner un **snapshot Snapper en lecture seule**.
-2. Ouvrir **Remote backups**, choisir la configuration Snapper et son snapshot.
-3. Choisir checkpoint-v2 (ancien dépôt) **ou** CAS (nouveau dépôt dédié). Pour CAS, cliquer **Initialize CAS destination** dans un répertoire existant et vide.
-4. Lancer **Send selected snapshot**, puis **List remote backups** et **Verify selected archive**.
-5. Pour tester la récupération, choisir un staging **Btrfs neuf et vide**, différent de la racine du système, et utiliser **Preview recovery**.
+2. Ouvrir **Sauvegardes distantes**, choisir la configuration Snapper et son snapshot.
+3. Choisir checkpoint-v2 (ancien dépôt) **ou** CAS (nouveau dépôt dédié). Pour CAS, cliquer **Initialiser le dépôt CAS** dans un répertoire existant et vide.
+4. Lancer **Envoyer l’instantané sélectionné**, puis **Afficher les sauvegardes** et **Vérifier l’archive**.
+5. Pour tester la récupération, choisir un staging **Btrfs neuf et vide**, différent de la racine du système, et utiliser **Prévisualiser la restauration**.
 6. Avant une suppression CAS, contrôler le plan de simulation et confirmer seulement le plan attendu ; ne pas forcer le GC destructif sur NFS/SMB.
 
 Voir [le guide utilisateur détaillé](docs/guides/UTILISATION_FR.md).
@@ -52,7 +52,7 @@ Il ne s'agit pas d'un bouton de formatage dans la GUI. Le script de secours est 
 
 ## État des tests et avertissements
 
-**50 tests Rust, 39 tests Python, 5 CTest/Qt**, y compris une interaction avec le véritable onglet de sauvegardes en mode sans affichage ; essais complets Btrfs et ReaR en QEMU. [Matrice détaillée](docs/VALIDATION.md).
+**53 tests Rust, 47 tests Python et 6 CTest/Qt**, y compris une interaction avec le véritable onglet de sauvegardes en mode sans affichage ; essais complets Btrfs et ReaR en QEMU. [Matrice détaillée](docs/VALIDATION.md).
 
 **Non certifié :** Secure Boot, LUKS/LVM/RAID, plusieurs racines/sous-volumes indépendants, suppression CAS sur NFS/SMB avec verrouillage distribué, tout matériel et tous paquets des distributions. Ne jamais considérer un test VM comme une garantie universelle.
 
