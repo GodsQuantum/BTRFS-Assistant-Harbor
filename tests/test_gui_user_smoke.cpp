@@ -33,6 +33,34 @@ class HarborGuiUserSmoke : public QObject {
             if (b->text() == label) return b;
         return nullptr;
     }
+#ifdef Q_OS_UNIX
+    // PID 1 in a container can retain zombie descendants after SIGTERM.
+    // Zombies cannot run or write but make kill(-pgid,0) look successful.
+    static bool groupHasRunningMembers(pid_t pgid) {
+#ifdef Q_OS_LINUX
+        QDir proc(QStringLiteral("/proc"));
+        for (const QString &entry : proc.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+            bool numeric = false;
+            entry.toLongLong(&numeric);
+            if (!numeric) continue;
+            QFile stat(QStringLiteral("/proc/") + entry + QStringLiteral("/stat"));
+            if (!stat.open(QIODevice::ReadOnly)) continue;
+            const QByteArray data = stat.readAll();
+            const auto end = data.lastIndexOf(')');
+            if (end < 0) continue;
+            const auto fields = data.mid(end + 2).simplified().split(' ');
+            if (fields.size() < 3) continue;
+            bool valid = false;
+            const auto foundGroup = fields.at(2).toLong(&valid);
+            if (valid && foundGroup == pgid && fields.at(0) != "Z" && fields.at(0) != "X")
+                return true;
+        }
+        return false;
+#else
+        return ::kill(-pgid, 0) == 0;
+#endif
+    }
+#endif
     static QComboBox *backend(RemoteBackupWidget &w) {
         for (auto *c : w.findChildren<QComboBox*>())
             if (c->count() == 2 && c->itemData(0).toString() == "legacy" &&
@@ -185,7 +213,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(process->state(), QProcess::NotRunning, 7000);
         QVERIFY(!cancel->isEnabled());
         // Closing only the shell would leave "sleep" behind. Reap the group.
-        QTRY_VERIFY_WITH_TIMEOUT(::kill(-group, 0) == -1, 7000);
+        QTRY_VERIFY_WITH_TIMEOUT(!groupHasRunningMembers(group), 7000);
 #endif
     }
     // Real FastCDC/BLAKE3 transfer, not a shell "sleep" mock. Run this
@@ -245,7 +273,7 @@ private slots:
         QTest::mouseClick(cancel, Qt::LeftButton);
         QTRY_COMPARE_WITH_TIMEOUT(process->state(), QProcess::NotRunning, 10000);
         QVERIFY(!QFileInfo::exists(repository + "/manifests/" + archive + ".json"));
-        QTRY_VERIFY_WITH_TIMEOUT(::kill(-group, 0) == -1, 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(!groupHasRunningMembers(group), 10000);
         QCOMPARE(QProcess::execute(binary, args), 0);
         QCOMPARE(QProcess::execute(binary, {"verify", "--repo", repository, "--name", archive}), 0);
 #endif
@@ -294,7 +322,7 @@ private slots:
         QVERIFY(group > 1);
         QTest::mouseClick(cancel, Qt::LeftButton);
         QTRY_COMPARE_WITH_TIMEOUT(process->state(), QProcess::NotRunning, 12000);
-        QTRY_VERIFY_WITH_TIMEOUT(::kill(-group, 0) == -1, 12000);
+        QTRY_VERIFY_WITH_TIMEOUT(!groupHasRunningMembers(group), 12000);
         QVERIFY(!QFileInfo::exists(repo + "/manifests/" + name + ".json"));
         QCOMPARE(QProcess::execute(binary, sendArgs), 0);
         QCOMPARE(QProcess::execute(binary, {"verify-stream", "--repo", repo, "--name", name}), 0);
