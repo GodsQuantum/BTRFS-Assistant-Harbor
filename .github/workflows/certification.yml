@@ -69,6 +69,14 @@ jobs:
         run: |
           sudo apt-get install -y --no-install-recommends weston qt6-wayland
           bash tests/qa_wayland_smoke.sh build/ci
+      - name: Real KWin KDE Wayland compositor Qt navigation (Ubuntu 24.04)
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            kwin-wayland qtwayland5 dbus-user-session mesa-utils
+          # No elevated executable capabilities in the disposable CI sandbox.
+          sudo setcap -r /usr/bin/kwin_wayland
+          bash tests/qa_kwin_wayland_smoke.sh build/ci
       - name: Qt button cancels a real CAS stream, no partial manifest
         env:
           QT_QPA_PLATFORM: offscreen
@@ -177,6 +185,21 @@ jobs:
             HARBOR_GUI_QA_BTRFS_STAGING_ROOT="$mountpoint" \
             "$GITHUB_WORKSPACE/build/qa-real-btrfs/src/test-harbor-gui-user-smoke" \
             cancellationDuringRealBtrfsSendPreservesRepository
+
+  snapper-native-btrfs:
+    name: Native Snapper create/list/diff/delete with Btrfs loopback
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install distribution Snapper and Btrfs
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends snapper btrfs-progs
+      - name: Execute isolated actual Snapper lifecycle
+        run: sudo bash tests/qa_snapper_native_btrfs.sh
 
   cas-endurance:
     name: CAS multiclient 1000-cycle endurance and bounded memory
