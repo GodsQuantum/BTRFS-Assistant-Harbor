@@ -245,6 +245,13 @@ fn checked_real_directory(path: &Path) -> Result<()> {
     checked_dir_open(path)?;
     Ok(())
 }
+// Hold the directory inode from openat/O_NOFOLLOW through readdir itself.
+// Directory entry paths returned by /proc are never trusted for further I/O.
+fn read_dir_pinned(path: &Path) -> Result<fs::ReadDir> {
+    let dir = checked_dir_open(path)?;
+    let fdpath = format!("/proc/self/fd/{}", dir.as_raw_fd());
+    fs::read_dir(&fdpath).with_context(|| format!("readdir pinned {}", path.display()))
+}
 
 // Keep network read errors as io::Error in anyhow's causal chain. Parsing
 // directly from a CIFS/NFS reader converts transient EAGAIN/EIO into a
@@ -513,7 +520,7 @@ impl Repository {
         let mut found = Vec::new();
         let mut scan = |directory: &Path, machine: Option<&str>| -> Result<()> {
             checked_real_directory(directory)?;
-            for entry in fs::read_dir(directory)? {
+            for entry in read_dir_pinned(directory)? {
                 let entry = entry?;
                 let file = entry
                     .file_name()
@@ -535,7 +542,7 @@ impl Repository {
         let machines = self.root.join("machines");
         if machines.exists() || machines.is_symlink() {
             checked_real_directory(&machines)?;
-            for entry in fs::read_dir(&machines)? {
+            for entry in read_dir_pinned(&machines)? {
                 let entry = entry?;
                 let machine = entry
                     .file_name()
@@ -545,8 +552,9 @@ impl Repository {
                     safe_name(&machine) && machine.len() <= 64,
                     "unsafe machine directory"
                 );
-                checked_real_directory(&entry.path())?;
-                scan(&entry.path().join("manifests"), Some(&machine))?;
+                let home = machines.join(&machine);
+                checked_real_directory(&home)?;
+                scan(&home.join("manifests"), Some(&machine))?;
             }
         }
         Ok(found)
@@ -581,7 +589,8 @@ impl Repository {
     fn all_objects(&self) -> Result<BTreeMap<String, (PathBuf, u64)>> {
         self.guard()?;
         let mut found = BTreeMap::new();
-        for prefix in fs::read_dir(self.root.join("objects"))? {
+        let objects_dir = self.root.join("objects");
+        for prefix in read_dir_pinned(&objects_dir)? {
             let prefix = prefix?;
             let label = prefix
                 .file_name()
@@ -594,8 +603,9 @@ impl Repository {
                         .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
                 "unexpected object prefix"
             );
-            checked_real_directory(&prefix.path())?;
-            for entry in fs::read_dir(prefix.path())? {
+            let prefix_path = objects_dir.join(&label);
+            checked_real_directory(&prefix_path)?;
+            for entry in read_dir_pinned(&prefix_path)? {
                 let entry = entry?;
                 let filename = entry
                     .file_name()
@@ -608,13 +618,14 @@ impl Repository {
                     valid_hash(hash) && hash.starts_with(&label),
                     "malformed object filename or prefix"
                 );
-                let md = fs::symlink_metadata(entry.path())?;
-                ensure!(md.file_type().is_file(), "non-regular object entry");
+                let object_path = prefix_path.join(&filename);
+                let md = open_regular(&object_path)?.metadata()?;
+                ensure!(md.is_file(), "non-regular object entry");
                 ensure!(
                     found.len() < 2_000_000,
                     "object inventory exceeds safety cap"
                 );
-                found.insert(hash.to_string(), (entry.path(), md.len()));
+                found.insert(hash.to_string(), (object_path, md.len()));
             }
         }
         Ok(found)

@@ -43,6 +43,18 @@ jobs:
           mkdir -p dist/fedora44
           cp "$RUNNER_TEMP"/rpmbuild/RPMS/x86_64/*.rpm dist/fedora44/
           (cd dist/fedora44 && sha256sum *.rpm > SHA256SUMS)
+      - name: Fedora 44 native RPM install-remove-reinstall
+        run: |
+          dnf install -y --setopt=install_weak_deps=False ./dist/fedora44/*.rpm
+          rpm -q btrfs-assistant-harbor
+          test -x /usr/bin/harbor-transport
+          /usr/bin/btrfs-assistant-harbor-bin --version
+          dnf remove -y btrfs-assistant-harbor
+          if rpm -q btrfs-assistant-harbor; then exit 31; fi
+          dnf install -y --setopt=install_weak_deps=False ./dist/fedora44/*.rpm
+          test -x /usr/bin/harbor-transport
+          rpm -e btrfs-assistant-harbor
+          if rpm -q btrfs-assistant-harbor; then exit 32; fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: harbor-fedora44-rpm-QA
@@ -86,6 +98,18 @@ jobs:
           mkdir -p dist/arch
           cp "$RUNNER_TEMP"/arch-build/*.pkg.tar.zst dist/arch/
           (cd dist/arch && sha256sum *.pkg.tar.zst > SHA256SUMS)
+      - name: Arch native package install-remove-reinstall
+        run: |
+          pacman -U --noconfirm ./dist/arch/*.pkg.tar.zst
+          pacman -Q btrfs-assistant-harbor
+          test -x /usr/bin/harbor-transport
+          /usr/bin/btrfs-assistant-harbor-bin --version
+          pacman -R --noconfirm btrfs-assistant-harbor
+          if pacman -Q btrfs-assistant-harbor; then exit 31; fi
+          pacman -U --noconfirm ./dist/arch/*.pkg.tar.zst
+          test -x /usr/bin/harbor-transport
+          pacman -R --noconfirm btrfs-assistant-harbor
+          if pacman -Q btrfs-assistant-harbor; then exit 32; fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: harbor-arch-pkg-QA

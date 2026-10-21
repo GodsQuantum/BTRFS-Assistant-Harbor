@@ -65,6 +65,10 @@ jobs:
           QT_QPA_PLATFORM=offscreen ctest --test-dir build/ci --output-on-failure
       - name: Python regression suite
         run: PYTHONPATH=vendor/harbor-legacy:. python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Headless real Wayland compositor Qt navigation
+        run: |
+          sudo apt-get install -y --no-install-recommends weston qt6-wayland
+          bash tests/qa_wayland_smoke.sh build/ci
       - name: Qt button cancels a real CAS stream, no partial manifest
         env:
           QT_QPA_PLATFORM: offscreen
@@ -101,6 +105,18 @@ jobs:
           python3 packaging/debian/build_preview.py --version '0.1.0~alpha9-11+deb13' --build build/debian13 --out dist/debian13
           dpkg-deb -f dist/debian13/*.deb Package Version Architecture Depends
           sha256sum dist/debian13/*.deb > dist/debian13/SHA256SUMS
+      - name: Debian 13 install, uninstall, reinstall and purge (disposable container)
+        run: |
+          apt-get install -y --no-install-recommends ./dist/debian13/*.deb
+          dpkg-query -W -f='${Status}\n' btrfs-assistant-harbor
+          test -x /usr/bin/harbor-transport
+          /usr/bin/btrfs-assistant-harbor-bin --version
+          apt-get remove -y btrfs-assistant-harbor
+          if dpkg-query -W -f='${Status}' btrfs-assistant-harbor 2>/dev/null | grep -q 'install ok installed'; then exit 31; fi
+          apt-get install -y --no-install-recommends ./dist/debian13/*.deb
+          test -x /usr/bin/harbor-transport
+          apt-get purge -y btrfs-assistant-harbor
+          if dpkg-query -W -f='${Status}' btrfs-assistant-harbor 2>/dev/null | grep -q 'install ok installed'; then exit 32; fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: harbor-debian13-QA-candidate
@@ -109,6 +125,55 @@ jobs:
             dist/debian13/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
+
+  real-btrfs-gui-loop:
+    name: GUI native Btrfs send cancellation and recovery (disposable runner)
+    runs-on: ubuntu-24.04
+    needs: [rust]
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: harbor-transport-static
+          path: prebuilt
+      - name: Qt and Btrfs native host runner tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ pkg-config qt6-base-dev qt6-tools-dev \
+            qt6-tools-dev-tools libbtrfsutil-dev btrfs-progs snapper python3
+      - name: Build true Qt test against the runner's native ABI
+        run: |
+          cmake -S . -B build/qa-real-btrfs -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCARGO_EXECUTABLE=/usr/bin/true
+          cmake --build build/qa-real-btrfs --parallel 4 --target test-harbor-gui-user-smoke
+          test -x prebuilt/harbor-transport
+      - name: Cancel a real Btrfs send from Qt, retry and byte-compare restoration
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$RUNNER_TEMP/harbor-btrfs-fixture.img"
+          mountpoint="$RUNNER_TEMP/harbor-btrfs-mount"
+          truncate -s 4G "$image"
+          sudo mkfs.btrfs -f "$image"
+          sudo mkdir -p "$mountpoint"
+          sudo mount -o loop -t btrfs "$image" "$mountpoint"
+          trap 'sudo umount "$mountpoint" || true' EXIT
+          sudo btrfs subvolume create "$mountpoint/source"
+          sudo dd if=/dev/urandom of="$mountpoint/source/payload.bin" \
+            bs=1M count=768 status=none
+          sudo btrfs subvolume snapshot -r "$mountpoint/source" "$mountpoint/qa-ro"
+          sudo btrfs property get -ts "$mountpoint/qa-ro" ro | grep -q 'ro=true'
+          sudo env QT_QPA_PLATFORM=offscreen PKEXEC_UID=0 \
+            HARBOR_GUI_QA_TRANSPORT="$GITHUB_WORKSPACE/prebuilt/harbor-transport" \
+            HARBOR_GUI_QA_BTRFS_SNAPSHOT="$mountpoint/qa-ro" \
+            HARBOR_GUI_QA_BTRFS_STAGING_ROOT="$mountpoint" \
+            "$GITHUB_WORKSPACE/build/qa-real-btrfs/src/test-harbor-gui-user-smoke" \
+            cancellationDuringRealBtrfsSendPreservesRepository
 
   btrfs-qemu-tcg:
     name: Real Btrfs E2E on QEMU TCG

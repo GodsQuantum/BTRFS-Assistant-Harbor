@@ -285,8 +285,9 @@ private slots:
 #ifdef Q_OS_UNIX
         const QString binary = qEnvironmentVariable("HARBOR_GUI_QA_TRANSPORT");
         const QString snapshot = qEnvironmentVariable("HARBOR_GUI_QA_BTRFS_SNAPSHOT");
-        if (binary.isEmpty() || snapshot.isEmpty())
-            QSKIP("Btrfs guest QA required: set HARBOR_GUI_QA_TRANSPORT and HARBOR_GUI_QA_BTRFS_SNAPSHOT");
+        const QString stagingRoot = qEnvironmentVariable("HARBOR_GUI_QA_BTRFS_STAGING_ROOT");
+        if (binary.isEmpty() || snapshot.isEmpty() || stagingRoot.isEmpty())
+            QSKIP("Btrfs guest QA requires transport, read-only snapshot and Btrfs staging root");
         QVERIFY(QFileInfo(binary).isExecutable());
         QVERIFY(QFileInfo(snapshot).isDir());
         QTemporaryDir lab(QStringLiteral("/var/tmp/harbor-qt-real-btrfs-XXXXXX"));
@@ -326,12 +327,22 @@ private slots:
         QVERIFY(!QFileInfo::exists(repo + "/manifests/" + name + ".json"));
         QCOMPARE(QProcess::execute(binary, sendArgs), 0);
         QCOMPARE(QProcess::execute(binary, {"verify-stream", "--repo", repo, "--name", name}), 0);
-        const QString staging = lab.filePath("staging");
+        // btrfs receive cannot restore a native subvolume onto ext4 /var/tmp.
+        // The fixture provides a separate disposable mounted Btrfs test root.
+        QTemporaryDir btrfsStage(stagingRoot + QStringLiteral("/harbor-qt-stage-XXXXXX"));
+        QVERIFY2(btrfsStage.isValid(), qPrintable(btrfsStage.errorString()));
+        const QString staging = btrfsStage.filePath("receive");
         QVERIFY(QDir().mkdir(staging));
         QCOMPARE(QProcess::execute(binary, {"receive", "--repo", repo, "--name", name,
                    "--staging", staging, "--confirm"}), 0);
         const QString recovered = staging + "/" + QFileInfo(snapshot).fileName();
         QVERIFY2(QFileInfo(recovered).isDir(), qPrintable(recovered));
+        QCOMPARE(QProcess::execute(QStringLiteral("cmp"),
+            {snapshot + QStringLiteral("/payload.bin"),
+             recovered + QStringLiteral("/payload.bin")}), 0);
+        // Remove only the subvolume created in this test's isolated staging.
+        QCOMPARE(QProcess::execute(QStringLiteral("btrfs"),
+            {QStringLiteral("subvolume"), QStringLiteral("delete"), recovered}), 0);
 #endif
     }
     void idleAppHasNoUnexpectedProcess() {
