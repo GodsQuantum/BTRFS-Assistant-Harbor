@@ -31,8 +31,12 @@ jobs:
           QT_QPA_PLATFORM: "offscreen"
         run: |
           mkdir -p "$RUNNER_TEMP/rpmbuild/"{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
-          git archive --format=tar --prefix=btrfs-assistant-harbor/ HEAD \
-            | gzip -n > "$RUNNER_TEMP/rpmbuild/SOURCES/btrfs-assistant-harbor-0.1.0alpha9.tar.gz"
+          # Checkout can use the REST source archive in slim containers without
+          # Git installed at checkout time. Never require .git in package jobs.
+          test -f "$GITHUB_WORKSPACE/CMakeLists.txt"
+          tar -C "$GITHUB_WORKSPACE" --exclude=.git --exclude=build \
+            --transform='s|^\./|btrfs-assistant-harbor/|' \
+            -czf "$RUNNER_TEMP/rpmbuild/SOURCES/btrfs-assistant-harbor-0.1.0alpha9.tar.gz" .
           cp packaging/fedora/btrfs-assistant-harbor.spec "$RUNNER_TEMP/rpmbuild/SPECS/"
           rpmbuild --define "_topdir $RUNNER_TEMP/rpmbuild" \
             -ba "$RUNNER_TEMP/rpmbuild/SPECS/btrfs-assistant-harbor.spec"
@@ -69,7 +73,9 @@ jobs:
           CARGO_BUILD_JOBS: "3"
         run: |
           mkdir -p "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor"
-          git archive HEAD | tar -xf - -C "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor"
+          test -f "$GITHUB_WORKSPACE/CMakeLists.txt"
+          tar -C "$GITHUB_WORKSPACE" --exclude=.git --exclude=build -cf - . \
+            | tar -xf - -C "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor"
           tar -czf "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-0.1.0alpha9.tar.gz" \
             -C "$RUNNER_TEMP/arch-build" btrfs-assistant-harbor
           SOURCE_SHA="$(sha256sum "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-0.1.0alpha9.tar.gz" | cut -d' ' -f1)"
