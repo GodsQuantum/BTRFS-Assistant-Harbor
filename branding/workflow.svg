@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 246" role="img" aria-labelledby="t d">
+<title id="t">Btrfs Assistant Harbor backup workflow</title>
+<desc id="d">A read-only Snapper snapshot is transferred and verified in a shared CAS repository with a common object pool and per-machine manifests, then restored into an empty Btrfs staging directory.</desc>
+<rect x="3" y="3" width="1114" height="240" rx="24" fill="#0B1622"/>
+<g font-family="system-ui, sans-serif" fill="#EAF8F5" text-anchor="middle">
+<rect x="30" y="46" width="240" height="152" rx="16" fill="#14283A" stroke="#58D6C5" stroke-width="2"/>
+<text x="150" y="83" font-size="18" font-weight="700">01 · SOURCE</text>
+<text x="150" y="122" font-size="23">Snapper / Btrfs</text>
+<text x="150" y="160" font-size="16" fill="#AFC5C7">read-only snapshot</text>
+<rect x="343" y="46" width="434" height="152" rx="16" fill="#14283A" stroke="#58D6C5" stroke-width="2"/>
+<text x="560" y="83" font-size="18" font-weight="700">02 · SHARED WORKSTATIONS/</text>
+<text x="560" y="122" font-size="22">objects/ · FastCDC + BLAKE3</text>
+<text x="560" y="160" font-size="16" fill="#AFC5C7">machines/&lt;name&gt;/manifests/</text>
+<rect x="850" y="46" width="240" height="152" rx="16" fill="#14283A" stroke="#58D6C5" stroke-width="2"/>
+<text x="970" y="83" font-size="18" font-weight="700">03 · RECOVERY</text>
+<text x="970" y="122" font-size="22">Verify + restore</text>
+<text x="970" y="160" font-size="16" fill="#AFC5C7">empty Btrfs staging</text>
+<path d="M280 124h50m-13-10 13 10-13 10" fill="none" stroke="#58D6C5" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M789 124h49m-13-10 13 10-13 10" fill="none" stroke="#58D6C5" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>
+</g></svg>

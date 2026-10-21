@@ -11,5 +11,6 @@
         <file>restore.svg</file>
         <file>save.svg</file>
         <file>btrfs-assistant.svg</file>
+        <file>btrfs-assistant-harbor.svg</file>
     </qresource>
 </RCC>

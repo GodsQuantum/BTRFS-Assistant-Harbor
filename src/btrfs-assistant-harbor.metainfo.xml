@@ -3,13 +3,18 @@
   <id>btrfs-assistant-harbor.desktop</id>
   <launchable type="desktop-id">btrfs-assistant-harbor.desktop</launchable>
   <name>Btrfs Assistant Harbor</name>
-  <summary>Fork of Btrfs Assistant with Snapper-managed remote backups</summary>
+  <summary>Native Btrfs/Snapper snapshots and verified remote backup</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <description>
-    <p>A fork of Btrfs Assistant preserving the local Snapper/Btrfs tools.
-    An experimental remote backup tab integrates with the independent Harbor
-    transfer CLI. Not yet certified for disaster recovery.</p>
+    <p>Btrfs Assistant Harbor extends the upstream Btrfs Assistant desktop
+    with Snapper-aware off-device Btrfs backups, a shared content-addressed
+    Rust repository, verification, safe retention and staged recovery.</p>
+    <p>Supports Linux x86-64; network-filesystem destructive CAS pruning,
+    macOS/APFS and encrypted multi-root bare-metal rescue are not supported.</p>
   </description>
-  <url type="homepage">https://gitlab.com/btrfs-assistant/btrfs-assistant</url>
+  <url type="homepage">https://github.com/GodsQuantum/BTRFS-Assistant-Harbor</url>
+  <url type="bugtracker">https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/issues</url>
+  <provides><binary>btrfs-assistant-harbor-bin</binary></provides>
+  <releases><release version="0.1.1" date="2026-10-22"/></releases>
 </component>
