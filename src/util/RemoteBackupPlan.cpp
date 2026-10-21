@@ -1,5 +1,6 @@
 #include "util/RemoteBackupPlan.h"
 #include <QDir>
+#include <QDateTime>
 #include <QFile>
 #include <QFileInfo>
 #include <sys/stat.h>
@@ -12,7 +13,8 @@ bool safeConfig(const QString &config) {
 }
 bool safeArchive(const QString &name) {
     static const QRegularExpression pattern(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$"));
-    return pattern.match(name).hasMatch();
+    static const QRegularExpression scoped(QStringLiteral("^m@[A-Za-z0-9][A-Za-z0-9_.-]{0,63}@[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$"));
+    return pattern.match(name).hasMatch() || scoped.match(name).hasMatch();
 }
 bool safePath(const QString &path, bool rootAllowed = false) {
     return !path.isEmpty() && path.startsWith(QChar(0x2f)) &&
@@ -130,15 +132,30 @@ QStringList casListArguments(const QString &repo) {
 }
 QStringList casSendArguments(const QString &repo, const QString &config, unsigned number,
                              const QString &snapshot, bool incremental,
-                             const QString &parentSnapshot, unsigned parentNumber, bool allowLocal) {
-    const QString name = archiveName(config, number);
-    if (name.isEmpty() || !safePath(repo) || !safePath(snapshot)) return {};
+                             const QString &parentSnapshot, unsigned parentNumber, bool allowLocal,
+                             const QString &machine, const QString &parentArchive) {
+    if (!safePath(repo) || !safePath(snapshot) || !safeConfig(config) || number == 0) return {};
+    QString name = archiveName(config, number);
+    if (!machine.isEmpty()) {
+        static const QRegularExpression validMachine(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"));
+        if (!validMachine.match(machine).hasMatch() || config.size() > 70) return {};
+        const QString stamp = QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMddTHHmmsszzzZ"));
+        const QString unique = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        name = QStringLiteral("snap-%1-%2-%3-%4").arg(config).arg(number).arg(stamp, unique);
+    }
+    if (name.isEmpty()) return {};
     QStringList args{QStringLiteral("send"), QStringLiteral("--repo"), repo,
                      QStringLiteral("--name"), name,
                      QStringLiteral("--snapshot"), snapshot,
                      QStringLiteral("--experimental"), QStringLiteral("--retries"), QStringLiteral("5")};
+    if (!machine.isEmpty()) args << QStringLiteral("--machine") << machine;
     if (incremental) {
-        const QString parentName = archiveName(config, parentNumber);
+        QString parentName = archiveName(config, parentNumber);
+        if (!machine.isEmpty()) {
+            parentName = parentArchive;
+            if (!safeArchive(parentName) || !parentName.startsWith(QStringLiteral("m@") + machine + QLatin1Char('@')))
+                return {};
+        }
         if (parentName.isEmpty() || !safePath(parentSnapshot) ||
             parentSnapshot == snapshot || parentNumber >= number) return {};
         args << QStringLiteral("--parent") << parentSnapshot
@@ -165,17 +182,20 @@ QStringList casConfirmArguments(const QString &repo, const QString &name, const 
 }
 
 namespace HarborRemote {
-QString profileIdForEngine(const QString &config, const QString &target, bool cas) {
+QString profileIdForEngine(const QString &config, const QString &target, bool cas, const QString &machine) {
     if (!cas) return profileId(config, target);
     if (!safeConfig(config) || !safePath(target)) return {};
+    static const QRegularExpression machinePattern(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"));
+    if (!machine.isEmpty() && (!machinePattern.match(machine).hasMatch() || config.size() > 70)) return {};
     static const QUuid namespaceId(QStringLiteral("{18e0b70e-dced-4a95-9179-8b45efbd3f51}"));
     return QUuid::createUuidV5(namespaceId,
-        (config + QLatin1Char('\n') + target + QLatin1String("\ncas")).toUtf8())
+        (config + QLatin1Char('\n') + target + QLatin1String("\ncas")
+         + (machine.isEmpty() ? QString() : QLatin1String("\n") + machine)).toUtf8())
         .toString(QUuid::WithoutBraces);
 }
 QStringList scheduleInstallerArguments(const QString &config, const QString &target,
-                                       const QString &frequency, bool allowLocal, bool cas) {
-    if (profileIdForEngine(config,target,cas).isEmpty() ||
+                                       const QString &frequency, bool allowLocal, bool cas, const QString &machine) {
+    if (profileIdForEngine(config,target,cas,machine).isEmpty() ||
         (frequency != QLatin1String("hourly") && frequency != QLatin1String("daily") &&
          frequency != QLatin1String("weekly"))) return {};
     QStringList args{QStringLiteral("install"),
@@ -183,7 +203,9 @@ QStringList scheduleInstallerArguments(const QString &config, const QString &tar
                      QStringLiteral("--target"), target,
                      QStringLiteral("--frequency"), frequency,
                      QStringLiteral("--enable")};
-    if (cas) args << QStringLiteral("--engine") << QStringLiteral("cas");
+    if (cas) { args << QStringLiteral("--engine") << QStringLiteral("cas");
+        if (!machine.isEmpty()) args << QStringLiteral("--machine") << machine;
+    }
     if (allowLocal) args << QStringLiteral("--allow-local");
     return args;
 }

@@ -34,6 +34,7 @@ private:
     QComboBox *m_configs;
     QComboBox *m_snapshots;
     QLineEdit *m_target;
+    QLineEdit *m_machineName;
     QLineEdit *m_staging;
     QComboBox *m_frequency;
     QCheckBox *m_allowLocal;

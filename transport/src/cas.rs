@@ -265,8 +265,41 @@ impl Repository {
         );
         Ok(prefix.join(format!("{hash}.zst")))
     }
+    /// A reserved @-delimited identifier cannot collide with any legacy
+    /// archive name (legacy names only allow [A-Za-z0-9_.-]).
+    pub fn machine_archive_id(machine: &str, archive: &str) -> Result<String> {
+        ensure!(
+            safe_name(machine) && machine.len() <= 64,
+            "invalid machine name"
+        );
+        ensure!(safe_name(archive), "invalid snapshot archive name");
+        Ok(format!("m@{machine}@{archive}"))
+    }
+    fn machine_parts(name: &str) -> Result<Option<(&str, &str)>> {
+        if let Some(rest) = name.strip_prefix("m@") {
+            let (machine, archive) = rest
+                .split_once('@')
+                .ok_or_else(|| anyhow!("malformed machine-qualified archive"))?;
+            ensure!(
+                Self::machine_archive_id(machine, archive)? == name,
+                "malformed machine-qualified archive"
+            );
+            Ok(Some((machine, archive)))
+        } else {
+            ensure!(safe_name(name), "invalid legacy archive name");
+            Ok(None)
+        }
+    }
     fn manifest_path(&self, name: &str) -> Result<PathBuf> {
-        ensure!(safe_name(name), "invalid archive name");
+        if let Some((machine, archive)) = Self::machine_parts(name)? {
+            let machines = self.root.join("machines");
+            checked_real_directory(&machines)?;
+            let home = machines.join(machine);
+            checked_real_directory(&home)?;
+            let dir = home.join("manifests");
+            checked_real_directory(&dir)?;
+            return Ok(dir.join(format!("{archive}.json")));
+        }
         Ok(self.root.join("manifests").join(format!("{name}.json")))
     }
     pub fn manifest_exists(&self, name: &str) -> bool {
@@ -409,61 +442,72 @@ impl Repository {
         fd.lock_exclusive()?;
         Ok(fd)
     }
-    /// A bounded, read-only list of committed CAS archives.
-    pub fn list_archives(&self) -> Result<Vec<ArchiveInfo>> {
+    // Include legacy manifests and all machine manifests in every inventory.
+    // Unknown entries fail closed so GC never misses a live reference.
+    fn manifest_inventory(&self) -> Result<Vec<String>> {
         self.guard()?;
+        let mut found = Vec::new();
+        let mut scan = |directory: &Path, machine: Option<&str>| -> Result<()> {
+            checked_real_directory(directory)?;
+            for entry in fs::read_dir(directory)? {
+                let entry = entry?;
+                let file = entry
+                    .file_name()
+                    .into_string()
+                    .map_err(|_| anyhow!("non-UTF8 manifest"))?;
+                let archive = file
+                    .strip_suffix(".json")
+                    .ok_or_else(|| anyhow!("unexpected manifest file"))?;
+                ensure!(safe_name(archive), "unsafe manifest filename");
+                ensure!(found.len() < 10_000, "manifest inventory limit exceeded");
+                found.push(match machine {
+                    Some(m) => Self::machine_archive_id(m, archive)?,
+                    None => archive.to_owned(),
+                });
+            }
+            Ok(())
+        };
+        scan(&self.root.join("manifests"), None)?;
+        let machines = self.root.join("machines");
+        if machines.exists() || machines.is_symlink() {
+            checked_real_directory(&machines)?;
+            for entry in fs::read_dir(&machines)? {
+                let entry = entry?;
+                let machine = entry
+                    .file_name()
+                    .into_string()
+                    .map_err(|_| anyhow!("non-UTF8 machine"))?;
+                ensure!(
+                    safe_name(&machine) && machine.len() <= 64,
+                    "unsafe machine directory"
+                );
+                checked_real_directory(&entry.path())?;
+                scan(&entry.path().join("manifests"), Some(&machine))?;
+            }
+        }
+        Ok(found)
+    }
+
+    pub fn list_archives(&self) -> Result<Vec<ArchiveInfo>> {
         let mut results = Vec::new();
-        for entry in fs::read_dir(self.root.join("manifests"))?.take(10_000) {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !name.ends_with(".json") {
-                continue;
-            }
-            let stem = name.trim_end_matches(".json");
-            if !safe_name(stem) {
-                continue;
-            }
-            // Invalid/corrupt archives cannot masquerade as verified entries.
-            let manifest = self.load_manifest(stem)?;
+        for name in self.manifest_inventory()? {
+            let manifest = self.load_manifest(&name)?;
             results.push(ArchiveInfo {
-                name: stem.to_string(),
+                name,
                 raw_size: manifest.raw_size,
-                source_uuid: manifest
-                    .identity
-                    .as_ref()
-                    .map(|identity| identity.source_uuid),
-                parent_archive: manifest
-                    .identity
-                    .and_then(|identity| identity.parent_archive),
+                source_uuid: manifest.identity.as_ref().map(|i| i.source_uuid),
+                parent_archive: manifest.identity.and_then(|i| i.parent_archive),
             });
         }
         results.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(results)
     }
 
-    // Enumerate *all* manifests, with no silent truncation. Fail closed on
-    // unsupported entries: a future format may have undiscovered references.
     fn all_manifests(&self) -> Result<BTreeMap<String, Manifest>> {
-        self.guard()?;
         let mut found = BTreeMap::new();
-        for entry in fs::read_dir(self.root.join("manifests"))? {
-            let entry = entry?;
-            let name = entry
-                .file_name()
-                .into_string()
-                .map_err(|_| anyhow!("non-UTF8 manifest name"))?;
-            ensure!(
-                name.ends_with(".json"),
-                "unexpected file in manifests: {name}"
-            );
-            let archive = name.strip_suffix(".json").unwrap();
-            ensure!(safe_name(archive), "unsafe manifest filename");
-            ensure!(
-                found.len() < 10_000,
-                "manifest inventory exceeds safety cap"
-            );
-            let manifest = self.load_manifest(archive)?;
-            found.insert(archive.to_string(), manifest);
+        for name in self.manifest_inventory()? {
+            let manifest = self.load_manifest(&name)?;
+            found.insert(name, manifest);
         }
         Ok(found)
     }
@@ -520,7 +564,7 @@ impl Repository {
             "duplicate archive selection"
         );
         for name in &selected {
-            ensure!(safe_name(name), "invalid archive selection");
+            Self::machine_parts(name)?;
         }
         let manifests = self.all_manifests()?;
         for name in &selected {
@@ -648,11 +692,11 @@ impl Repository {
             plan.plan_sha256 == expected_digest,
             "repository changed since preview; re-run dry-run"
         );
-        let manifest_dir = self.root.join("manifests");
         for name in &plan.remove_archives {
             self.guard()?;
-            fs::remove_file(self.manifest_path(name)?)?;
-            sync_directory(&manifest_dir)?;
+            let path = self.manifest_path(name)?;
+            fs::remove_file(&path)?;
+            sync_directory(path.parent().context("missing manifest parent")?)?;
         }
         // Recalculate after manifest deletion: if an error/crash interrupted
         // removal, a later explicit empty-selection sweep can reclaim orphans.
@@ -684,6 +728,12 @@ impl Repository {
             (Some(parent_uuid), Some(parent_name)) => {
                 ensure!(parent_uuid != identity.source_uuid, "self-parent snapshot");
                 ensure!(parent_name != name, "self-parent archive");
+                if let Some((machine, _)) = Self::machine_parts(name)? {
+                    ensure!(
+                        Self::machine_parts(parent_name)?.is_some_and(|(m, _)| m == machine),
+                        "incremental parent must belong to the same machine"
+                    );
+                }
                 let parent = self.load_manifest(parent_name)?;
                 ensure!(
                     parent
@@ -740,8 +790,25 @@ impl Repository {
         identity: Option<SnapshotIdentity>,
         progress: &mut dyn FnMut(u64),
     ) -> Result<IngestStats> {
-        let manifest_path = self.manifest_path(name)?;
         let _lock = self.lock()?;
+        if let Some((machine, _)) = Self::machine_parts(name)? {
+            let machines = self.root.join("machines");
+            if !machines.exists() {
+                fs::create_dir(&machines)?;
+            }
+            checked_real_directory(&machines)?;
+            let home = machines.join(machine);
+            if !home.exists() {
+                fs::create_dir(&home)?;
+            }
+            checked_real_directory(&home)?;
+            let manifests = home.join("manifests");
+            if !manifests.exists() {
+                fs::create_dir(&manifests)?;
+            }
+            checked_real_directory(&manifests)?;
+        }
+        let manifest_path = self.manifest_path(name)?;
         if let Some(ref identity) = identity {
             self.validate_snapshot_identity(name, identity)?;
         }

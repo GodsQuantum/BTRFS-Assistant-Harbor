@@ -75,6 +75,8 @@ def build_send(profile, snapper_bin="snapper", cas_bin="harbor-transport") -> li
     archives = json.loads(inventory.stdout)
     if not isinstance(archives, list):
         raise RuntimeError("CAS inventory is not a JSON list")
+    if getattr(profile, "machine", None) is not None:
+        return build_machine_send(profile, available, archives, cas_bin)
     saved = {item["name"] for item in archives
              if isinstance(item, dict) and isinstance(item.get("name"), str)
              and ARCHIVE_RE.fullmatch(item["name"])}
@@ -137,6 +139,47 @@ def build_send(profile, snapper_bin="snapper", cas_bin="harbor-transport") -> li
                         "--name", parent_archive], check=True)
         argv.extend(["--parent", str(path),
                      "--parent-archive", parent_archive])
+    if profile.allow_local:
+        argv.append("--allow-local")
+    return argv
+
+
+def build_machine_send(profile, available: list[tuple[int, Path]], archives: list[dict],
+                       cas_bin: str) -> list[str] | None:
+    """Use one shared repository, but only this machine's committed parents."""
+    from datetime import datetime, timezone
+    machine = profile.machine
+    prefix = f"m@{machine}@snap-{profile.config}-"
+    saved = [item for item in archives if isinstance(item, dict)
+             and isinstance(item.get("name"), str)
+             and item["name"].startswith(prefix)]
+    latest_num, latest_path = available[0]
+    latest_uuid = snapshot_uuid(latest_path)
+    latest_prefix = prefix + str(latest_num) + "-"
+    completed = [item for item in saved if item["name"].startswith(latest_prefix)
+                 and item.get("source_uuid") == latest_uuid]
+    if completed:
+        name = max(item["name"] for item in completed)
+        subprocess.run([cas_bin, "verify-stream", "--repo", profile.target,
+                        "--name", name], check=True)
+        return None
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    basename = f"snap-{profile.config}-{latest_num}-{timestamp}-{uuid.uuid4().hex}"
+    argv = [cas_bin, "send", "--repo", profile.target,
+            "--name", basename, "--machine", machine,
+            "--snapshot", str(latest_path), "--experimental", "--retries", "8"]
+    for number, path in available[1:]:
+        expected = snapshot_uuid(path)
+        candidates = [item for item in saved
+                      if item["name"].startswith(prefix + str(number) + "-")
+                      and item.get("source_uuid") == expected]
+        if not candidates:
+            continue
+        parent = max(item["name"] for item in candidates)
+        subprocess.run([cas_bin, "verify-stream", "--repo", profile.target,
+                        "--name", parent], check=True)
+        argv.extend(["--parent", str(path), "--parent-archive", parent])
+        break
     if profile.allow_local:
         argv.append("--allow-local")
     return argv
