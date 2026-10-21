@@ -183,3 +183,48 @@ fn refuse_symlinked_machine_manifests_before_restore_or_gc() {
     );
     assert!(repo.gc_preview(&[name]).is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn concurrent_machine_directory_symlink_swaps_never_escape_repository() {
+    use std::os::unix::fs::symlink;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let temp = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let bait = outside.path().join("outside.json");
+    std::fs::write(&bait, b"OUTSIDE_SENTINEL_UNTOUCHED").unwrap();
+    let repo = Repository::initialize(temp.path()).unwrap();
+    let archive = machine("Pegasus", "root-42");
+    let data = fixture();
+    repo.ingest(&archive, Cursor::new(&data), || true).unwrap();
+    let dir = temp.path().join("machines/Pegasus/manifests");
+    let parked = temp.path().join("machines/Pegasus/parked-manifests");
+    let running = Arc::new(AtomicBool::new(true));
+    let signal = running.clone();
+    let outside_path = outside.path().to_path_buf();
+    let attacker = std::thread::spawn(move || {
+        while signal.load(Ordering::Relaxed) {
+            std::fs::rename(&dir, &parked).unwrap();
+            symlink(&outside_path, &dir).unwrap();
+            std::thread::yield_now();
+            std::fs::remove_file(&dir).unwrap();
+            std::fs::rename(&parked, &dir).unwrap();
+            std::thread::yield_now();
+        }
+    });
+    for _ in 0..100 {
+        let _ = repo.verify(&archive); // missing/symlinked parent may fail closed
+        let _ = repo.gc_preview(&[]); // never confirm a plan during this attack
+        std::thread::yield_now();
+    }
+    running.store(false, Ordering::Relaxed);
+    attacker.join().unwrap();
+    assert_eq!(std::fs::read(&bait).unwrap(), b"OUTSIDE_SENTINEL_UNTOUCHED");
+    assert_eq!(repo.verify(&archive).unwrap(), data.len() as u64);
+    let mut restored = Vec::new();
+    repo.recover_into(&archive, &mut restored).unwrap();
+    assert_eq!(restored, data);
+}

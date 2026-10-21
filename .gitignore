@@ -8,3 +8,12 @@ __pycache__/
 target/
 **/target/
 *.log
+
+# SentinelX and QA safety backups stay local, never commit them
+*.bak.20*
+*.qcow2
+*.raw
+*.iso
+*.deb
+*.rpm
+*.pkg.tar.zst

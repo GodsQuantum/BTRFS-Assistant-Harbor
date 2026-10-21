@@ -1,5 +1,13 @@
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QTemporaryDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QDir>
+#include <QDirIterator>
+#include <QRandomGenerator>
+#include <QElapsedTimer>
+#include <QThread>
 #include <QComboBox>
 #include <QLineEdit>
 #include <QListWidget>
@@ -178,6 +186,124 @@ private slots:
         QVERIFY(!cancel->isEnabled());
         // Closing only the shell would leave "sleep" behind. Reap the group.
         QTRY_VERIFY_WITH_TIMEOUT(::kill(-group, 0) == -1, 7000);
+#endif
+    }
+    // Real FastCDC/BLAKE3 transfer, not a shell "sleep" mock. Run this
+    // explicit QA gate with HARBOR_GUI_QA_TRANSPORT=<built-new-binary>.
+    // It does NOT claim a real Btrfs ioctl send in this test environment.
+    void cancellationDuringRealCasTransferRejectsPartialManifestAndAllowsRetry() {
+#ifdef Q_OS_UNIX
+        const QString binary = qEnvironmentVariable("HARBOR_GUI_QA_TRANSPORT");
+        if (binary.isEmpty() || !QFileInfo(binary).isExecutable())
+            QSKIP("real CAS gate requires HARBOR_GUI_QA_TRANSPORT pointing to tested binary");
+        QTemporaryDir scratch;
+        QVERIFY2(scratch.isValid(), qPrintable(scratch.errorString()));
+        const QString repository = scratch.filePath("Workstations");
+        QVERIFY(QDir().mkdir(repository));
+        QCOMPARE(QProcess::execute(binary, {"init", "--repo", repository, "--allow-local"}), 0);
+        const QString input = scratch.filePath("real-input.bin");
+        {
+            QFile source(input);
+            QVERIFY(source.open(QIODevice::WriteOnly));
+            QByteArray block(1024 * 1024, Qt::Uninitialized);
+            QRandomGenerator rng(20261021);
+            for (int i = 0; i < 384; ++i) {
+                rng.fillRange(reinterpret_cast<quint32*>(block.data()), block.size() / sizeof(quint32));
+                QCOMPARE(source.write(block), qint64(block.size()));
+            }
+            source.close();
+        }
+        const QString archive = "cancelled-active-cas-transfer";
+        const QStringList args = {"ingest-file", "--repo", repository, "--name", archive,
+                                  "--file", input, "--experimental", "--allow-local"};
+        RemoteBackupWidget widget(nullptr);
+        widget.show();
+        QApplication::processEvents();
+        auto *cancel = button(widget, "Cancel current operation");
+        auto *process = widget.findChild<QProcess*>();
+        QVERIFY(cancel && process);
+        process->setProgram(binary);
+        process->setArguments(args);
+        process->start();
+        QVERIFY(process->waitForStarted(5000));
+        cancel->setEnabled(true);
+        QElapsedTimer deadline;
+        deadline.start();
+        bool sawCommittedChunk = false;
+        while (deadline.elapsed() < 20000 && process->state() != QProcess::NotRunning) {
+            QApplication::processEvents(QEventLoop::AllEvents, 20);
+            QDirIterator it(repository + "/objects", QDir::Files, QDirIterator::Subdirectories);
+            if (it.hasNext()) {
+                sawCommittedChunk = true;
+                break;
+            }
+            QThread::msleep(5);
+        }
+        QVERIFY2(sawCommittedChunk, "transfer exited before first object; test is inconclusive");
+        const pid_t group = static_cast<pid_t>(process->processId());
+        QVERIFY(group > 1);
+        QTest::mouseClick(cancel, Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(process->state(), QProcess::NotRunning, 10000);
+        QVERIFY(!QFileInfo::exists(repository + "/manifests/" + archive + ".json"));
+        QTRY_VERIFY_WITH_TIMEOUT(::kill(-group, 0) == -1, 10000);
+        QCOMPARE(QProcess::execute(binary, args), 0);
+        QCOMPARE(QProcess::execute(binary, {"verify", "--repo", repository, "--name", archive}), 0);
+#endif
+    }
+    // Execute only inside a disposable Linux Btrfs guest with an actual
+    // read-only snapshot and root-owned harbor-transport. This exercises the
+    // real btrfs send subprocess and the actual Qt Cancel button.
+    void cancellationDuringRealBtrfsSendPreservesRepository() {
+#ifdef Q_OS_UNIX
+        const QString binary = qEnvironmentVariable("HARBOR_GUI_QA_TRANSPORT");
+        const QString snapshot = qEnvironmentVariable("HARBOR_GUI_QA_BTRFS_SNAPSHOT");
+        if (binary.isEmpty() || snapshot.isEmpty())
+            QSKIP("Btrfs guest QA required: set HARBOR_GUI_QA_TRANSPORT and HARBOR_GUI_QA_BTRFS_SNAPSHOT");
+        QVERIFY(QFileInfo(binary).isExecutable());
+        QVERIFY(QFileInfo(snapshot).isDir());
+        QTemporaryDir lab(QStringLiteral("/var/tmp/harbor-qt-real-btrfs-XXXXXX"));
+        QVERIFY2(lab.isValid(), qPrintable(lab.errorString()));
+        const QString repo = lab.filePath("Workstations");
+        QVERIFY(QDir().mkdir(repo));
+        QCOMPARE(QProcess::execute(binary, {"init", "--repo", repo, "--allow-local"}), 0);
+        const QString name = "real-btrfs-gui-cancel-qa";
+        const QStringList sendArgs = {"send", "--repo", repo, "--name", name,
+            "--snapshot", snapshot, "--experimental", "--allow-local", "--retries", "0"};
+        RemoteBackupWidget widget(nullptr);
+        widget.show();
+        QApplication::processEvents();
+        auto *process = widget.findChild<QProcess*>();
+        auto *cancel = button(widget, "Cancel current operation");
+        QVERIFY(process && cancel);
+        process->start(binary, sendArgs);
+        QVERIFY(process->waitForStarted(5000));
+        cancel->setEnabled(true);
+        QElapsedTimer deadline;
+        deadline.start();
+        bool sawChunk = false;
+        while (deadline.elapsed() < 25000 && process->state() != QProcess::NotRunning) {
+            QApplication::processEvents(QEventLoop::AllEvents, 20);
+            QDirIterator it(repo + "/objects", QDir::Files, QDirIterator::Subdirectories);
+            if (it.hasNext()) { sawChunk = true; break; }
+            QThread::msleep(10);
+        }
+        if (!sawChunk && process->state() != QProcess::NotRunning)
+            QTest::mouseClick(cancel, Qt::LeftButton);
+        QVERIFY2(sawChunk, "Btrfs send finished or blocked before first immutable chunk; cancel test inconclusive");
+        const pid_t group = static_cast<pid_t>(process->processId());
+        QVERIFY(group > 1);
+        QTest::mouseClick(cancel, Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(process->state(), QProcess::NotRunning, 12000);
+        QTRY_VERIFY_WITH_TIMEOUT(::kill(-group, 0) == -1, 12000);
+        QVERIFY(!QFileInfo::exists(repo + "/manifests/" + name + ".json"));
+        QCOMPARE(QProcess::execute(binary, sendArgs), 0);
+        QCOMPARE(QProcess::execute(binary, {"verify-stream", "--repo", repo, "--name", name}), 0);
+        const QString staging = lab.filePath("staging");
+        QVERIFY(QDir().mkdir(staging));
+        QCOMPARE(QProcess::execute(binary, {"receive", "--repo", repo, "--name", name,
+                   "--staging", staging, "--confirm"}), 0);
+        const QString recovered = staging + "/" + QFileInfo(snapshot).fileName();
+        QVERIFY2(QFileInfo(recovered).isDir(), qPrintable(recovered));
 #endif
     }
     void idleAppHasNoUnexpectedProcess() {
