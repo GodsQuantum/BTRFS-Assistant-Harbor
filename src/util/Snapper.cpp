@@ -8,6 +8,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QXmlStreamReader>
 
@@ -105,7 +106,7 @@ void Snapper::load()
     // Load the list of valid configs
     m_configs.clear();
     m_snapshots.clear();
-    const SnapperResult result = runSnapper("list-configs --columns config");
+    const SnapperResult result = runSnapper({"list-configs", "--columns", "config"});
 
     if (result.exitCode != 0) {
         return;
@@ -120,7 +121,7 @@ void Snapper::load()
 
         // The root needs special handling because we may be booted off a snapshot
         if (name == "root") {
-            listResult = runSnapper("list --columns number,date,description,type,cleanup");
+            listResult = runSnapper({"list", "--columns", "number,date,description,type,cleanup"});
 
             if (listResult.exitCode != 0) {
                 continue;
@@ -152,15 +153,15 @@ void Snapper::load()
 
                 const QString parentName = m_btrfs->subvolumeName(uuid, parentId).name;
 
-                listResult = runSnapper("--no-dbus -r " + QDir::cleanPath(mountpoint + QDir::separator() + parentName) +
-                                        " list --columns number,date,description,type");
+                listResult = runSnapper({"--no-dbus", "-r", QDir::cleanPath(mountpoint + QDir::separator() + parentName),
+                                         "list", "--columns", "number,date,description,type"});
                 if (listResult.exitCode != 0 || listResult.outputList.isEmpty()) {
                     // If this is still empty, give up
                     continue;
                 }
             }
         } else {
-            listResult = runSnapper("list --columns number,date,description,type,cleanup", name);
+            listResult = runSnapper({"list", "--columns", "number,date,description,type,cleanup"}, name);
             if (listResult.exitCode != 0 || listResult.outputList.isEmpty()) {
                 continue;
             }
@@ -190,7 +191,7 @@ void Snapper::loadConfig(const QString &name)
     }
 
     // Call Snapper to get the config data
-    const SnapperResult result = runSnapper("get-config", name);
+    const SnapperResult result = runSnapper({"get-config"}, name);
 
     if (result.exitCode != 0) {
         return;
@@ -365,7 +366,7 @@ bool Snapper::restoreFile(const QString &sourcePath, const QString &destPath) co
 
 SnapperResult Snapper::setCleanupAlgorithm(const QString &config, const uint number, const QString &cleanupAlg) const
 {
-    return runSnapper(QStringLiteral("modify -c \"%1\" %2").arg(cleanupAlg).arg(number), config);
+    return runSnapper({"modify", "-c", cleanupAlg, QString::number(number)}, config);
 }
 
 SnapperResult Snapper::setConfig(const QString &name, const Config &configMap)
@@ -374,20 +375,15 @@ SnapperResult Snapper::setConfig(const QString &name, const Config &configMap)
 
     const QStringList keys = configMap.keys();
 
-    QString command;
+    QStringList arguments{QStringLiteral("set-config")};
     for (const QString &key : keys) {
-        if (configMap[key].isEmpty()) {
-            continue;
-        }
-
-        command += " " + key + "=" + configMap[key];
+        if (!configMap[key].isEmpty()) arguments << key + QLatin1Char('=') + configMap[key];
     }
-
-    if (command.isEmpty()) {
+    if (arguments.size() == 1) {
         result.exitCode = -1;
         result.outputList = QStringList() << tr("Failed to set config");
     } else {
-        result = runSnapper("set-config" + command, name);
+        result = runSnapper(arguments, name);
     }
 
     loadConfig(name);
@@ -419,30 +415,28 @@ QVector<SnapperSubvolume> Snapper::subvols(const QString &config)
  *
  */
 
-SnapperResult Snapper::runSnapper(const QString &command, const QString &name) const
+SnapperResult Snapper::runSnapper(const QStringList &arguments, const QString &name) const
 {
-    Result result;
     SnapperResult snapperResult;
-
-    if (name.isEmpty()) {
-        result = System::runCmd(m_snapperCommand + " --machine-readable csv -q " + command, true);
-    } else {
-        result = System::runCmd(m_snapperCommand + " -c " + name + " --machine-readable csv -q " + command, true);
-    }
-
+    // Never run user-provided config paths/descriptions through bash -c.
+    // Split only the fixed configured program+options, then pass all dynamic
+    // arguments as distinct QProcess argv entries.
+    QStringList configured = QProcess::splitCommand(m_snapperCommand);
+    if (configured.isEmpty()) return snapperResult;
+    const QString executable = configured.takeFirst();
+    if (!name.isEmpty()) configured << QStringLiteral("-c") << name;
+    configured << QStringLiteral("--machine-readable") << QStringLiteral("csv")
+               << QStringLiteral("-q");
+    configured.append(arguments);
+    const Result result = System::runCmd(executable, configured, true);
     snapperResult.exitCode = result.exitCode;
-
     if (result.exitCode != 0 || result.output.isEmpty()) {
         snapperResult.outputList = QStringList() << result.output;
     } else {
-        QStringList outputList = result.output.split('\n');
-
-        // Remove the header
+        QStringList outputList = result.output.split(QLatin1Char('\n'));
         outputList.removeFirst();
-
         snapperResult.outputList = outputList;
     }
-
     return snapperResult;
 }
 

@@ -130,6 +130,22 @@ private slots:
         QTest::mouseClick(refresh, Qt::LeftButton);
         QApplication::processEvents();
         QVERIFY2(snapshots->count() >= expected.size(), "refresh lost Snapper snapshots");
+        // A description is user-controlled and must never be passed to a shell.
+        QTemporaryDir safeScratch;
+        QVERIFY(safeScratch.isValid());
+        const QString marker = safeScratch.filePath(QStringLiteral("should-not-exist"));
+        const QString suspect = QStringLiteral("Harbor QA ' ; touch ") + marker + QStringLiteral("; #");
+        const auto result = snapper.createSnapshot(configName, suspect);
+        QCOMPARE(result.exitCode, 0);
+        QVERIFY2(!QFileInfo::exists(marker), "user snapshot text executed as a shell command");
+        snapper.load();
+        uint created = 0;
+        for (const auto &snap : snapper.snapshots(configName)) {
+            if (snap.desc == suspect) created = snap.number;
+        }
+        QVERIFY2(created > 0, "full user snapshot description not retained verbatim");
+        QCOMPARE(snapper.deleteSnapshot(configName, int(created)).exitCode, 0);
+        QVERIFY(!QFileInfo::exists(marker));
 #endif
     }
     void keyboardFocusAndAccessibilityNamesForCriticalControls() {

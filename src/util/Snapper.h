@@ -102,7 +102,7 @@ class Snapper : public QObject {
      */
     SnapperResult createConfig(const QString &name, const QString &path) const
     {
-        return runSnapper(QStringLiteral("create-config %1").arg(path), name);
+        return runSnapper({QStringLiteral("create-config"), path}, name);
     }
 
     /**
@@ -112,7 +112,7 @@ class Snapper : public QObject {
      */
     SnapperResult createSnapshot(const QString &name, const QString &desc) const
     {
-        return runSnapper(QStringLiteral("create -d '%1'").arg(desc), name);
+        return runSnapper({QStringLiteral("create"), QStringLiteral("-d"), desc}, name);
     }
 
     /**
@@ -124,7 +124,7 @@ class Snapper : public QObject {
      * @brief Deletes the given snapper config
      * @param name - The name of the Snapper config to delete
      */
-    SnapperResult deleteConfig(const QString &name) const { return runSnapper("delete-config", name); }
+    SnapperResult deleteConfig(const QString &name) const { return runSnapper({QStringLiteral("delete-config")}, name); }
 
     /**
      * @brief Deletes a given Snapper snapshot
@@ -133,7 +133,7 @@ class Snapper : public QObject {
      */
     SnapperResult deleteSnapshot(const QString &name, const int num) const
     {
-        return runSnapper(QStringLiteral("delete %1").arg(num), name);
+        return runSnapper({QStringLiteral("delete"), QString::number(num)}, name);
     }
 
     /**
@@ -144,13 +144,8 @@ class Snapper : public QObject {
      */
     SnapperResult changeSnapshotDescription(const QString &name, const int num, const QString &desc) const
     {
-        QString asciiDesc = desc.toLatin1(); // Ensure only ASCII chars
-        // Snapper does not recommend using any non ASCII chars (it's ok if you use utf-8 everywhere, but better safe than sorry)
-
-        // Escape Single quotes since they are used to delimit the description
-        asciiDesc.replace("'", "'\\''");
-
-        return runSnapper(QStringLiteral("modify --description '%1' %2").arg(asciiDesc).arg(num), name);
+        return runSnapper({QStringLiteral("modify"), QStringLiteral("--description"),
+                          desc, QString::number(num)}, name);
     }
 
     /**
@@ -268,7 +263,7 @@ class Snapper : public QObject {
     // Maps the subvolumes to their snapshot directories.  key is the snapshot subvol path
     QMap<QString, MapSubvol> m_subvolMap;
 
-    SnapperResult runSnapper(const QString &command, const QString &name = "") const;
+    SnapperResult runSnapper(const QStringList &arguments, const QString &name = "") const;
 };
 
 #endif // SNAPPER_H
