@@ -179,6 +179,23 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     prune->setEnabled(false);
     sweepOrphans->setEnabled(false);
     m_parentSnapshots->setEnabled(false);
+    // Never let an archive selected under another machine/repository be used
+    // for a destructive prune or a staged restore after the context changes.
+    const auto invalidateCatalog = [this] {
+        ++m_contextRevision;
+        m_archives->clear();
+        m_machineSets->clear();
+        m_pendingRestore.clear();
+        m_pendingPruneArchive.clear();
+        m_pendingPruneRepo.clear();
+    };
+    connect(m_target, &QLineEdit::textChanged, this, invalidateCatalog);
+    connect(m_machineName, &QLineEdit::textChanged, this, invalidateCatalog);
+    connect(m_backend, &QComboBox::currentIndexChanged, this, invalidateCatalog);
+    connect(m_staging, &QLineEdit::textChanged, this, [this] {
+        ++m_contextRevision;
+        m_pendingRestore.clear();
+    });
     connect(refresh, &QPushButton::clicked, this, [this] {
         if (m_snapper) m_snapper->load();
         m_configs->clear();
@@ -516,6 +533,15 @@ void RemoteBackupWidget::launch(const QStringList &arguments, const QString &pur
         return;
     }
     m_purpose = purpose;
+    // Bind every asynchronous result to the exact request context. UI inputs
+    // remain editable while a backend runs, so a successful old response must
+    // never populate a new machine's catalog or authorize a stale restore.
+    m_requestRevision = m_contextRevision;
+    m_requestRepo = m_target->text();
+    m_requestMachine = m_machineName->text();
+    m_requestCas = isCasMode();
+    m_requestStaging = m_staging->text();
+    m_requestArchive = selectedArchive();
     m_cancelRequested = false;
     m_cancel->setEnabled(true);
     m_stdout.clear();
@@ -659,6 +685,16 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
         return;
     }
     if (m_purpose == QLatin1String("cas-prune-preview")) {
+        if (m_requestRevision != m_contextRevision ||
+            !HarborRemote::selectionContextMatches(m_requestRepo, m_requestMachine, m_requestCas,
+                                                    m_target->text(), m_machineName->text(), isCasMode()) ||
+            m_requestRepo != m_pendingPruneRepo ||
+            (!m_pendingPruneArchive.isEmpty() &&
+             (m_requestArchive != m_pendingPruneArchive ||
+              selectedArchive() != m_pendingPruneArchive))) {
+            appendOutput(tr("Backup context changed; refresh archives before pruning."));
+            return;
+        }
         QJsonParseError error{};
         const auto doc = QJsonDocument::fromJson(m_stdout, &error);
         if (error.error != QJsonParseError::NoError || !doc.isObject()) {
@@ -698,6 +734,12 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
         return;
     }
     if (m_purpose == QLatin1String("list")) {
+        if (m_requestRevision != m_contextRevision ||
+            !HarborRemote::selectionContextMatches(m_requestRepo, m_requestMachine, m_requestCas,
+                                                    m_target->text(), m_machineName->text(), isCasMode())) {
+            appendOutput(tr("Backup context changed; refusing stale archive catalog."));
+            return;
+        }
         QJsonParseError error{};
         const auto doc = QJsonDocument::fromJson(m_stdout, &error);
         if (error.error != QJsonParseError::NoError || !doc.isArray()) {
@@ -720,6 +762,12 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
         }
     }
     if (m_purpose == QLatin1String("list-transfers")) {
+        if (m_requestRevision != m_contextRevision ||
+            !HarborRemote::selectionContextMatches(m_requestRepo, m_requestMachine, m_requestCas,
+                                                    m_target->text(), m_machineName->text(), isCasMode())) {
+            appendOutput(tr("Backup context changed; refusing stale archive catalog."));
+            return;
+        }
         QJsonParseError error{};
         const auto doc = QJsonDocument::fromJson(m_stdout, &error);
         if (error.error != QJsonParseError::NoError || !doc.isArray()) {
@@ -746,6 +794,14 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
         }
     }
     if (m_purpose == QLatin1String("restore-preview-cas")) {
+        if (m_requestRevision != m_contextRevision ||
+            !HarborRemote::selectionContextMatches(m_requestRepo, m_requestMachine, m_requestCas,
+                                                    m_target->text(), m_machineName->text(), isCasMode()) ||
+            m_requestStaging != m_staging->text() ||
+            m_requestArchive != selectedArchive() || m_pendingRestore.isEmpty()) {
+            appendOutput(tr("Backup or recovery destination changed; refusing stale restore preview."));
+            return;
+        }
         if (QMessageBox::question(this, tr("Confirm staged Btrfs receive"),
               tr("CAS archive chain verified. Receive every required snapshot into the selected empty Btrfs staging directory? "
                  "This will not activate a system rollback.")) == QMessageBox::Yes) {
@@ -757,6 +813,14 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
         return;
     }
     if (m_purpose == QLatin1String("restore-preview")) {
+        if (m_requestRevision != m_contextRevision ||
+            !HarborRemote::selectionContextMatches(m_requestRepo, m_requestMachine, m_requestCas,
+                                                    m_target->text(), m_machineName->text(), isCasMode()) ||
+            m_requestStaging != m_staging->text() ||
+            m_requestArchive != selectedArchive() || m_pendingRestore.isEmpty()) {
+            appendOutput(tr("Backup or recovery destination changed; refusing stale restore preview."));
+            return;
+        }
         if (QMessageBox::question(this, tr("Confirm recovery"),
                 tr("Dry-run successful. Restore the selected snapshot into the staging directory? "
                    "Existing system subvolumes will not be replaced.")) == QMessageBox::Yes) {

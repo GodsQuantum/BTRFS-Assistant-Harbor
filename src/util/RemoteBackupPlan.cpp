@@ -23,6 +23,11 @@ bool safePath(const QString &path, bool rootAllowed = false) {
 }
 }
 namespace HarborRemote {
+bool selectionContextMatches(const QString &repo, const QString &machine, bool cas,
+                             const QString &currentRepo, const QString &currentMachine, bool currentCas) {
+    return !repo.isEmpty() && repo == currentRepo &&
+           machine == currentMachine && cas == currentCas;
+}
 QString profileId(const QString &config, const QString &target) {
     if (!safeConfig(config) || !safePath(target)) return {};
     static const QUuid namespaceId(QStringLiteral("{18e0b70e-dced-4a95-9179-8b45efbd3f51}"));

@@ -2,6 +2,10 @@
 #include <QString>
 #include <QStringList>
 namespace HarborRemote {
+// Exact request context, required before showing an asynchronous listing or
+// using a prune/restore preview; never compare only the archive filename.
+bool selectionContextMatches(const QString &repo, const QString &machine, bool cas,
+                             const QString &currentRepo, const QString &currentMachine, bool currentCas);
 QString profileId(const QString &config, const QString &target);
 QString profileIdForEngine(const QString &config, const QString &target, bool cas, const QString &machine = QString());
 QStringList scheduleInstallerArguments(const QString &config, const QString &target,

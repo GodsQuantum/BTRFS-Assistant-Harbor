@@ -2015,5 +2015,17 @@ This cannot be undone. The plan will be checked again under repository lock.</so
             <source>Dry-run successful. Restore the selected snapshot into the staging directory? Existing system subvolumes will not be replaced.</source>
             <translation>试运行成功。是否将所选快照恢复到暂存目录？不会替换现有的系统子卷。</translation>
         </message>
+            <message>
+            <source>Backup context changed; refresh archives before pruning.</source>
+            <translation>备份上下文已更改；清理前请刷新归档列表。</translation>
+        </message>
+        <message>
+            <source>Backup context changed; refusing stale archive catalog.</source>
+            <translation>备份上下文已更改；拒绝使用过期的归档列表。</translation>
+        </message>
+        <message>
+            <source>Backup or recovery destination changed; refusing stale restore preview.</source>
+            <translation>备份或恢复目标已更改；拒绝使用过期的恢复预览。</translation>
+        </message>
     </context>
 </TS>

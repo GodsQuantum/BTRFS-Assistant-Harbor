@@ -53,6 +53,13 @@ private:
     QStringList m_pendingRestore;
     QString m_pendingPruneArchive;
     QString m_pendingPruneRepo;
+    QString m_requestRepo;
+    QString m_requestMachine;
+    QString m_requestStaging;
+    QString m_requestArchive;
+    bool m_requestCas = false;
+    quint64 m_contextRevision = 0;
+    quint64 m_requestRevision = 0;
     QString m_machineListRepo;
     QString m_machinePreviewRepo;
     QString m_machinePreviewStaging;
