@@ -49,11 +49,14 @@ sync
 btrfs subvolume snapshot -r /mnt/fs/work /mnt/fs/next
 cp /mnt/share/harbor-transport /tmp/harbor-transport
 chmod 700 /tmp/harbor-transport
-adduser -D -u 1000 harborbackup
-export PKEXEC_UID=1000
+share_uid="$(stat -c %u /mnt/share)"
+test "$share_uid" -ge 1000 && test "$share_uid" -le 60000
+echo "QA_SHARED_UID=$share_uid"
+adduser -D -u "$share_uid" harborbackup
+export PKEXEC_UID="$share_uid"
 mkdir -p /mnt/share/cas
 /tmp/harbor-transport init --repo /mnt/share/cas --allow-local
-test "$(stat -c %u /mnt/share/cas/.harbor-repo-id)" = 1000
+test "$(stat -c %u /mnt/share/cas/.harbor-repo-id)" = "$share_uid"
 /tmp/harbor-transport send --repo /mnt/share/cas --name base-vm --snapshot /mnt/fs/base --experimental --allow-local --retries 0
 /tmp/harbor-transport send --repo /mnt/share/cas --name next-vm --snapshot /mnt/fs/next --parent /mnt/fs/base --parent-archive base-vm --experimental --allow-local --retries 0
 /tmp/harbor-transport verify-stream --repo /mnt/share/cas --name base-vm
@@ -108,8 +111,8 @@ test -f /mnt/share/cas/manifests/next-vm.json
 # distributed lock semantics and is intentionally disallowed for prune.
 repo=/mnt/fs/cas-gc-qa
 mkdir -p "$repo"
-chown 1000:1000 "$repo"
-export PKEXEC_UID=1000
+chown "$(stat -c %u /mnt/share)" "$repo"
+export PKEXEC_UID="$(stat -c %u /mnt/share)"
 /tmp/harbor-transport init --repo "$repo" --allow-local
 /tmp/harbor-transport send --repo "$repo" --name base-vm --snapshot /mnt/fs/base --experimental --allow-local --retries 0
 /tmp/harbor-transport send --repo "$repo" --name next-vm --snapshot /mnt/fs/next --parent /mnt/fs/base --parent-archive base-vm --experimental --allow-local --retries 0
@@ -163,7 +166,7 @@ dd if=/dev/urandom of=/mnt/fs/work/crash-payload.bin bs=1M count=128 status=none
 sync
 btrfs subvolume snapshot -r /mnt/fs/work /mnt/fs/crash-ro
 before="$(find "$repo/objects" -type f -name '*.zst' | wc -l)"
-export PKEXEC_UID=1000
+export PKEXEC_UID="$(stat -c %u /mnt/share)"
 /tmp/harbor-transport send --repo "$repo" --name crash-test --snapshot /mnt/fs/crash-ro --experimental --allow-local --retries 0 > /mnt/share/crash-send-before.log 2>&1 &
 pid="$!"
 i=0
@@ -198,11 +201,11 @@ set -eu
 dd if=/dev/urandom of=/mnt/fs/work/bench-r30.bin bs=1M count=64 status=none
 sync
 btrfs subvolume snapshot -r /mnt/fs/work /mnt/fs/bench-r30
-export PKEXEC_UID=1000
+export PKEXEC_UID="$(stat -c %u /mnt/share)"
 for i in 1 2 3; do
  repo="/mnt/fs/bench-r30-$i"
  mkdir -p "$repo"
- chown 1000:1000 "$repo"
+ chown "$(stat -c %u /mnt/share)" "$repo"
  /tmp/harbor-transport init --repo "$repo" --allow-local > "/mnt/share/r30-$i-init.json"
  time /tmp/harbor-transport send --repo "$repo" --name "bench-$i" --snapshot /mnt/fs/bench-r30 --experimental --allow-local --retries 0 > "/mnt/share/r30-$i-send.json"
  time /tmp/harbor-transport verify-stream --repo "$repo" --name "bench-$i" > "/mnt/share/r30-$i-verify.json"

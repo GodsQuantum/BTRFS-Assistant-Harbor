@@ -419,7 +419,11 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
 #ifdef Q_OS_UNIX
     // Give each backup CLI and its btrfs send/receive children their own
     // session so a cancellation terminates the entire isolated process group.
-    m_process->setUnixProcessParameters(QProcess::UnixProcessFlag::CreateNewSession);
+    // Works on Qt 6.4 (Ubuntu 24.04) through Qt 6.10+. Run only
+    // async-signal-safe POSIX calls between fork/vfork and exec.
+    m_process->setChildProcessModifier([] {
+        if (::setsid() == -1) _exit(127);
+    });
 #endif
     connect(m_cancel, &QPushButton::clicked, this, [this] {
         if (m_process->state() == QProcess::NotRunning) return;
