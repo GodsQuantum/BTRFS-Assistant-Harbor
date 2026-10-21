@@ -70,15 +70,15 @@ jobs:
           set -euo pipefail
           (cd dist/fedora44-baseline && sha256sum -c SHA256SUMS)
           (cd dist/fedora44 && sha256sum -c SHA256SUMS)
-          dnf install -y ./dist/fedora44-baseline/*.rpm
+          dnf install -y ./dist/fedora44-baseline/btrfs-assistant-harbor-[0-9]*.rpm
           old="$(rpm -q --qf '%{VERSION}-%{RELEASE}' btrfs-assistant-harbor)"
-          new="$(rpm -qp --qf '%{VERSION}-%{RELEASE}' dist/fedora44/*.rpm)"
+          new="$(rpm -qp --qf '%{VERSION}-%{RELEASE}' dist/fedora44/btrfs-assistant-harbor-[0-9]*.rpm)"
           test "$old" != "$new"
-          dnf upgrade -y ./dist/fedora44/*.rpm
+          dnf upgrade -y ./dist/fedora44/btrfs-assistant-harbor-[0-9]*.rpm
           test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' btrfs-assistant-harbor)" = "$new"
-          dnf downgrade -y ./dist/fedora44-baseline/*.rpm
+          dnf downgrade -y ./dist/fedora44-baseline/btrfs-assistant-harbor-[0-9]*.rpm
           test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' btrfs-assistant-harbor)" = "$old"
-          dnf upgrade -y ./dist/fedora44/*.rpm
+          dnf upgrade -y ./dist/fedora44/btrfs-assistant-harbor-[0-9]*.rpm
           test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' btrfs-assistant-harbor)" = "$new"
           test -x /usr/bin/harbor-transport
           dnf remove -y btrfs-assistant-harbor
