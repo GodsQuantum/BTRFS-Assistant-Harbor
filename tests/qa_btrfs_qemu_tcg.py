@@ -61,8 +61,8 @@ test "$(stat -c %u /mnt/share/cas/.harbor-repo-id)" = "$share_uid"
 /tmp/harbor-transport send --repo /mnt/share/cas --name next-vm --snapshot /mnt/fs/next --parent /mnt/fs/base --parent-archive base-vm --experimental --allow-local --retries 0
 /tmp/harbor-transport verify-stream --repo /mnt/share/cas --name base-vm
 /tmp/harbor-transport verify-stream --repo /mnt/share/cas --name next-vm
-test "$(stat -c %u /mnt/share/cas/manifests/base-vm.json)" = 1000
-test "$(stat -c %u /mnt/share/cas/manifests/next-vm.json)" = 1000
+test "$(stat -c %u /mnt/share/cas/manifests/base-vm.json)" = "$share_uid"
+test "$(stat -c %u /mnt/share/cas/manifests/next-vm.json)" = "$share_uid"
 mkdir -p /mnt/fs/received
 /tmp/harbor-transport receive --repo /mnt/share/cas --name next-vm --staging /mnt/fs/received --preview
 /tmp/harbor-transport receive --repo /mnt/share/cas --name next-vm --staging /mnt/fs/received --confirm
@@ -234,8 +234,10 @@ def extract_iso(iso: Path, root: Path) -> None:
 def run_guest(child: pexpect.spawn, script_path: str, label: str, timeout: int = 150) -> None:
     marker = f"__HARBOR_{label}_SUCCESS__"
     child.sendline(f"sh /mnt/share/{script_path} && echo {marker}".encode())
-    child.expect(marker.encode(), timeout=timeout)
-    child.expect(r"localhost:~#", timeout=15)
+    matched = child.expect([marker.encode(), b"localhost:~#"], timeout=timeout)
+    if matched != 0:
+        raise RuntimeError(f"{label} failed before success marker; console: {child.before[-1400:]!r}")
+    child.expect(b"localhost:~#", timeout=15)
     print(f"PASS {label}", flush=True)
 
 def main() -> None:
