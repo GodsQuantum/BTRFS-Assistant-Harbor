@@ -38,6 +38,11 @@ grep -q 'Harbor QA before' "$work/list.txt"
 grep -q 'Harbor QA after' "$work/list.txt"
 snapper --no-dbus -c "$config" status "$first..$second" > "$work/status.txt"
 grep -q qa.txt "$work/status.txt"
+if [[ -n "${HARBOR_GUI_QA_SNAPPER_TEST:-}" ]]; then
+  test -x "$HARBOR_GUI_QA_SNAPPER_TEST"
+  QT_QPA_PLATFORM=offscreen HARBOR_GUI_QA_SNAPPER_CONFIG="$config" \
+    "$HARBOR_GUI_QA_SNAPPER_TEST" realSnapperSnapshotsAppearInRemoteBackupUi
+fi
 snapper --no-dbus -c "$config" delete --sync "$first" "$second"
 test ! -d "$work/mount/source/.snapshots/$first/snapshot"
 test ! -d "$work/mount/source/.snapshots/$second/snapshot"
