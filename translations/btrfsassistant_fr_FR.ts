@@ -549,6 +549,18 @@ Restauration amorçable sur machine nue : NON CERTIFIÉE.
             <source>Select the correct machine identity and refresh the repository list before pruning.</source>
             <translation>Sélectionnez la bonne identité de machine et actualisez la liste du dépôt avant toute purge.</translation>
         </message>
+            <message>
+            <source>Backup context changed; refresh archives before pruning.</source>
+            <translation>Le contexte de sauvegarde a changé ; actualisez les archives avant la purge.</translation>
+        </message>
+        <message>
+            <source>Backup context changed; refusing stale archive catalog.</source>
+            <translation>Le contexte de sauvegarde a changé ; refus de la liste d’archives obsolète.</translation>
+        </message>
+        <message>
+            <source>Backup or recovery destination changed; refusing stale restore preview.</source>
+            <translation>La destination de sauvegarde ou de récupération a changé ; refus de l’aperçu de restauration obsolète.</translation>
+        </message>
     </context>
     <context>
         <name>Btrfs</name>

@@ -115,6 +115,42 @@ private slots:
         QApplication::processEvents();
         QVERIFY(engine->hasFocus());
     }
+    void switchingMachineRepoOrBackendClearsStaleCatalogSelections() {
+        RemoteBackupWidget widget(nullptr);
+        auto *engine = backend(widget);
+        QVERIFY(engine);
+        auto *machine = static_cast<QLineEdit *>(nullptr);
+        auto *target = static_cast<QLineEdit *>(nullptr);
+        for (auto *field : widget.findChildren<QLineEdit*>()) {
+            if (field->toolTip().contains(QStringLiteral("Machine identity")))
+                machine = field;
+            if (field->placeholderText().contains(QStringLiteral("NFS/SMB")))
+                target = field;
+        }
+        QVERIFY(machine && target);
+        const auto lists = widget.findChildren<QListWidget*>();
+        QCOMPARE(lists.size(), 2);
+        auto *archives = lists.at(0);
+        auto *sets = lists.at(1);
+        engine->setCurrentIndex(1);
+        target->setText(QStringLiteral("/tmp/harbor-QA-repo-A"));
+        machine->setText(QStringLiteral("Pegasus"));
+        archives->addItem(QStringLiteral("m@Pegasus@snap-root-42"));
+        sets->addItem(QStringLiteral("legacy-machine-set"));
+        QCOMPARE(archives->count(), 1);
+        QCOMPARE(sets->count(), 1);
+        machine->setText(QStringLiteral("Galactica"));
+        QCOMPARE(archives->count(), 0);
+        QCOMPARE(sets->count(), 0);
+        archives->addItem(QStringLiteral("m@Galactica@snap-root-42"));
+        target->setText(QStringLiteral("/tmp/harbor-QA-repo-B"));
+        QCOMPARE(archives->count(), 0);
+        archives->addItem(QStringLiteral("old-legacy-entry"));
+        engine->setCurrentIndex(0);
+        QCOMPARE(archives->count(), 0);
+        QCOMPARE(sets->count(), 0);
+    }
+
     void switchingEnginesUpdatesEnabledActions() {
         RemoteBackupWidget w(nullptr);
         auto *c = backend(w);

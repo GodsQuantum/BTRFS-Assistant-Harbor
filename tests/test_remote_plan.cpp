@@ -5,6 +5,11 @@
 #include <QUuid>
 int main() {
   using namespace HarborRemote;
+  REQUIRE(selectionContextMatches("/mnt/backup", "Pegasus", true, "/mnt/backup", "Pegasus", true));
+  REQUIRE(!selectionContextMatches("/mnt/backup", "Pegasus", true, "/mnt/another", "Pegasus", true));
+  REQUIRE(!selectionContextMatches("/mnt/backup", "Pegasus", true, "/mnt/backup", "Galactica", true));
+  REQUIRE(!selectionContextMatches("/mnt/backup", "Pegasus", true, "/mnt/backup", "Pegasus", false));
+  REQUIRE(!selectionContextMatches("", "Pegasus", true, "", "Pegasus", true));
   const QString id = profileId("root", "/mnt/backup");
   REQUIRE(!QUuid(id).isNull());
   REQUIRE(id == "3554efe8-75e3-59bd-97a3-0526b0fd90e2");
