@@ -5,6 +5,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 jobs:
   fedora44-rpm:
     runs-on: ubuntu-24.04
@@ -55,6 +56,33 @@ jobs:
           test -x /usr/bin/harbor-transport
           rpm -e btrfs-assistant-harbor
           if rpm -q btrfs-assistant-harbor; then exit 32; fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: github.ref == 'refs/heads/cert/alpha9-20261015-qa-hardening'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39654023512
+          name: harbor-fedora44-rpm-QA
+          path: dist/fedora44-baseline
+      - name: Fedora native RPM cross-version upgrade/rollback
+        if: github.ref == 'refs/heads/cert/alpha9-20261015-qa-hardening'
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist/fedora44-baseline && sha256sum -c SHA256SUMS)
+          (cd dist/fedora44 && sha256sum -c SHA256SUMS)
+          dnf install -y ./dist/fedora44-baseline/*.rpm
+          old="$(rpm -q --qf '%{VERSION}-%{RELEASE}' btrfs-assistant-harbor)"
+          new="$(rpm -qp --qf '%{VERSION}-%{RELEASE}' dist/fedora44/*.rpm)"
+          test "$old" != "$new"
+          dnf upgrade -y ./dist/fedora44/*.rpm
+          test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' btrfs-assistant-harbor)" = "$new"
+          dnf downgrade -y ./dist/fedora44-baseline/*.rpm
+          test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' btrfs-assistant-harbor)" = "$old"
+          dnf upgrade -y ./dist/fedora44/*.rpm
+          test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' btrfs-assistant-harbor)" = "$new"
+          test -x /usr/bin/harbor-transport
+          dnf remove -y btrfs-assistant-harbor
+          echo "PASS_FEDORA44_CROSS_VERSION old=$old new=$new"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: harbor-fedora44-rpm-QA
@@ -110,6 +138,32 @@ jobs:
           test -x /usr/bin/harbor-transport
           pacman -R --noconfirm btrfs-assistant-harbor
           if pacman -Q btrfs-assistant-harbor; then exit 32; fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: github.ref == 'refs/heads/cert/alpha9-20261015-qa-hardening'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39654023512
+          name: harbor-arch-pkg-QA
+          path: dist/arch-baseline
+      - name: Arch native cross-version pacman upgrade and rollback
+        if: github.ref == 'refs/heads/cert/alpha9-20261015-qa-hardening'
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist/arch-baseline && sha256sum -c SHA256SUMS)
+          (cd dist/arch && sha256sum -c SHA256SUMS)
+          pacman -U --noconfirm ./dist/arch-baseline/*.pkg.tar.zst
+          old="$(pacman -Q btrfs-assistant-harbor | awk '{print $2}')"
+          pacman -U --noconfirm ./dist/arch/*.pkg.tar.zst
+          new="$(pacman -Q btrfs-assistant-harbor | awk '{print $2}')"
+          test "$old" != "$new"
+          test -x /usr/bin/harbor-transport
+          pacman -U --noconfirm ./dist/arch-baseline/*.pkg.tar.zst
+          test "$(pacman -Q btrfs-assistant-harbor | awk '{print $2}')" = "$old"
+          pacman -U --noconfirm ./dist/arch/*.pkg.tar.zst
+          test "$(pacman -Q btrfs-assistant-harbor | awk '{print $2}')" = "$new"
+          pacman -R --noconfirm btrfs-assistant-harbor
+          echo "PASS_ARCH_CROSS_VERSION old=$old new=$new"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: harbor-arch-pkg-QA

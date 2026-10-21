@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: harbor-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -127,6 +128,35 @@ jobs:
           test -x /usr/bin/harbor-transport
           apt-get purge -y btrfs-assistant-harbor
           if dpkg-query -W -f='${Status}' btrfs-assistant-harbor 2>/dev/null | grep -q 'install ok installed'; then exit 32; fi
+      # Baseline artifacts are pinned to an earlier green QA commit. This
+      # branch-scoped gate must not silently disappear: expired baselines fail.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: github.ref == 'refs/heads/cert/alpha9-20261015-qa-hardening'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39654023427
+          name: harbor-debian13-QA-candidate
+          path: dist/debian13-baseline
+      - name: Debian cross-version upgrade, downgrade, re-upgrade
+        if: github.ref == 'refs/heads/cert/alpha9-20261015-qa-hardening'
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist/debian13-baseline && sha256sum -c SHA256SUMS)
+          (cd dist/debian13 && sha256sum -c SHA256SUMS)
+          apt-get install -y --no-install-recommends ./dist/debian13-baseline/*.deb
+          old="$(dpkg-query -W -f='${Version}' btrfs-assistant-harbor)"
+          new="$(dpkg-deb -f dist/debian13/*.deb Version)"
+          dpkg --compare-versions "$new" gt "$old"
+          apt-get install -y --no-install-recommends ./dist/debian13/*.deb
+          test "$(dpkg-query -W -f='${Version}' btrfs-assistant-harbor)" = "$new"
+          apt-get install -y --allow-downgrades --no-install-recommends ./dist/debian13-baseline/*.deb
+          test "$(dpkg-query -W -f='${Version}' btrfs-assistant-harbor)" = "$old"
+          apt-get install -y --no-install-recommends ./dist/debian13/*.deb
+          test "$(dpkg-query -W -f='${Version}' btrfs-assistant-harbor)" = "$new"
+          test -x /usr/bin/harbor-transport
+          apt-get purge -y btrfs-assistant-harbor
+          echo "PASS_DEBIAN13_CROSS_VERSION old=$old new=$new"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: harbor-debian13-QA-candidate

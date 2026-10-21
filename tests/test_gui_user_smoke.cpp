@@ -88,7 +88,7 @@ private slots:
         if (configName.isEmpty())
             QSKIP("Native Btrfs/Snapper loopback fixture required");
         Btrfs btrfs;
-        Snapper snapper(&btrfs, QStringLiteral("/usr/bin/snapper"));
+        Snapper snapper(&btrfs, QStringLiteral("/usr/bin/snapper --no-dbus"));
         QVERIFY2(snapper.configs().contains(configName), qPrintable(configName));
         const auto expected = snapper.snapshots(configName);
         QVERIFY2(expected.size() >= 2, "two real Snapper readonly snapshots required");
