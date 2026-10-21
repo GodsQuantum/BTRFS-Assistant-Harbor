@@ -7,11 +7,13 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::fs::{self, File, OpenOptions};
+use std::ffi::CString;
+use std::fs::{self, File};
 use std::io::{self, Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::unix::ffi::OsStrExt;
 #[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
@@ -102,57 +104,145 @@ fn safe_name(name: &str) -> bool {
         && name != ".."
         && !name.starts_with('.')
 }
+/// Resolve each directory component using a pinned descriptor; rejecting
+/// intermediate symlinks avoids path-based time-of-check/time-of-use redirection.
+fn checked_dir_open(path: &Path) -> Result<File> {
+    ensure!(path.is_absolute(), "repository path must be absolute");
+    let mut dir = File::open("/")?;
+    for component in path.components() {
+        match component {
+            Component::RootDir | Component::CurDir => {}
+            Component::Normal(part) => {
+                let name = CString::new(part.as_bytes())?;
+                let fd = unsafe {
+                    libc::openat(
+                        dir.as_raw_fd(),
+                        name.as_ptr(),
+                        libc::O_DIRECTORY | libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                    )
+                };
+                if fd < 0 {
+                    return Err(io::Error::last_os_error()).with_context(|| {
+                        format!("unsafe repository directory {}", path.display())
+                    });
+                }
+                dir = unsafe { File::from_raw_fd(fd) };
+            }
+            _ => return Err(anyhow!("unsafe parent directory traversal")),
+        }
+    }
+    Ok(dir)
+}
+fn basename_cstr(path: &Path) -> Result<CString> {
+    Ok(CString::new(
+        path.file_name()
+            .context("missing repository filename")?
+            .as_bytes(),
+    )?)
+}
 fn open_regular(path: &Path) -> Result<File> {
-    ensure!(!path.is_symlink(), "refusing symlink: {}", path.display());
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)?;
+    let dir = checked_dir_open(path.parent().context("missing file parent")?)?;
+    let name = basename_cstr(path)?;
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error()).context("read regular repository file");
+    }
+    let file = unsafe { File::from_raw_fd(fd) };
     ensure!(file.metadata()?.is_file(), "not regular file");
     Ok(file)
 }
-fn sync_directory(directory: &Path) -> Result<()> {
-    File::open(directory)?
-        .sync_all()
-        .context("fsync repository directory")
+fn open_lock_file(path: &Path) -> Result<File> {
+    let dir = checked_dir_open(path.parent().context("missing lock parent")?)?;
+    let name = basename_cstr(path)?;
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o600 as libc::mode_t,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error()).context("open repository lock");
+    }
+    let file = unsafe { File::from_raw_fd(fd) };
+    ensure!(file.metadata()?.is_file(), "lock must be regular file");
+    Ok(file)
+}
+fn unlink_regular(path: &Path) -> Result<()> {
+    let dir = checked_dir_open(path.parent().context("missing unlink parent")?)?;
+    let name = basename_cstr(path)?;
+    let rc = unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), 0) };
+    if rc < 0 {
+        return Err(io::Error::last_os_error()).context("unlink pinned repository file");
+    }
+    dir.sync_all()?;
+    Ok(())
+}
+fn ensure_subdir(parent: &Path, name: &str) -> Result<()> {
+    let dir = checked_dir_open(parent)?;
+    let component = CString::new(name)?;
+    let result = unsafe { libc::mkdirat(dir.as_raw_fd(), component.as_ptr(), 0o777) };
+    if result < 0 {
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::AlreadyExists {
+            return Err(error).context("create pinned repository directory");
+        }
+    }
+    checked_dir_open(&parent.join(name))?;
+    dir.sync_all()?;
+    Ok(())
 }
 fn write_unique(directory: &Path, name: &str, content: &[u8]) -> Result<bool> {
-    ensure!(
-        directory.is_dir() && !directory.is_symlink(),
-        "object directory unavailable"
-    );
-    let dest = directory.join(name);
-    ensure!(!dest.is_symlink(), "refusing symlink object");
-    let tmp = directory.join(format!(".harbor-temp-{}", Uuid::new_v4()));
+    let dir = checked_dir_open(directory)?;
+    let dest = CString::new(name)?;
+    let temporary = CString::new(format!(".harbor-temp-{}", Uuid::new_v4()))?;
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            temporary.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o600 as libc::mode_t,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error()).context("create CAS temporary object");
+    }
+    let mut file = unsafe { File::from_raw_fd(fd) };
     let result = (|| -> Result<bool> {
-        let mut tmpfile = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&tmp)?;
-        tmpfile.write_all(content)?;
-        tmpfile.sync_all()?;
-        match fs::hard_link(&tmp, &dest) {
-            Ok(()) => {
-                sync_directory(directory)?;
-                Ok(true)
+        file.write_all(content)?;
+        file.sync_all()?;
+        let rc = unsafe {
+            libc::linkat(
+                dir.as_raw_fd(),
+                temporary.as_ptr(),
+                dir.as_raw_fd(),
+                dest.as_ptr(),
+                0,
+            )
+        };
+        if rc < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::AlreadyExists {
+                return Ok(false);
             }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
-            Err(error) => Err(error).context("atomic no-clobber hardlink publication"),
+            return Err(error).context("publish immutable CAS object");
         }
+        dir.sync_all()?;
+        Ok(true)
     })();
-    let _ = fs::remove_file(&tmp);
+    drop(file);
+    let _ = unsafe { libc::unlinkat(dir.as_raw_fd(), temporary.as_ptr(), 0) };
     result
 }
-
 fn checked_real_directory(path: &Path) -> Result<()> {
-    // Preserve the underlying OS error (including transient network errno),
-    // rather than treating EHOSTDOWN as a permanent "not a directory".
-    let metadata = fs::symlink_metadata(path)?;
-    ensure!(
-        metadata.file_type().is_dir(),
-        "repository component must be a real directory"
-    );
+    checked_dir_open(path)?;
     Ok(())
 }
 
@@ -233,14 +323,7 @@ impl Repository {
     }
     fn ensure_directories(&self) -> Result<()> {
         for name in ["objects", "manifests"] {
-            let path = self.root.join(name);
-            if !path.exists() {
-                fs::create_dir(&path)?;
-            }
-            ensure!(
-                path.is_dir() && !path.is_symlink(),
-                "unsafe repository subdirectory"
-            );
+            ensure_subdir(&self.root, name)?;
         }
         Ok(())
     }
@@ -256,13 +339,10 @@ impl Repository {
     fn object_path(&self, hash: &str, create: bool) -> Result<PathBuf> {
         ensure!(valid_hash(hash), "invalid object digest");
         let prefix = self.root.join("objects").join(&hash[..2]);
-        if !prefix.exists() && create {
-            fs::create_dir(&prefix)?;
+        if create {
+            ensure_subdir(&self.root.join("objects"), &hash[..2])?;
         }
-        ensure!(
-            prefix.is_dir() && !prefix.is_symlink(),
-            "unsafe object directory"
-        );
+        checked_real_directory(&prefix)?;
         Ok(prefix.join(format!("{hash}.zst")))
     }
     /// A reserved @-delimited identifier cannot collide with any legacy
@@ -413,16 +493,7 @@ impl Repository {
     /// flock(); remote NFS/SMB semantics require independent qualification.
     pub fn read_lease(&self) -> Result<File> {
         self.guard()?;
-        let path = self.root.join(".harbor-repo.lock");
-        ensure!(!path.is_symlink(), "unsafe repository lock path");
-        let fd = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(path)?;
+        let fd = open_lock_file(&self.root.join(".harbor-repo.lock"))?;
         FileExt::lock_shared(&fd)?;
         self.guard()?;
         Ok(fd)
@@ -430,18 +501,11 @@ impl Repository {
 
     fn lock(&self) -> Result<File> {
         self.guard()?;
-        let lock_path = self.root.join(".harbor-repo.lock");
-        ensure!(!lock_path.is_symlink(), "unsafe lock path");
-        let fd = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(lock_path)?;
+        let fd = open_lock_file(&self.root.join(".harbor-repo.lock"))?;
         fd.lock_exclusive()?;
         Ok(fd)
     }
+
     // Include legacy manifests and all machine manifests in every inventory.
     // Unknown entries fail closed so GC never misses a live reference.
     fn manifest_inventory(&self) -> Result<Vec<String>> {
@@ -695,8 +759,7 @@ impl Repository {
         for name in &plan.remove_archives {
             self.guard()?;
             let path = self.manifest_path(name)?;
-            fs::remove_file(&path)?;
-            sync_directory(path.parent().context("missing manifest parent")?)?;
+            unlink_regular(&path)?;
         }
         // Recalculate after manifest deletion: if an error/crash interrupted
         // removal, a later explicit empty-selection sweep can reclaim orphans.
@@ -709,8 +772,7 @@ impl Repository {
         for (hash, (path, _)) in objects {
             if !referenced.contains(&hash) {
                 self.guard()?;
-                fs::remove_file(&path)?;
-                sync_directory(path.parent().context("missing object parent")?)?;
+                unlink_regular(&path)?;
             }
         }
         Ok(plan)
@@ -793,19 +855,11 @@ impl Repository {
         let _lock = self.lock()?;
         if let Some((machine, _)) = Self::machine_parts(name)? {
             let machines = self.root.join("machines");
-            if !machines.exists() {
-                fs::create_dir(&machines)?;
-            }
-            checked_real_directory(&machines)?;
+            ensure_subdir(&self.root, "machines")?;
             let home = machines.join(machine);
-            if !home.exists() {
-                fs::create_dir(&home)?;
-            }
-            checked_real_directory(&home)?;
+            ensure_subdir(&machines, machine)?;
             let manifests = home.join("manifests");
-            if !manifests.exists() {
-                fs::create_dir(&manifests)?;
-            }
+            ensure_subdir(&home, "manifests")?;
             checked_real_directory(&manifests)?;
         }
         let manifest_path = self.manifest_path(name)?;

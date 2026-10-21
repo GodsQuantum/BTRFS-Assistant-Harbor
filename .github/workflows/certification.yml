@@ -1,0 +1,156 @@
+name: Harbor certification CI
+on:
+  push:
+    branches: [main, 'cert/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rust:
+    name: Rust lint, tests and portable binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Native Rust and static musl prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends musl-tools pkg-config libzstd-dev
+          rustup target add x86_64-unknown-linux-musl
+      - name: Rust formatting, tests and Clippy
+        working-directory: transport
+        run: |
+          cargo fmt --all --check
+          cargo test --locked --all-targets
+          cargo clippy --locked --all-targets -- -D warnings
+      - name: Produce static transport
+        working-directory: transport
+        run: |
+          cargo build --locked --release --target x86_64-unknown-linux-musl
+          file target/x86_64-unknown-linux-musl/release/harbor-transport
+          sha256sum target/x86_64-unknown-linux-musl/release/harbor-transport
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: harbor-transport-static
+          path: transport/target/x86_64-unknown-linux-musl/release/harbor-transport
+          if-no-files-found: error
+          retention-days: 14
+
+  qt-and-python:
+    name: Qt/Python (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Native Qt/Snapper build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ pkg-config qt6-base-dev qt6-tools-dev qt6-tools-dev-tools libbtrfsutil-dev btrfs-progs snapper zstd libzstd-dev python3 python3-filelock python3-rich
+      - name: Qt6 build and CTest
+        run: |
+          cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build build/ci --parallel 4
+          QT_QPA_PLATFORM=offscreen ctest --test-dir build/ci --output-on-failure
+      - name: Python regression suite
+        run: PYTHONPATH=vendor/harbor-legacy:. python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Qt button cancels a real CAS stream, no partial manifest
+        env:
+          QT_QPA_PLATFORM: offscreen
+          HARBOR_GUI_QA_TRANSPORT: ${{ github.workspace }}/build/ci/harbor-rust/release/harbor-transport
+        run: |
+          test -x "$HARBOR_GUI_QA_TRANSPORT"
+          build/ci/src/test-harbor-gui-user-smoke cancellationDuringRealCasTransferRejectsPartialManifestAndAllowsRetry
+
+  debian13-package:
+    name: Native Debian 13 candidate (no stable release)
+    runs-on: ubuntu-24.04
+    container: debian:13
+    needs: [rust]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Debian 13 Qt/Btrfs toolchain
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cmake ninja-build g++ pkg-config qt6-base-dev qt6-tools-dev qt6-tools-dev-tools libbtrfsutil-dev btrfs-progs snapper zstd dpkg-dev python3 python3-filelock python3-rich ca-certificates git
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: harbor-transport-static
+          path: prebuilt
+      - name: Debian native GUI, CTest, package
+        run: |
+          cmake -S . -B build/debian13 -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCARGO_EXECUTABLE=/usr/bin/true
+          cmake --build build/debian13 --parallel 4 --target btrfs-assistant-harbor-bin test-harbor-gui-user-smoke test-remote-backup-plan test-machine-set-protocol
+          QT_QPA_PLATFORM=offscreen ctest --test-dir build/debian13 --output-on-failure
+          mkdir -p build/debian13/harbor-rust/release
+          install -m 0755 prebuilt/harbor-transport build/debian13/harbor-rust/release/harbor-transport
+          python3 packaging/debian/build_preview.py --version '0.1.0~alpha9-11+deb13' --build build/debian13 --out dist/debian13
+          dpkg-deb -f dist/debian13/*.deb Package Version Architecture Depends
+          sha256sum dist/debian13/*.deb > dist/debian13/SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: harbor-debian13-QA-candidate
+          path: |
+            dist/debian13/*.deb
+            dist/debian13/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+  btrfs-qemu-tcg:
+    name: Real Btrfs E2E on QEMU TCG
+    runs-on: ubuntu-24.04
+    needs: [rust]
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: harbor-transport-static
+          path: prebuilt
+      - name: QEMU and ISO tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 p7zip-full python3-pexpect
+      - name: Fetch pinned Alpine 3.23.3 ISO
+        run: |
+          curl --fail --location --retry 3 --silent --show-error \
+            --output "$RUNNER_TEMP/alpine.iso" \
+            https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/x86_64/alpine-virt-3.23.3-x86_64.iso
+          echo 'd91fb5c7a73528c89e0a1aa9a7d959f9deb9ca3dc5211e39bd73fd7df0d9070e  alpine.iso' | (cd "$RUNNER_TEMP" && sha256sum -c)
+      - name: True Btrfs full, incremental and 3 repeated restorations
+        run: |
+          python3 tests/qa_btrfs_qemu_tcg.py \
+            --binary "$GITHUB_WORKSPACE/prebuilt/harbor-transport" \
+            --iso "$RUNNER_TEMP/alpine.iso" \
+            --temp-root "$RUNNER_TEMP"
+      - name: Two isolated Linux QEMU guests sharing one CAS
+        run: |
+          python3 tests/qa_multimachine_two_qemu.py \
+            --binary "$GITHUB_WORKSPACE/prebuilt/harbor-transport" \
+            --iso "$RUNNER_TEMP/alpine.iso" \
+            --temp-root "$RUNNER_TEMP"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: harbor-btrfs-qemu-qa-evidence
+          path: |
+            ${{ runner.temp }}/r30-alpine-kvm-perf-guest.log
+            ${{ runner.temp }}/r30-*-*.json
+            ${{ runner.temp }}/R45_results.json
+            ${{ runner.temp }}/pegasus-qemu.log
+            ${{ runner.temp }}/galactica-qemu.log
+          if-no-files-found: ignore
+          retention-days: 14

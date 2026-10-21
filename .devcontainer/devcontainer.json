@@ -1,0 +1,38 @@
+{
+  "name": "Btrfs Assistant Harbor • Qt6 + Rust + Python",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "remoteUser": "vscode",
+  "workspaceFolder": "/workspaces/BTRFS-Assistant-Harbor",
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "8gb",
+    "storage": "32gb"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "stable",
+      "profile": "minimal"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "ms-vscode.cmake-tools",
+        "llvm-vs-code-extensions.vscode-clangd",
+        "ms-python.python",
+        "tamasfe.even-better-toml",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "cmake.configureOnOpen": false,
+        "rust-analyzer.cargo.allTargets": true
+      }
+    }
+  },
+  "updateContentCommand": "cargo fetch --locked --manifest-path transport/Cargo.toml",
+  "postCreateCommand": "bash .devcontainer/verify-tools.sh",
+  "shutdownAction": "stopContainer"
+}
