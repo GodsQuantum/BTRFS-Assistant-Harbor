@@ -143,7 +143,10 @@ jobs:
           CARGO_BUILD_JOBS: "3"
         run: |
           cmake -S . -B build/kwin6 -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build/kwin6 --parallel 3 --target test-harbor-gui-user-smoke
+          # The test loads FR/ZH compiled .qm catalogs; building the test
+          # executable alone does not run the independent translation target.
+          cmake --build build/kwin6 --parallel 3 \
+            --target btrfs-assistant-harbor_lrelease test-harbor-gui-user-smoke
           useradd -m -s /bin/bash harbor-kwin-qa
           # CTest writes Testing/Temporary; grant access only to this QA
           # output directory, not to the source tree or installed packages.

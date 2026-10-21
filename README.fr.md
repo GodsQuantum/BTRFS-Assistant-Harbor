@@ -1,5 +1,7 @@
 # Btrfs Assistant Harbor
 
+**Dernier état de certification (21 octobre 2026).** Les essais Codespaces/GitHub ont couvert Rust, les sauvegardes Btrfs en VM, Snapper natif, l'annulation réelle via Qt, un banc CAS de 1 000 cycles, les paquets Debian 13/Fedora 44/Arch et les contrôles français/chinois. [Consulter la matrice de preuves et les limitations](docs/validation/QA_CODESPACES_RELEASE_CANDIDATE_2026-10-21.md). Les bilans R29/alpha9 ci-dessous sont conservés comme historique et ne remplacent pas le dernier contrôle du commit concerné. **Stable non publié** : parité exhaustive des écrans Snapper, bureau Plasma complet et tests matériels de longue durée restent hors périmètre validé.
+
 **Fork de Btrfs Assistant 2.3.2** intégrant les sauvegardes distantes Snapper, un moteur CAS Rust et une récupération UEFI avec ReaR.
 
 [Guide utilisateur](docs/guides/UTILISATION_FR.md) · [Récupération de machine](docs/guides/RECUPERATION_REAR_FR.md) · [Tests et limites](docs/VALIDATION.md) · [Portes de release](docs/validation/RELEASE_GATES_CURRENT_2026-10-16.md) · [Cartographie](docs/PROJECT_MAP.md) · [Développement](docs/DEVELOPMENT.md) · [English](README.md)
