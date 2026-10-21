@@ -1,0 +1,88 @@
+name: Native packages (Fedora and Arch)
+on:
+  push:
+    branches: [main, 'cert/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fedora44-rpm:
+    runs-on: ubuntu-24.04
+    container: fedora:44
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Native Fedora 44 build requirements
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qttools-devel \
+            rust cargo pkgconf-pkg-config libzstd-devel btrfs-progs-devel \
+            btrfs-progs snapper polkit python3 python3-filelock python3-rich \
+            rpm-build tar gzip git which make
+          rpm --version
+          rustc --version
+          pkg-config --modversion Qt6Core
+      - name: RPM build and native tests
+        env:
+          ZSTD_SYS_USE_PKG_CONFIG: "1"
+          CARGO_BUILD_JOBS: "3"
+          QT_QPA_PLATFORM: "offscreen"
+        run: |
+          mkdir -p "$RUNNER_TEMP/rpmbuild/"{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+          git archive --format=tar --prefix=btrfs-assistant-harbor/ HEAD \
+            | gzip -n > "$RUNNER_TEMP/rpmbuild/SOURCES/btrfs-assistant-harbor-0.1.0alpha9.tar.gz"
+          cp packaging/fedora/btrfs-assistant-harbor.spec "$RUNNER_TEMP/rpmbuild/SPECS/"
+          rpmbuild --define "_topdir $RUNNER_TEMP/rpmbuild" \
+            -ba "$RUNNER_TEMP/rpmbuild/SPECS/btrfs-assistant-harbor.spec"
+          mkdir -p dist/fedora44
+          cp "$RUNNER_TEMP"/rpmbuild/RPMS/x86_64/*.rpm dist/fedora44/
+          (cd dist/fedora44 && sha256sum *.rpm > SHA256SUMS)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: harbor-fedora44-rpm-QA
+          path: dist/fedora44/
+          if-no-files-found: error
+          retention-days: 14
+
+  arch-pkg:
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Arch build requirements
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel cmake ninja qt6-base qt6-tools qt6-declarative \
+            rust cargo pkgconf btrfs-progs snapper polkit \
+            python python-filelock python-rich zstd git tar gzip
+          rustc --version
+          pkg-config --modversion Qt6Core
+      - name: Makepkg, test and SHA256
+        env:
+          QT_QPA_PLATFORM: "offscreen"
+          ZSTD_SYS_USE_PKG_CONFIG: "1"
+          CARGO_BUILD_JOBS: "3"
+        run: |
+          mkdir -p "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor"
+          git archive HEAD | tar -xf - -C "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor"
+          tar -czf "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-0.1.0alpha9.tar.gz" \
+            -C "$RUNNER_TEMP/arch-build" btrfs-assistant-harbor
+          SOURCE_SHA="$(sha256sum "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-0.1.0alpha9.tar.gz" | cut -d' ' -f1)"
+          sed "s/@SHA256@/$SOURCE_SHA/g" packaging/arch/PKGBUILD.in > "$RUNNER_TEMP/arch-build/PKGBUILD"
+          useradd -m -s /bin/bash harbor-builder
+          chown -R harbor-builder:harbor-builder "$RUNNER_TEMP/arch-build"
+          runuser -u harbor-builder -- bash -lc "cd '$RUNNER_TEMP/arch-build' && makepkg --noconfirm --cleanbuild"
+          mkdir -p dist/arch
+          cp "$RUNNER_TEMP"/arch-build/*.pkg.tar.zst dist/arch/
+          (cd dist/arch && sha256sum *.pkg.tar.zst > SHA256SUMS)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: harbor-arch-pkg-QA
+          path: dist/arch/
+          if-no-files-found: error
+          retention-days: 14
