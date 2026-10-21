@@ -151,6 +151,9 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
             -DCARGO_EXECUTABLE=/usr/bin/true
           cmake --build build/qa-real-btrfs --parallel 4 --target test-harbor-gui-user-smoke
+          # GitHub artifact download preserves bytes, not the executable bit.
+          file prebuilt/harbor-transport | grep -q ELF
+          chmod 0755 prebuilt/harbor-transport
           test -x prebuilt/harbor-transport
       - name: Cancel a real Btrfs send from Qt, retry and byte-compare restoration
         shell: bash
@@ -174,6 +177,54 @@ jobs:
             HARBOR_GUI_QA_BTRFS_STAGING_ROOT="$mountpoint" \
             "$GITHUB_WORKSPACE/build/qa-real-btrfs/src/test-harbor-gui-user-smoke" \
             cancellationDuringRealBtrfsSendPreservesRepository
+
+  cas-endurance:
+    name: CAS multiclient 1000-cycle endurance and bounded memory
+    runs-on: ubuntu-24.04
+    needs: [rust]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: harbor-transport-static
+          path: prebuilt
+      - name: Run independent isolated local CAS rounds
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod 0755 prebuilt/harbor-transport
+          file prebuilt/harbor-transport | grep -q ELF
+          mkdir -p "$RUNNER_TEMP/harbor-endurance"
+          for n in $(seq 1 10); do
+            python3 tests/qa_cas_endurance.py \
+              --binary "$GITHUB_WORKSPACE/prebuilt/harbor-transport" \
+              --temp-root "$RUNNER_TEMP/harbor-endurance" \
+              --rounds 100 \
+              > "$RUNNER_TEMP/harbor-endurance/run-$n.json"
+          done
+          python3 - "$RUNNER_TEMP/harbor-endurance" <<'PY_ENDURANCE'
+          import glob,json,sys
+          reports=[json.load(open(f)) for f in glob.glob(sys.argv[1]+'/run-*.json')]
+          assert len(reports)==10
+          assert all(r['status']=='PASS' and r['rounds']==100 for r in reports)
+          summary={'rounds':sum(r['rounds'] for r in reports),
+                   'seconds':sum(r['seconds'] for r in reports),
+                   'rss_kib_max':max(r['max_child_rss_kib'] for r in reports),
+                   'cross_machine_reused':sum(r['total_reused_chunks'] for r in reports)}
+          print('HARBOR_CAS_ENDURANCE_SUMMARY',json.dumps(summary))
+          assert summary['rss_kib_max'] < 524288, 'More than 512 MiB child RSS'
+          assert summary['cross_machine_reused'] > 1000
+          PY_ENDURANCE
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: harbor-cas-1000-rounds-evidence
+          path: ${{ runner.temp }}/harbor-endurance/*.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   btrfs-qemu-tcg:
     name: Real Btrfs E2E on QEMU TCG
