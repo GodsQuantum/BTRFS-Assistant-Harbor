@@ -79,6 +79,19 @@ int main() {
   REQUIRE(casIncremental.contains("--experimental"));
   REQUIRE(casSendArguments(casPath, "root", 123, sourcePath, true, parentPath, 0, false).isEmpty());
   REQUIRE(casSendArguments(casPath, "root", 123, "../bad", false, QString(), 0, false).isEmpty());
+  const auto scoped = casSendArguments(casPath, "root", 123, sourcePath, false,
+      QString(), 0, false, QStringLiteral("Pegasus"));
+  REQUIRE(scoped.contains("--machine"));
+  REQUIRE(scoped.contains("Pegasus"));
+  REQUIRE(scoped.at(scoped.indexOf("--name") + 1).startsWith("snap-root-123-"));
+  const QString parentId = QStringLiteral("m@Pegasus@snap-root-122-20261020");
+  const auto scopedDelta = casSendArguments(casPath, "root", 123, sourcePath, true,
+      parentPath, 122, false, QStringLiteral("Pegasus"), parentId);
+  REQUIRE(scopedDelta.contains(parentId));
+  REQUIRE(casSendArguments(casPath, "root", 123, sourcePath, true, parentPath, 122,
+      false, QStringLiteral("Pegasus"), QStringLiteral("m@Galactica@snap-root-122")).isEmpty());
+  REQUIRE(casVerifyArguments(casPath, "m@Pegasus@snap-root-123-20261021").contains("verify-stream"));
+  REQUIRE(casVerifyArguments(casPath, "m@Pegasus@../bad").isEmpty());
   REQUIRE(casVerifyArguments(casPath, "snap-root-123").contains("verify-stream"));
   REQUIRE(casPreviewArguments(casPath, "snap-root-123", "/mnt/restore").contains("--preview"));
   REQUIRE(casConfirmArguments(casPath, "snap-root-123", "/mnt/restore").contains("--confirm"));
@@ -92,6 +105,11 @@ int main() {
   REQUIRE(casId != profileIdForEngine("root", "/mnt/backup", false));
   const auto casSchedule = scheduleInstallerArguments("root", "/mnt/backup", "daily", false, true);
   REQUIRE(casSchedule.contains("--engine"));
+  const auto scopedTimer = scheduleInstallerArguments("root", casPath, "daily", false, true, "Pegasus");
+  REQUIRE(scopedTimer.contains("--machine"));
+  REQUIRE(scopedTimer.contains("Pegasus"));
+  REQUIRE(profileIdForEngine("root", casPath, true, "Pegasus") !=
+          profileIdForEngine("root", casPath, true, "Galactica"));
   REQUIRE(casSchedule.contains("cas"));
   REQUIRE(!casSchedule.contains("--allow-local"));
   REQUIRE(scheduleInstallerArguments("root", "/mnt/backup", "hourly", true, true).contains("--allow-local"));

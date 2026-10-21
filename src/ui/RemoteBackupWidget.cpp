@@ -24,6 +24,8 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QSettings>
+#include <QSysInfo>
 #include <QUuid>
 #include <QTimer>
 #ifdef Q_OS_UNIX
@@ -36,6 +38,7 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     : QWidget(parent), m_snapper(snapper), m_backend(new QComboBox(this)),
       m_parentSnapshots(new QComboBox(this)), m_configs(new QComboBox(this)),
       m_snapshots(new QComboBox(this)), m_target(new QLineEdit(this)),
+      m_machineName(new QLineEdit(this)),
       m_staging(new QLineEdit(this)), m_frequency(new QComboBox(this)), m_allowLocal(new QCheckBox(tr("Allow explicitly selected local destination"), this)),
       m_archives(new QListWidget(this)), m_machineSets(new QListWidget(this)), m_log(new QPlainTextEdit(this)),
       m_state(new QLabel(tr("Ready: no backup in progress"), this)), m_send(new QPushButton(tr("Send selected snapshot"), this)),
@@ -66,6 +69,17 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     m_backend->addItem(tr("Harbor checkpoint v2 — compatible archives"), QStringLiteral("legacy"));
     m_backend->addItem(tr("Harbor CAS / FastCDC — experimental"), QStringLiteral("cas"));
     form->addRow(tr("Backup engine"), m_backend);
+    QString detected = QSysInfo::machineHostName();
+    detected.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9_.-]")), QStringLiteral("-"));
+    if (detected.isEmpty()) detected = QStringLiteral("Machine");
+    QSettings harborSettings(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+    m_machineName->setText(harborSettings.value(QStringLiteral("cas/machineName"), detected).toString());
+    m_machineName->setToolTip(tr("Machine identity inside a shared CAS repository (not a sub-repository)."));
+    form->addRow(tr("CAS machine name"), m_machineName);
+    connect(m_machineName, &QLineEdit::editingFinished, this, [this] {
+        QSettings settings(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+        settings.setValue(QStringLiteral("cas/machineName"), m_machineName->text());
+    });
     form->addRow(tr("Snapper configuration"), m_configs);
     form->addRow(tr("Readonly snapshot"), snapshotRow);
     form->addRow(tr("Incremental parent (CAS)"), m_parentSnapshots);
@@ -178,12 +192,30 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     connect(m_send, &QPushButton::clicked, this, [this] {
         const auto num = m_snapshots->currentData().toUInt();
         if (isCasMode()) {
+            static const QRegularExpression machinePattern(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"));
+            if (!machinePattern.match(m_machineName->text()).hasMatch()) {
+                QMessageBox::warning(this, tr("Invalid machine identity"),
+                    tr("Enter a machine name using letters, digits, dots, underscores or hyphens (maximum 64 characters)."));
+                return;
+            }
             const unsigned parentNum = m_parentSnapshots->currentData().toUInt();
             const QString current = snapperSourcePath(num);
             const QString parentSnapshot = parentNum > 0 ? snapperSourcePath(parentNum) : QString();
+            QString parentArchive;
+            if (parentNum > 0) {
+                const QString prefix = QStringLiteral("m@%1@snap-%2-%3-")
+                    .arg(m_machineName->text(), m_configs->currentText()).arg(parentNum);
+                for (int i = 0; i < m_archives->count(); ++i) {
+                    const QString candidate = m_archives->item(i)->data(Qt::UserRole).toString();
+                    if (candidate.startsWith(prefix) && candidate > parentArchive)
+                        parentArchive = candidate;
+                }
+
+            }
             const auto args = HarborRemote::casSendArguments(
                 m_target->text(), m_configs->currentText(), num, current,
-                parentNum > 0, parentSnapshot, parentNum, m_allowLocal->isChecked());
+                parentNum > 0, parentSnapshot, parentNum, m_allowLocal->isChecked(),
+                m_machineName->text(), parentArchive);
             if (args.isEmpty() || !QFileInfo(current).isDir()) {
                 QMessageBox::warning(this, tr("Invalid Btrfs source"),
                     tr("Choose an accessible Snapper snapshot path and an initialized CAS repository."));
@@ -268,7 +300,7 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     connect(schedule, &QPushButton::clicked, this, [this] {
         const QStringList args = HarborRemote::scheduleInstallerArguments(
             m_configs->currentText(), m_target->text(), m_frequency->currentData().toString(),
-            m_allowLocal->isChecked(), isCasMode());
+            m_allowLocal->isChecked(), isCasMode(), isCasMode() ? m_machineName->text() : QString());
         if (args.isEmpty()) {
             QMessageBox::warning(this, tr("Invalid schedule"), tr("Choose a valid Snapper config, destination and frequency."));
             return;
@@ -284,7 +316,7 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     });
     connect(unschedule, &QPushButton::clicked, this, [this] {
         const QString id = HarborRemote::profileIdForEngine(
-            m_configs->currentText(), m_target->text(), isCasMode());
+            m_configs->currentText(), m_target->text(), isCasMode(), isCasMode() ? m_machineName->text() : QString());
         if (id.isEmpty()) {
             QMessageBox::warning(this, tr("Invalid schedule"), tr("Choose an existing Snapper configuration and destination."));
             return;
@@ -300,6 +332,12 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
         const QStringList args = HarborRemote::casPrunePreviewArguments(m_target->text(), archive);
         if (!isCasMode() || archive.isEmpty() || args.isEmpty()) {
             QMessageBox::warning(this, tr("No CAS archive selected"), tr("Select a committed CAS archive."));
+            return;
+        }
+        const QString localMachinePrefix = QStringLiteral("m@%1@").arg(m_machineName->text());
+        if (archive.startsWith(QStringLiteral("m@")) && !archive.startsWith(localMachinePrefix)) {
+            QMessageBox::warning(this, tr("Archive belongs to another machine"),
+                tr("Select the correct machine identity and refresh the repository list before pruning."));
             return;
         }
         m_pendingPruneRepo = m_target->text();
@@ -668,6 +706,11 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
             const auto obj = v.toObject();
             const QString name = obj.value(QStringLiteral("name")).toString();
             if (name.isEmpty()) continue;
+            // One object pool for all machines. UI is scoped to the selected
+            // machine; legacy archives are still visible for compatibility.
+            const QString activePrefix = QStringLiteral("m@%1@").arg(m_machineName->text());
+            if (isCasMode() && name.startsWith(QStringLiteral("m@")) && !name.startsWith(activePrefix))
+                continue;
             auto *item = new QListWidgetItem(name, m_archives);
             item->setData(Qt::UserRole, name);
         }

@@ -90,6 +90,9 @@ enum Action {
         repo: PathBuf,
         #[arg(long)]
         name: String,
+        /// Optional machine identity; uses one shared root CAS object pool.
+        #[arg(long)]
+        machine: Option<String>,
         #[arg(long)]
         file: PathBuf,
         #[arg(long)]
@@ -103,6 +106,9 @@ enum Action {
         repo: PathBuf,
         #[arg(long)]
         name: String,
+        /// Scoped archive ownership; destination is always the shared repo root.
+        #[arg(long)]
+        machine: Option<String>,
         #[arg(long)]
         snapshot: PathBuf,
         #[arg(long)]
@@ -526,6 +532,7 @@ fn execute(action: Action) -> Result<()> {
         Action::IngestFile {
             repo,
             name,
+            machine,
             file,
             experimental,
             allow_local,
@@ -539,6 +546,10 @@ fn execute(action: Action) -> Result<()> {
             );
             let repo = Repository::open(&repo)?;
             let stream = File::open(file)?;
+            let name = match machine {
+                Some(machine) => Repository::machine_archive_id(&machine, &name)?,
+                None => name,
+            };
             let stats = repo.ingest(&name, stream, || true)?;
             println!(
                 "{}",
@@ -549,6 +560,7 @@ fn execute(action: Action) -> Result<()> {
         Action::Send {
             repo,
             name,
+            machine,
             snapshot,
             parent,
             parent_archive,
@@ -560,6 +572,10 @@ fn execute(action: Action) -> Result<()> {
                 experimental,
                 "uncertified Btrfs transport requires --experimental"
             );
+            let name = match machine {
+                Some(machine) => Repository::machine_archive_id(&machine, &name)?,
+                None => name,
+            };
             run_send(
                 &repo,
                 &name,

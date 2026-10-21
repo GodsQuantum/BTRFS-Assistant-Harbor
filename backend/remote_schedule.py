@@ -33,6 +33,7 @@ class Profile:
     allow_local: bool = False
     engine: str = "checkpoint-v2"
     owner_uid: int | None = None
+    machine: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.config, str) or CONFIG_RE.fullmatch(self.config) is None:
@@ -54,17 +55,24 @@ class Profile:
                 raise ValueError("CAS schedule needs authenticated non-root desktop UID")
         elif self.owner_uid is not None:
             raise ValueError("legacy schedule does not store owner UID")
+        if self.machine is not None:
+            if self.engine != "cas" or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", self.machine) is None:
+                raise ValueError("Invalid CAS machine identity")
+            if len(self.config) > 70:
+                raise ValueError("CAS config name too long for archive ID")
 
     @property
     def profile_id(self) -> str:
         identity = self.config + "\n" + self.target
         if self.engine == "cas":
             identity += "\ncas"
+            if self.machine:
+                identity += "\n" + self.machine
         return str(uuid.uuid5(NAMESPACE, identity))
 
     def as_dict(self) -> dict:
         payload = {
-            "version": 1 if self.engine == "checkpoint-v2" else 2,
+            "version": 1 if self.engine == "checkpoint-v2" else (3 if self.machine else 2),
             "profile_id": self.profile_id,
             "config": self.config,
             "target": self.target,
@@ -73,17 +81,20 @@ class Profile:
         }
         if self.engine == "cas":
             payload.update(engine="cas", owner_uid=self.owner_uid)
+            if self.machine:
+                payload["machine"] = self.machine
         return payload
 
     @classmethod
     def from_dict(cls, data: dict) -> "Profile":
-        if not isinstance(data, dict) or data.get("version") not in (1, 2):
+        if not isinstance(data, dict) or data.get("version") not in (1, 2, 3):
             raise ValueError("Unsupported or damaged profile")
         if data["version"] == 1:
             profile = cls(data["config"], data["target"], data["frequency"], data["allow_local"])
         else:
             profile = cls(data["config"], data["target"], data["frequency"],
-                          data["allow_local"], data.get("engine"), data.get("owner_uid"))
+                          data["allow_local"], data.get("engine"), data.get("owner_uid"),
+                          data.get("machine") if data["version"] == 3 else None)
         if data.get("profile_id") != profile.profile_id:
             raise ValueError("Profile identity does not match stored values")
         return profile
@@ -229,6 +240,7 @@ def main(argv: list[str] | None = None) -> int:
     install.add_argument("--allow-local", action="store_true")
     install.add_argument("--engine", choices=["checkpoint-v2", "cas"], default="checkpoint-v2")
     install.add_argument("--enable", action="store_true")
+    install.add_argument("--machine")
     run = sub.add_parser("run")
     run.add_argument("--profile-id", required=True)
     remove = sub.add_parser("remove")
@@ -252,7 +264,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("CAS timer requires PKEXEC_UID from Polkit")
             owner_uid = int(uid_value)
         profile = Profile(args.snapper_config, args.target, args.frequency,
-                          args.allow_local, args.engine, owner_uid)
+                          args.allow_local, args.engine, owner_uid, args.machine)
         installed = install_profile(profile, CONFIG_DIR, UNIT_DIR, str(Path(__file__).resolve()))
         print(json.dumps({"profile": profile.profile_id, "files": [str(p) for p in installed]}))
         if args.enable:

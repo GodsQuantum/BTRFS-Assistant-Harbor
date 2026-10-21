@@ -42,6 +42,12 @@ Inspecter le résultat dans **staging/**. Installer ensuite uniquement un paquet
 5. Pour tester la récupération, choisir un staging **Btrfs neuf et vide**, différent de la racine du système, et utiliser **Prévisualiser la restauration**.
 6. Avant une suppression CAS, contrôler le plan de simulation et confirmer seulement le plan attendu ; ne pas forcer le GC destructif sur NFS/SMB.
 
+### Dépôt CAS partagé entre plusieurs machines (candidat alpha9, non certifié stable)
+
+Pour Pegasus et Galactica, sélectionner **le même dossier parent `Workstations/`**, jamais deux dépôts séparés. Le CAS crée `Workstations/.harbor-repo-id`, un seul `objects/`, puis `machines/<machine>/manifests/`. Le nom de machine vient du hostname et reste modifiable dans l'interface. Le moteur Btrfs fonctionne sur Linux avec des snapshots en lecture seule ; **Galactica/macOS ne dispose pas de Btrfs natif** et requiert un futur adaptateur APFS/fichiers et un format de restauration portable, non livrés dans cette alpha.
+
+Une suppression d'archives d'une machine est soumise au **GC global** de tous les manifestes ; tous les chunks nécessaires aux autres machines restent conservés. Le GC destructif sur réseau NFS/SMB/SSHFS/9p reste bloqué faute de certification des verrous multiclients. Les anciens dépôts `manifests/` sont compatibles sans migration automatique. [Architecture CAS multimachine et limites QA](docs/CAS_MULTIMACHINE_2026-10-21.md).
+
 Voir [le guide utilisateur détaillé](docs/guides/UTILISATION_FR.md).
 
 ## Récupération d'un système entier

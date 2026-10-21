@@ -42,6 +42,12 @@ Review the staged files, then install a distribution-compatible package only aft
 5. Preview recovery only into a **new, empty Btrfs staging directory**, never the active system.
 6. CAS removal always starts with a dry-run. Review the plan before an explicit confirmation; network GC remains prohibited.
 
+### Shared CAS across multiple workstations (alpha9 candidate; not stable)
+
+For Pegasus and Galactica, select **one common `Workstations/` repository root**, not separate machine repositories. Harbor keeps one `.harbor-repo-id` and one FastCDC/BLAKE3 `objects/` pool, while writing per-machine manifests to `machines/<machine>/manifests/`. The hostname is detected automatically and can be edited in the GUI. The Btrfs source/receiver implementation is **Linux-specific**: macOS/APFS Galactica backup and portable restore require a separate future capture adapter, and are **not implemented**.
+
+Pruning considers all machine and legacy manifests under a repository-wide lock, preserving chunks still referenced by other machines. Destructive GC over NFS, SMB, SSHFS and 9p remains disabled until distributed locking is certified. Existing `manifests/` CAS repositories remain readable with no destructive migration. See [multimachine CAS design, tests and restrictions](docs/CAS_MULTIMACHINE_2026-10-21.md).
+
 The ReaR rescue integration is **opt-in** and does **not** install a live /etc/rear/local.conf. Read the [rescue guide](docs/guides/RECUPERATION_REAR_FR.md) and test your exact machine topology in a VM before relying on it.
 
 ## Verification

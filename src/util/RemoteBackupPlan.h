@@ -3,9 +3,9 @@
 #include <QStringList>
 namespace HarborRemote {
 QString profileId(const QString &config, const QString &target);
-QString profileIdForEngine(const QString &config, const QString &target, bool cas);
+QString profileIdForEngine(const QString &config, const QString &target, bool cas, const QString &machine = QString());
 QStringList scheduleInstallerArguments(const QString &config, const QString &target,
-                                       const QString &frequency, bool allowLocal, bool cas);
+                                       const QString &frequency, bool allowLocal, bool cas, const QString &machine = QString());
 QString archiveName(const QString &config, unsigned number);
 QStringList sendArguments(const QString &config, unsigned number, const QString &target, bool allowLocal);
 QStringList scheduleArguments(const QString &config, const QString &target, bool allowLocal);
@@ -23,7 +23,8 @@ QStringList casPrunePreviewArguments(const QString &repo, const QString &archive
 QStringList casPruneConfirmArguments(const QString &repo, const QString &archive, const QString &planSha256);
 QStringList casSendArguments(const QString &repo, const QString &config, unsigned number,
                              const QString &snapshot, bool incremental,
-                             const QString &parentSnapshot, unsigned parentNumber, bool allowLocal);
+                             const QString &parentSnapshot, unsigned parentNumber, bool allowLocal,
+                             const QString &machine = QString(), const QString &parentArchive = QString());
 QStringList casVerifyArguments(const QString &repo, const QString &name);
 QStringList casPreviewArguments(const QString &repo, const QString &name, const QString &staging);
 QStringList casConfirmArguments(const QString &repo, const QString &name, const QString &staging);
