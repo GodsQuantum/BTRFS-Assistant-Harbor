@@ -228,3 +228,56 @@ fn concurrent_machine_directory_symlink_swaps_never_escape_repository() {
     repo.recover_into(&archive, &mut restored).unwrap();
     assert_eq!(restored, data);
 }
+
+#[cfg(unix)]
+#[test]
+fn concurrent_object_prefix_symlink_swaps_do_not_escape_cas_pool() {
+    use std::os::unix::fs::symlink;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let temp = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let bait = outside.path().join("outside.zst");
+    std::fs::write(&bait, b"NO_CAS_DELETION_OUTSIDE_REPOSITORY").unwrap();
+    let repo = Repository::initialize(temp.path()).unwrap();
+    let name = machine("Pegasus", "protected");
+    let data = fixture();
+    repo.ingest(&name, Cursor::new(&data), || true).unwrap();
+    let objects = temp.path().join("objects");
+    let prefix = std::fs::read_dir(&objects)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let parked = objects.join("parked-prefix");
+    let running = Arc::new(AtomicBool::new(true));
+    let signal = running.clone();
+    let outside_path = outside.path().to_path_buf();
+    let attacker = std::thread::spawn(move || {
+        while signal.load(Ordering::Relaxed) {
+            std::fs::rename(&prefix, &parked).unwrap();
+            symlink(&outside_path, &prefix).unwrap();
+            std::thread::yield_now();
+            std::fs::remove_file(&prefix).unwrap();
+            std::fs::rename(&parked, &prefix).unwrap();
+        }
+    });
+    for _ in 0..100 {
+        let _ = repo.gc_preview(&[]);
+        let _ = repo.verify(&name);
+        std::thread::yield_now();
+    }
+    running.store(false, Ordering::Relaxed);
+    attacker.join().unwrap();
+    assert_eq!(
+        std::fs::read(&bait).unwrap(),
+        b"NO_CAS_DELETION_OUTSIDE_REPOSITORY"
+    );
+    assert_eq!(repo.verify(&name).unwrap(), data.len() as u64);
+    let mut recovered = Vec::new();
+    repo.recover_into(&name, &mut recovered).unwrap();
+    assert_eq!(recovered, data);
+}
