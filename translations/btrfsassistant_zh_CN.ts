@@ -1034,22 +1034,22 @@
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="220"/>
         <source>none</source>
-        <translation type="unfinished"></translation>
+        <translation>无</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="220"/>
         <source>daily</source>
-        <translation type="unfinished"></translation>
+        <translation>每天</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="220"/>
         <source>weekly</source>
-        <translation type="unfinished"></translation>
+        <translation>每周</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="220"/>
         <source>monthly</source>
-        <translation type="unfinished"></translation>
+        <translation>每月</translation>
     </message>
     <message>
         <location filename="../src/ui/MainWindow.cpp" line="656"/>
@@ -1467,4 +1467,553 @@
         <translation>警告：没有可用的翻译</translation>
     </message>
 </context>
+    <context>
+        <name>RemoteBackupWidget</name>
+        <message>
+            <source>Allow explicitly selected local destination</source>
+            <translation>允许明确选择本地目标目录</translation>
+        </message>
+        <message>
+            <source>Ready: no backup in progress</source>
+            <translation>就绪：当前没有备份任务</translation>
+        </message>
+        <message>
+            <source>Send selected snapshot</source>
+            <translation>发送所选快照</translation>
+        </message>
+        <message>
+            <source>Cancel current operation</source>
+            <translation>取消当前操作</translation>
+        </message>
+        <message>
+            <source>Remote backups — Snapper snapshots</source>
+            <translation>远程备份 — Snapper 快照</translation>
+        </message>
+        <message>
+            <source>Snapshots and local rollback remain managed by Snapper. Harbor handles remote transport, verification and retrieval. No Snapper history is recursively copied.</source>
+            <translation>快照和本地回滚仍由 Snapper 管理。Harbor 负责远程传输、验证和恢复提取；不会递归复制 Snapper 的历史记录。</translation>
+        </message>
+        <message>
+            <source>Source and destination</source>
+            <translation>来源与目标</translation>
+        </message>
+        <message>
+            <source>Refresh snapshots</source>
+            <translation>刷新快照</translation>
+        </message>
+        <message>
+            <source>Harbor checkpoint v2 — compatible archives</source>
+            <translation>Harbor 检查点 v2 — 兼容旧归档</translation>
+        </message>
+        <message>
+            <source>Harbor CAS / FastCDC — experimental</source>
+            <translation>Harbor CAS / FastCDC — 实验性功能</translation>
+        </message>
+        <message>
+            <source>Backup engine</source>
+            <translation>备份引擎</translation>
+        </message>
+        <message>
+            <source>Machine identity inside a shared CAS repository (not a sub-repository).</source>
+            <translation>共享 CAS 仓库中的机器标识（不是独立的子仓库）。</translation>
+        </message>
+        <message>
+            <source>CAS machine name</source>
+            <translation>CAS 机器名称</translation>
+        </message>
+        <message>
+            <source>Snapper configuration</source>
+            <translation>Snapper 配置</translation>
+        </message>
+        <message>
+            <source>Readonly snapshot</source>
+            <translation>只读快照</translation>
+        </message>
+        <message>
+            <source>Incremental parent (CAS)</source>
+            <translation>增量备份的父归档（CAS）</translation>
+        </message>
+        <message>
+            <source>Existing NFS/SMB mount or local backup directory</source>
+            <translation>现有 NFS/SMB 挂载点或本地备份目录</translation>
+        </message>
+        <message>
+            <source>Browse</source>
+            <translation>浏览</translation>
+        </message>
+        <message>
+            <source>Destination</source>
+            <translation>目标目录</translation>
+        </message>
+        <message>
+            <source>Empty Btrfs staging directory for a restored snapshot</source>
+            <translation>用于恢复快照的空 Btrfs 暂存目录</translation>
+        </message>
+        <message>
+            <source>Recovery staging</source>
+            <translation>恢复暂存目录</translation>
+        </message>
+        <message>
+            <source>Hourly</source>
+            <translation>每小时</translation>
+        </message>
+        <message>
+            <source>Daily</source>
+            <translation>每天</translation>
+        </message>
+        <message>
+            <source>Weekly</source>
+            <translation>每周</translation>
+        </message>
+        <message>
+            <source>Scheduled transfer</source>
+            <translation>定时传输</translation>
+        </message>
+        <message>
+            <source>List remote backups</source>
+            <translation>列出远程备份</translation>
+        </message>
+        <message>
+            <source>Interrupted transfers</source>
+            <translation>中断的传输</translation>
+        </message>
+        <message>
+            <source>Resume selected</source>
+            <translation>恢复所选传输</translation>
+        </message>
+        <message>
+            <source>Enable schedule</source>
+            <translation>启用定时任务</translation>
+        </message>
+        <message>
+            <source>Disable schedule</source>
+            <translation>停用定时任务</translation>
+        </message>
+        <message>
+            <source>Scheduled backups</source>
+            <translation>已安排的备份</translation>
+        </message>
+        <message>
+            <source>Initialize CAS destination</source>
+            <translation>初始化 CAS 目标目录</translation>
+        </message>
+        <message>
+            <source>Verify selected archive</source>
+            <translation>验证所选归档</translation>
+        </message>
+        <message>
+            <source>Delete selected CAS backup</source>
+            <translation>删除所选 CAS 备份</translation>
+        </message>
+        <message>
+            <source>Reclaim unused CAS chunks</source>
+            <translation>回收未使用的 CAS 数据块</translation>
+        </message>
+        <message>
+            <source>Preview recovery</source>
+            <translation>预览恢复</translation>
+        </message>
+        <message>
+            <source>Select a completed archive to verify/recover, or an interrupted transfer to resume</source>
+            <translation>选择已完成的归档进行验证或恢复，或选择中断的传输继续执行</translation>
+        </message>
+        <message>
+            <source>Whole-computer backup sets — checkpoint-v2 (QA)</source>
+            <translation>整机备份集合 — 检查点 v2（质量测试）</translation>
+        </message>
+        <message>
+            <source>Audit backup coverage</source>
+            <translation>审核备份覆盖范围</translation>
+        </message>
+        <message>
+            <source>List machine backup sets</source>
+            <translation>列出机器备份集合</translation>
+        </message>
+        <message>
+            <source>Preview staged machine restore</source>
+            <translation>预览分阶段的机器恢复</translation>
+        </message>
+        <message>
+            <source>Historical machine sets may include separate Btrfs volumes and EFI files. The preview validates an empty Btrfs staging directory; it never restores the active system or claims the backup is bootable. CAS and checkpoint-v2 repositories have different formats.</source>
+            <translation>历史机器备份集合可能包含多个独立的 Btrfs 卷和 EFI 文件。预览仅验证空的 Btrfs 暂存目录；它不会恢复当前运行的系统，也不保证备份可启动。CAS 和检查点 v2 仓库使用不同的格式。</translation>
+        </message>
+        <message>
+            <source>Transfers run asynchronously; process output appears here.</source>
+            <translation>传输以异步方式运行；进程输出将显示在此处。</translation>
+        </message>
+        <message>
+            <source>Choose a mounted backup destination</source>
+            <translation>选择已挂载的备份目标</translation>
+        </message>
+        <message>
+            <source>Invalid machine identity</source>
+            <translation>机器标识无效</translation>
+        </message>
+        <message>
+            <source>Enter a machine name using letters, digits, dots, underscores or hyphens (maximum 64 characters).</source>
+            <translation>机器名称只能使用字母、数字、点、下划线或连字符（最多 64 个字符）。</translation>
+        </message>
+        <message>
+            <source>Invalid Btrfs source</source>
+            <translation>Btrfs 来源无效</translation>
+        </message>
+        <message>
+            <source>Choose an accessible Snapper snapshot path and an initialized CAS repository.</source>
+            <translation>请选择可访问的 Snapper 快照路径和已经初始化的 CAS 仓库。</translation>
+        </message>
+        <message>
+            <source>Experimental CAS send</source>
+            <translation>实验性 CAS 发送</translation>
+        </message>
+        <message>
+            <source>Send the selected readonly Snapper snapshot using the experimental content-addressed engine? This creates a distinct CAS archive format; it does not overwrite previous Harbor archives.</source>
+            <translation>是否使用实验性的内容寻址引擎发送所选的只读 Snapper 快照？这将创建一种单独的 CAS 归档格式，不会覆盖之前的 Harbor 归档。</translation>
+        </message>
+        <message>
+            <source>Invalid selection</source>
+            <translation>选择无效</translation>
+        </message>
+        <message>
+            <source>Select a valid Snapper snapshot and an absolute destination.</source>
+            <translation>请选择有效的 Snapper 快照和绝对路径目标目录。</translation>
+        </message>
+        <message>
+            <source>Start backup</source>
+            <translation>开始备份</translation>
+        </message>
+        <message>
+            <source>Send snapshot %1 to %2?</source>
+            <translation>将快照 %1 发送到 %2？</translation>
+        </message>
+        <message>
+            <source>Invalid destination</source>
+            <translation>目标目录无效</translation>
+        </message>
+        <message>
+            <source>Select an existing absolute CAS directory.</source>
+            <translation>请选择已存在的 CAS 绝对路径目录。</translation>
+        </message>
+        <message>
+            <source>Initialize CAS</source>
+            <translation>初始化 CAS</translation>
+        </message>
+        <message>
+            <source>Initialize or open the dedicated CAS repository in this destination? Existing legacy archives are not modified.</source>
+            <translation>是否在该目标位置初始化或打开专用 CAS 仓库？现有的旧格式归档不会被修改。</translation>
+        </message>
+        <message>
+            <source>Invalid legacy repository</source>
+            <translation>旧版仓库无效</translation>
+        </message>
+        <message>
+            <source>Select an absolute checkpoint-v2 repository before listing machine sets.</source>
+            <translation>列出机器备份集合之前，请选择检查点 v2 仓库的绝对路径。</translation>
+        </message>
+        <message>
+            <source>Machine repository changed</source>
+            <translation>机器仓库已改变</translation>
+        </message>
+        <message>
+            <source>The destination changed since listing machine sets. Refresh the catalog first.</source>
+            <translation>列出机器备份集合后，目标位置发生了变化。请先刷新目录。</translation>
+        </message>
+        <message>
+            <source>Invalid machine restore preview</source>
+            <translation>机器恢复预览无效</translation>
+        </message>
+        <message>
+            <source>Select an existing machine backup set and a new empty Btrfs staging directory. This operation never changes the running system.</source>
+            <translation>请选择已有的机器备份集合以及一个新的空 Btrfs 暂存目录。此操作不会更改正在运行的系统。</translation>
+        </message>
+        <message>
+            <source>No resumable transfer</source>
+            <translation>没有可恢复的传输</translation>
+        </message>
+        <message>
+            <source>Open Interrupted transfers, then select a valid partial checkpoint.</source>
+            <translation>打开“中断的传输”，然后选择有效的部分检查点。</translation>
+        </message>
+        <message>
+            <source>Resume checkpoint</source>
+            <translation>恢复检查点</translation>
+        </message>
+        <message>
+            <source>Resume archive %1 using its existing verified checkpoints? An active transfer holds a lock and cannot be opened twice.</source>
+            <translation>是否使用已验证的检查点恢复归档 %1？正在运行的传输会持有锁，不能重复打开。</translation>
+        </message>
+        <message>
+            <source>Invalid schedule</source>
+            <translation>定时任务无效</translation>
+        </message>
+        <message>
+            <source>Choose a valid Snapper config, destination and frequency.</source>
+            <translation>请选择有效的 Snapper 配置、目标位置和频率。</translation>
+        </message>
+        <message>
+            <source>Install systemd timer</source>
+            <translation>安装 systemd 定时器</translation>
+        </message>
+        <message>
+            <source>Install and enable an automatic %1 transfer for %2? It will use the selected engine. Snapper snapshots will not be created or deleted.</source>
+            <translation>是否安装并启用将 %2 按 %1 频率自动传输的任务？它将使用所选引擎，不会创建或删除 Snapper 快照。</translation>
+        </message>
+        <message>
+            <source>Choose an existing Snapper configuration and destination.</source>
+            <translation>请选择已有的 Snapper 配置和目标位置。</translation>
+        </message>
+        <message>
+            <source>Stop and remove the automatic timer for this configuration and destination? No snapshot or backup files will be deleted.</source>
+            <translation>是否停止并删除此配置和目标位置的自动定时器？不会删除任何快照或备份文件。</translation>
+        </message>
+        <message>
+            <source>No CAS archive selected</source>
+            <translation>未选择 CAS 归档</translation>
+        </message>
+        <message>
+            <source>Select a committed CAS archive.</source>
+            <translation>请选择已提交的 CAS 归档。</translation>
+        </message>
+        <message>
+            <source>Archive belongs to another machine</source>
+            <translation>归档属于另一台机器</translation>
+        </message>
+        <message>
+            <source>Select the correct machine identity and refresh the repository list before pruning.</source>
+            <translation>在清理归档前，请选择正确的机器标识并刷新仓库列表。</translation>
+        </message>
+        <message>
+            <source>Invalid CAS destination</source>
+            <translation>CAS 目标位置无效</translation>
+        </message>
+        <message>
+            <source>Choose a CAS repository first.</source>
+            <translation>请先选择 CAS 仓库。</translation>
+        </message>
+        <message>
+            <source>Missing archive</source>
+            <translation>归档缺失</translation>
+        </message>
+        <message>
+            <source>Select a completed CAS archive.</source>
+            <translation>请选择已完成的 CAS 归档。</translation>
+        </message>
+        <message>
+            <source>Select a valid archive and destination.</source>
+            <translation>请选择有效的归档和目标位置。</translation>
+        </message>
+        <message>
+            <source>Invalid recovery</source>
+            <translation>恢复参数无效</translation>
+        </message>
+        <message>
+            <source>Choose an archive and an empty absolute Btrfs staging directory.</source>
+            <translation>请选择归档和空的 Btrfs 绝对路径暂存目录。</translation>
+        </message>
+        <message>
+            <source>Select an archive and an absolute non-root staging directory.</source>
+            <translation>请选择归档和不属于根目录的绝对路径暂存目录。</translation>
+        </message>
+        <message>
+            <source>Backend diagnostic line exceeded 64 KiB; truncating.</source>
+            <translation>后端诊断行超过 64 KiB；已截断。</translation>
+        </message>
+        <message>
+            <source>Source stream read: %1 GiB — average %2 MiB/s (raw; total unknown)</source>
+            <translation>已读取源数据流：%1 GiB — 平均 %2 MiB/秒（原始数据量；总量未知）</translation>
+        </message>
+        <message>
+            <source>Stopping current operation...</source>
+            <translation>正在停止当前操作……</translation>
+        </message>
+        <message>
+            <source>Harbor CLI not found or failed to start: %1</source>
+            <translation>未找到 Harbor 命令行程序或启动失败：%1</translation>
+        </message>
+        <message>
+            <source>Cannot start Harbor CLI</source>
+            <translation>无法启动 Harbor 命令行程序</translation>
+        </message>
+        <message>
+            <source>None — full send</source>
+            <translation>无 — 完整发送</translation>
+        </message>
+        <message>
+            <source>Busy</source>
+            <translation>忙碌</translation>
+        </message>
+        <message>
+            <source>An operation is already running.</source>
+            <translation>已有操作正在运行。</translation>
+        </message>
+        <message>
+            <source>Backend not trusted</source>
+            <translation>后端不可信</translation>
+        </message>
+        <message>
+            <source>The backup backend must be installed as a root-owned executable in /usr/bin or /usr/local/bin, with no group/world-write permission, and with trusted parent directories. Refusing to run an executable from the user PATH: %1</source>
+            <translation>备份后端必须以 root 所有、不可被组或其他用户写入的可执行文件形式安装在 /usr/bin 或 /usr/local/bin 中，且其父目录必须可信。拒绝从用户 PATH 执行程序：%1</translation>
+        </message>
+        <message>
+            <source>Running: %1</source>
+            <translation>运行中：%1</translation>
+        </message>
+        <message>
+            <source>Choose an absolute CAS directory.</source>
+            <translation>请选择 CAS 目录的绝对路径。</translation>
+        </message>
+        <message>
+            <source>Choose an absolute backup directory.</source>
+            <translation>请选择备份目录的绝对路径。</translation>
+        </message>
+        <message>
+            <source>Operation cancelled; incomplete transfer must be resumed or retried.</source>
+            <translation>操作已取消；未完成的传输必须恢复或重试。</translation>
+        </message>
+        <message>
+            <source>Operation finished: %1</source>
+            <translation>操作完成：%1</translation>
+        </message>
+        <message>
+            <source>Operation failed: %1 (exit %2)</source>
+            <translation>操作失败：%1（退出码 %2）</translation>
+        </message>
+        <message>
+            <source>Invalid filesystem inventory response.</source>
+            <translation>文件系统清单响应无效。</translation>
+        </message>
+        <message>
+            <source>Unsupported machine inventory schema or invalid counts.</source>
+            <translation>机器清单架构不受支持或计数无效。</translation>
+        </message>
+        <message>
+            <source>Invalid machine inventory warning; refusing result.</source>
+            <translation>机器清单警告无效；拒绝此结果。</translation>
+        </message>
+        <message>
+            <source>Detected %1 included Btrfs volumes.
+Coverage inventory: %2.
+Bootable bare-metal recovery: NOT CERTIFIED.
+%3</source>
+            <translation>检测到 %1 个纳入备份的 Btrfs 卷。
+覆盖清单：%2。
+可启动的裸机恢复：尚未认证。
+%3</translation>
+        </message>
+        <message>
+            <source>complete for supported mount types</source>
+            <translation>对受支持的挂载类型覆盖完整</translation>
+        </message>
+        <message>
+            <source>incomplete — backup must be refused</source>
+            <translation>覆盖不完整 — 必须拒绝备份</translation>
+        </message>
+        <message>
+            <source>Machine coverage audit</source>
+            <translation>机器备份覆盖范围审核</translation>
+        </message>
+        <message>
+            <source>Missing machine coverage</source>
+            <translation>机器备份覆盖范围缺失</translation>
+        </message>
+        <message>
+            <source>Machine-set catalog destination changed while reading; refusing stale catalog.</source>
+            <translation>读取机器备份目录期间目标位置发生变化；拒绝使用过期目录。</translation>
+        </message>
+        <message>
+            <source>Machine-set catalog rejected: %1</source>
+            <translation>机器备份目录被拒绝：%1</translation>
+        </message>
+        <message>
+            <source>%1 — %2 Btrfs volumes, %3 boot-file sets — %4 — NOT bootable</source>
+            <translation>%1 — %2 个 Btrfs 卷，%3 组启动文件 — %4 — 不可启动</translation>
+        </message>
+        <message>
+            <source>QA staging preview available</source>
+            <translation>可进行质量测试暂存预览</translation>
+        </message>
+        <message>
+            <source>INCOMPLETE: %1</source>
+            <translation>未完成：%1</translation>
+        </message>
+        <message>
+            <source>Incomplete machine backup set: preview restore unavailable.</source>
+            <translation>机器备份集合不完整：无法预览恢复。</translation>
+        </message>
+        <message>
+            <source>Machine-set preview destination, staging or selection changed; refusing stale result.</source>
+            <translation>机器备份预览所用的目标位置、暂存目录或选择已改变；拒绝过期结果。</translation>
+        </message>
+        <message>
+            <source>Machine restore preview rejected: %1</source>
+            <translation>机器恢复预览被拒绝：%1</translation>
+        </message>
+        <message>
+            <source>Validated staged recovery preview</source>
+            <translation>已验证的分阶段恢复预览</translation>
+        </message>
+        <message>
+            <source>Backend preflight validated: %1 separate Btrfs volumes, %2 boot-file archives.
+Original mount points (first 12): %3
+Nothing was restored. A bootable computer is NOT promised. Bare-metal recovery still requires validated ReaR/EFI rescue.</source>
+            <translation>后端预检通过：%1 个独立 Btrfs 卷、%2 组启动文件归档。
+原始挂载点（前 12 个）：%3
+未恢复任何数据。不保证计算机可以启动。裸机恢复仍需经过验证的 ReaR/EFI 救援。</translation>
+        </message>
+        <message>
+            <source>Prune preview invalid; refusing deletion.</source>
+            <translation>清理预览无效；拒绝删除。</translation>
+        </message>
+        <message>
+            <source>Prune plan mismatch or destination changed; refusing deletion.</source>
+            <translation>清理计划不匹配或目标位置已改变；拒绝删除。</translation>
+        </message>
+        <message>
+            <source>Permanently delete the selected CAS archive %1 and reclaim unreferenced chunks?</source>
+            <translation>是否永久删除所选 CAS 归档 %1 并回收不再被引用的数据块？</translation>
+        </message>
+        <message>
+            <source>Reclaim orphan CAS chunks from aborted transfers? No committed archive will be removed.</source>
+            <translation>是否回收中断传输留下的孤立 CAS 数据块？不会删除任何已提交的归档。</translation>
+        </message>
+        <message>
+            <source>Confirm destructive CAS cleanup</source>
+            <translation>确认破坏性 CAS 清理</translation>
+        </message>
+        <message>
+            <source>
+Estimated reclaimable compressed data: %1 MiB.
+This cannot be undone. The plan will be checked again under repository lock.</source>
+            <translation>
+预计可回收的压缩数据：%1 MiB。
+此操作无法撤销。执行前将再次在仓库锁保护下验证计划。</translation>
+        </message>
+        <message>
+            <source>CAS pruning finished; refreshing archive inventory.</source>
+            <translation>CAS 清理已完成；正在刷新归档清单。</translation>
+        </message>
+        <message>
+            <source>Archive inventory is not valid JSON; no selection was changed.</source>
+            <translation>归档清单不是有效的 JSON；没有更改任何选择。</translation>
+        </message>
+        <message>
+            <source>Checkpoint inventory is invalid; no selection was changed.</source>
+            <translation>检查点清单无效；没有更改任何选择。</translation>
+        </message>
+        <message>
+            <source>Confirm staged Btrfs receive</source>
+            <translation>确认分阶段 Btrfs 接收</translation>
+        </message>
+        <message>
+            <source>CAS archive chain verified. Receive every required snapshot into the selected empty Btrfs staging directory? This will not activate a system rollback.</source>
+            <translation>CAS 归档链已验证。是否将所有必需的快照接收到所选的空 Btrfs 暂存目录？此操作不会激活系统回滚。</translation>
+        </message>
+        <message>
+            <source>Confirm recovery</source>
+            <translation>确认恢复</translation>
+        </message>
+        <message>
+            <source>Dry-run successful. Restore the selected snapshot into the staging directory? Existing system subvolumes will not be replaced.</source>
+            <translation>试运行成功。是否将所选快照恢复到暂存目录？不会替换现有的系统子卷。</translation>
+        </message>
+    </context>
 </TS>

@@ -181,6 +181,22 @@ private slots:
         QCOMPARE(model.data(pos, SubvolumeModel::Sort).toBool(), false);
         QCoreApplication::removeTranslator(&translator);
     }
+    void chineseRemoteBackupUiRetainsWarningsAndActions() {
+        QTranslator translator;
+        const QString qm = QCoreApplication::applicationDirPath()
+                           + "/btrfsassistant_zh_CN.qm";
+        QVERIFY2(translator.load(qm), qPrintable(qm));
+        QCoreApplication::installTranslator(&translator);
+        QCOMPARE(QCoreApplication::translate("RemoteBackupWidget", "CAS machine name"),
+                 QString::fromUtf8("CAS 机器名称"));
+        QCOMPARE(QCoreApplication::translate("RemoteBackupWidget", "Cancel current operation"),
+                 QString::fromUtf8("取消当前操作"));
+        QCOMPARE(QCoreApplication::translate("RemoteBackupWidget", "Archive belongs to another machine"),
+                 QString::fromUtf8("归档属于另一台机器"));
+        QCOMPARE(QCoreApplication::translate("RemoteBackupWidget", "Confirm destructive CAS cleanup"),
+                 QString::fromUtf8("确认破坏性 CAS 清理"));
+        QCoreApplication::removeTranslator(&translator);
+    }
     void remoteTabIsMouseNavigableAtRealWindowWidth() {
         QMainWindow host;
         Ui::MainWindow ui;

@@ -145,4 +145,7 @@ jobs:
           cmake -S . -B build/kwin6 -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build/kwin6 --parallel 3 --target test-harbor-gui-user-smoke
           useradd -m -s /bin/bash harbor-kwin-qa
+          # CTest writes Testing/Temporary; grant access only to this QA
+          # output directory, not to the source tree or installed packages.
+          install -d -m 0755 -o harbor-kwin-qa -g harbor-kwin-qa build/kwin6/Testing
           runuser -u harbor-kwin-qa -- bash -c 'cd "$1"; bash tests/qa_kwin_wayland_smoke.sh build/kwin6' bash "$GITHUB_WORKSPACE"
