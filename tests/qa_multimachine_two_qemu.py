@@ -22,10 +22,12 @@ ISO_SHA256 = "d91fb5c7a73528c89e0a1aa9a7d959f9deb9ca3dc5211e39bd73fd7df0d9070e"
 
 PEGASUS = r"""#!/bin/sh
 set -eu
-adduser -D -u 1000 harborbackup
+share_uid="$(stat -c %u /mnt/share)"
+test "$share_uid" -ge 1000 && test "$share_uid" -le 60000
+adduser -D -u "$share_uid" harborbackup
 cp /mnt/share/harbor-transport /tmp/harbor-transport
 chmod 700 /tmp/harbor-transport
-export PKEXEC_UID=1000
+export PKEXEC_UID="$share_uid"
 repo=/mnt/share/Workstations
 /tmp/harbor-transport init --repo "$repo" --allow-local > /mnt/share/init.json
 /tmp/harbor-transport ingest-file --repo "$repo" --machine Pegasus --name root-1 --file /mnt/share/payload.bin --experimental --allow-local > /mnt/share/pegasus.json
@@ -38,10 +40,12 @@ echo PEGASUS_FIRST_GUEST_SUCCESS
 
 GALACTICA = r"""#!/bin/sh
 set -eu
-adduser -D -u 1000 harborbackup
+share_uid="$(stat -c %u /mnt/share)"
+test "$share_uid" -ge 1000 && test "$share_uid" -le 60000
+adduser -D -u "$share_uid" harborbackup
 cp /mnt/share/harbor-transport /tmp/harbor-transport
 chmod 700 /tmp/harbor-transport
-export PKEXEC_UID=1000
+export PKEXEC_UID="$share_uid"
 repo=/mnt/share/Workstations
 /tmp/harbor-transport ingest-file --repo "$repo" --machine Galactica --name home-1 --file /mnt/share/payload.bin --experimental --allow-local > /mnt/share/galactica.json
 test "$(jq -r '.new_objects' /mnt/share/galactica.json)" -eq 0
@@ -64,10 +68,10 @@ test -f "$repo/machines/Pegasus/manifests/root-1.json"
 mkfs.btrfs -fq /dev/vda
 mkdir -p /mnt/btrfs
 mount -t btrfs /dev/vda /mnt/btrfs
-chown 1000:1000 /mnt/btrfs
+chown "$share_uid" /mnt/btrfs
 cp -a "$repo" /mnt/btrfs/Workstations
 localrepo=/mnt/btrfs/Workstations
-chown -R 1000:1000 "$localrepo"
+chown -R "$share_uid" "$localrepo"
 /tmp/harbor-transport verify --repo "$localrepo" --name m@Galactica@home-1
 /tmp/harbor-transport prune --repo "$localrepo" --name m@Pegasus@root-1 --name m@Pegasus@root-2 > /mnt/share/local-plan.json
 localtoken="$(jq -r '.plan.plan_sha256' /mnt/share/local-plan.json)"
