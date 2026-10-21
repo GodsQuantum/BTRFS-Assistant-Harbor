@@ -27,6 +27,8 @@
 #include "ui_MainWindow.h"
 #include "model/SubvolModel.h"
 #include "ui/RemoteBackupWidget.h"
+#include "util/Btrfs.h"
+#include "util/Snapper.h"
 class HarborGuiUserSmoke : public QObject {
     Q_OBJECT
     static QPushButton *button(RemoteBackupWidget &w, const QString &label) {
@@ -79,6 +81,56 @@ private slots:
         QCOMPARE(backend(w)->currentData().toString(), QString("legacy"));
         QVERIFY(w.findChildren<QListWidget*>().size() >= 2);
         QCOMPARE(w.findChildren<QPlainTextEdit*>().size(), 1);
+    }
+    void realSnapperSnapshotsAppearInRemoteBackupUi() {
+#ifdef Q_OS_LINUX
+        const QString configName = qEnvironmentVariable("HARBOR_GUI_QA_SNAPPER_CONFIG");
+        if (configName.isEmpty())
+            QSKIP("Native Btrfs/Snapper loopback fixture required");
+        Btrfs btrfs;
+        Snapper snapper(&btrfs, QStringLiteral("/usr/bin/snapper"));
+        QVERIFY2(snapper.configs().contains(configName), qPrintable(configName));
+        const auto expected = snapper.snapshots(configName);
+        QVERIFY2(expected.size() >= 2, "two real Snapper readonly snapshots required");
+        RemoteBackupWidget widget(&snapper);
+        widget.show();
+        QApplication::processEvents();
+        QComboBox *configs = nullptr;
+        for (auto *combo : widget.findChildren<QComboBox*>()) {
+            if (combo->findText(configName) >= 0) {
+                configs = combo;
+                break;
+            }
+        }
+        QVERIFY(configs);
+        configs->setCurrentText(configName);
+        QApplication::processEvents();
+        QComboBox *snapshots = nullptr;
+        QComboBox *parent = nullptr;
+        for (auto *combo : widget.findChildren<QComboBox*>()) {
+            if (combo->count() == expected.size() &&
+                combo->itemData(0).toUInt() == expected.first().number)
+                snapshots = combo;
+            if (combo->count() == expected.size() + 1 &&
+                combo->itemData(0).toUInt() == 0 &&
+                combo->itemData(1).toUInt() == expected.first().number)
+                parent = combo;
+        }
+        QVERIFY2(snapshots, "live Snapper snapshots absent from Harbor UI");
+        QVERIFY2(parent, "live Snapper incremental parent selector absent");
+        for (const auto &snapshot : expected) {
+            QVERIFY(snapshot.number > 0);
+            bool found = false;
+            for (int i = 0; i < snapshots->count(); ++i)
+                found |= snapshots->itemData(i).toUInt() == snapshot.number;
+            QVERIFY2(found, "snapshot number missing in the GUI");
+        }
+        auto *refresh = button(widget, QStringLiteral("Refresh snapshots"));
+        QVERIFY(refresh);
+        QTest::mouseClick(refresh, Qt::LeftButton);
+        QApplication::processEvents();
+        QVERIFY2(snapshots->count() >= expected.size(), "refresh lost Snapper snapshots");
+#endif
     }
     void keyboardFocusAndAccessibilityNamesForCriticalControls() {
         RemoteBackupWidget w(nullptr);

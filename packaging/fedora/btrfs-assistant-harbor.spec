@@ -1,7 +1,7 @@
 # R29 staging: Native Fedora44 source RPM recipe, not a public release.
 Name: btrfs-assistant-harbor
 Version: 0.1.0
-Release: 0.alpha9.10%{?dist}
+Release: 0.alpha9.12%{?dist}
 Summary: Btrfs Assistant fork with Snapper and guarded CAS backups
 License: GPL-3.0-or-later AND MIT
 URL: https://github.com/GodsQuantum/BTRFS-Assistant-Harbor
@@ -66,6 +66,10 @@ install -Dm644 README.fr.md %{buildroot}/usr/share/doc/btrfs-assistant-harbor/RE
 %doc /usr/share/doc/btrfs-assistant-harbor/README.fr.md
 
 %changelog
+* Wed Oct 21 2026 Harbor QA <qa@example.invalid> - 0.1.0-0.alpha9.12
+- Shared CAS multi-client locks, stale GUI request guards, restore and retention regression.
+- QA candidate for cross-version installation and rollback tests, not a stable release.
+
 * Fri Oct 16 2026 Harbor QA <qa@example.invalid> - 0.1.0-0.alpha9.10
 - R29 native RPM source build, icon file ownership not directory.
 - Cancel action and process-group cleanup need final VM certification.
