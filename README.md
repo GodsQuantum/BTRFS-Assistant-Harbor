@@ -1,12 +1,16 @@
 # Btrfs Assistant Harbor
 
-**Latest certification checkpoint (21 October 2026).** Codespaces/GitHub checks cover Rust, real QEMU Btrfs backups, native Snapper, real Qt cancel/retry, a 1,000-round shared CAS soak, Debian 13/Fedora 44/Arch package lifecycle, and French/Chinese translations. [Current exact-commit evidence and exclusions](docs/validation/QA_CODESPACES_RELEASE_CANDIDATE_2026-10-21.md). The old R29/alpha9 results below are retained as historical context, not as the latest commit's proof. **Stable not published**: exhaustive Snapper GUI parity, complete Plasma desktop accessibility and extended real-hardware endurance remain outside the verified scope.
+**Linux 0.1.0 production release scope (candidate under certification, 22 October 2026):**
+Btrfs Assistant Harbor targets **Linux x86-64 with Btrfs and Snapper**, packaging natively for Debian 13, Fedora 44 and Arch/CachyOS. CAS backups and restores are tested on disposable real Btrfs volumes and Linux QEMU guests. The supported restore path is an **empty Btrfs staging directory**, never unattended overwrite of the running system. ReaR rescue is opt-in and qualified only for UEFI/GRUB/FAT32 ESP/single Btrfs root/Secure Boot off. Network destructive CAS GC, encrypted/multi-root rescue and **macOS/APFS** are not implemented/supportable. This stable designation is **scoped**, not a guarantee of all hardware or GUI combinations. [Evidence and release criteria](docs/validation/QA_LINUX_STABLE_SCOPE_2026-10-22.md).
+
+
+**Latest certification checkpoint (21 October 2026).** Codespaces/GitHub checks cover Rust, real QEMU Btrfs backups, native Snapper, real Qt cancel/retry, a 1,000-round shared CAS soak, Debian 13/Fedora 44/Arch package lifecycle, and French/Chinese translations. [Current exact-commit evidence and exclusions](docs/validation/QA_CODESPACES_RELEASE_CANDIDATE_2026-10-21.md). The old R29/alpha9 results below are retained as historical context, not as the latest commit's proof. **Historical alpha9 stable not published**: exhaustive Snapper GUI parity, complete Plasma desktop accessibility and extended real-hardware endurance remain outside the verified scope.
 
 **Btrfs Assistant 2.3.2 fork with Snapper-aware remote backups, a Rust CAS engine and an opt-in ReaR recovery helper.**
 
 [Français](README.fr.md) · [Getting started](docs/guides/GETTING_STARTED.md) · [UEFI recovery](docs/guides/RECUPERATION_REAR_FR.md) · [Test status](docs/VALIDATION.md) · [Current release gates](docs/validation/RELEASE_GATES_CURRENT_2026-10-16.md) · [Project map](docs/PROJECT_MAP.md) · [Development](docs/DEVELOPMENT.md)
 
-> **0.1.0-alpha9 — prerelease, not universal stable.** Recovery has been tested on disposable QEMU virtual disks, not arbitrary physical user hardware. Preserve a separate, verified backup. This fork installs alongside the original Btrfs Assistant.
+> **Historical alpha9 (superseded by Linux 0.1.0 candidate).** Recovery has been tested on disposable QEMU virtual disks, not arbitrary physical user hardware. Preserve a separate, verified backup. This fork installs alongside the original Btrfs Assistant.
 
 ## Features
 

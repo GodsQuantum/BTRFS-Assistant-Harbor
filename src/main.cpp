@@ -15,7 +15,7 @@
 void setApplicationInfo()
 {
     QCoreApplication::setApplicationName(QCoreApplication::translate("main", "Btrfs Assistant Harbor"));
-    QCoreApplication::setApplicationVersion("0.1.0-alpha9");
+    QCoreApplication::setApplicationVersion("0.1.0");
 }
 
 int main(int argc, char *argv[])
@@ -47,7 +47,7 @@ int main(int argc, char *argv[])
 
     auto initializeBtrfs = [&]() {
         // Ensure we are running on a system with btrfs
-        if (!System::runCmd("findmnt --real -no fstype ", false).output.contains("btrfs")) {
+        if (!System::runCmd("findmnt", {"--real", "-no", "fstype"}, false).output.contains("btrfs")) {
             QTextStream(stderr) << QCoreApplication::translate("main", "Error: No Btrfs filesystems found") << Qt::endl;
             return false;
         }
