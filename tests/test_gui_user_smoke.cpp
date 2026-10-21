@@ -27,6 +27,7 @@
 #include "ui_MainWindow.h"
 #include "model/SubvolModel.h"
 #include "ui/RemoteBackupWidget.h"
+#include "ui/DiffViewer.h"
 #include "util/Btrfs.h"
 #include "util/Snapper.h"
 class HarborGuiUserSmoke : public QObject {
@@ -71,6 +72,40 @@ class HarborGuiUserSmoke : public QObject {
         return nullptr;
     }
 private slots:
+    void nativeDiffViewerSnapshotDiscoveryHandlesUntrustedFilenames() {
+        QTemporaryDir scratch;
+        QVERIFY(scratch.isValid());
+        const QString stem = scratch.filePath(QStringLiteral(".snapshots"));
+        const QString strange = QStringLiteral("qa ; $(touch SHOULD_NOT_EXIST).txt");
+        QVERIFY(QDir().mkpath(stem + QStringLiteral("/1/snapshot")));
+        QVERIFY(QDir().mkpath(stem + QStringLiteral("/2/snapshot")));
+        QVERIFY(QDir().mkpath(stem + QStringLiteral("/non_numeric/snapshot")));
+        QVERIFY(QDir().mkpath(stem + QStringLiteral("/3/snapshot")));
+        const QString first = stem + QStringLiteral("/1/snapshot/") + strange;
+        const QString second = stem + QStringLiteral("/2/snapshot/") + strange;
+        const QString bogus = stem + QStringLiteral("/non_numeric/snapshot/") + strange;
+        for (const auto &name : {first, second, bogus}) {
+            QFile file(name);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("snapshot test", 13), qint64(13));
+        }
+        const QString outside = scratch.filePath(QStringLiteral("outside.txt"));
+        {
+            QFile file(outside);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("outside", 7), qint64(7));
+        }
+        QVERIFY(QFile::link(outside, stem + QStringLiteral("/3/snapshot/") + strange));
+        const auto files = DiffViewer::snapshotFileCandidates(stem + QStringLiteral("/1/snapshot"), first);
+        QCOMPARE(files.size(), 2);
+        QVERIFY(files.contains(first));
+        QVERIFY(files.contains(second));
+        QVERIFY(!files.contains(bogus));
+        QVERIFY(!QFileInfo::exists(scratch.filePath(QStringLiteral("SHOULD_NOT_EXIST"))));
+        QVERIFY(DiffViewer::snapshotFileCandidates(stem + QStringLiteral("/1/snapshot"), outside).isEmpty());
+        QVERIFY(DiffViewer::snapshotFileCandidates(stem + QStringLiteral("/1/snapshot"),
+                 scratch.filePath(QStringLiteral("missing.txt"))).isEmpty());
+    }
     void opensWithoutAnyUserConfiguration() {
         RemoteBackupWidget w(nullptr);
         w.resize(1200, 1000);

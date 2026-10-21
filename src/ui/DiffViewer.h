@@ -21,6 +21,9 @@ class DiffViewer : public QDialog {
 
     ~DiffViewer();
 
+    // Discover snapshot files natively without interpreting shell metacharacters.
+    static QStringList snapshotFileCandidates(const QString &rootPath, const QString &filePath);
+
   private slots:
     void on_pushButton_close_clicked() { this->close(); }
     void on_pushButton_restore_clicked();
