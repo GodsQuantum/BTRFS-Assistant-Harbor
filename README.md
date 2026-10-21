@@ -1,5 +1,7 @@
 # Btrfs Assistant Harbor
 
+**Latest certification checkpoint (21 October 2026).** Codespaces/GitHub checks cover Rust, real QEMU Btrfs backups, native Snapper, real Qt cancel/retry, a 1,000-round shared CAS soak, Debian 13/Fedora 44/Arch package lifecycle, and French/Chinese translations. [Current exact-commit evidence and exclusions](docs/validation/QA_CODESPACES_RELEASE_CANDIDATE_2026-10-21.md). The old R29/alpha9 results below are retained as historical context, not as the latest commit's proof. **Stable not published**: exhaustive Snapper GUI parity, complete Plasma desktop accessibility and extended real-hardware endurance remain outside the verified scope.
+
 **Btrfs Assistant 2.3.2 fork with Snapper-aware remote backups, a Rust CAS engine and an opt-in ReaR recovery helper.**
 
 [Français](README.fr.md) · [Getting started](docs/guides/GETTING_STARTED.md) · [UEFI recovery](docs/guides/RECUPERATION_REAR_FR.md) · [Test status](docs/VALIDATION.md) · [Current release gates](docs/validation/RELEASE_GATES_CURRENT_2026-10-16.md) · [Project map](docs/PROJECT_MAP.md) · [Development](docs/DEVELOPMENT.md)
