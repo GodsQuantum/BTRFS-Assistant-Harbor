@@ -25,7 +25,7 @@ QStringList System::findEnabledUnits()
 {
 
     static QRegularExpression qRegEx("[\t ]+");
-    const QString bashOutput = System::runCmd("systemctl list-unit-files --state=enabled -q --no-pager", false).output;
+    const QString bashOutput = System::runCmd("systemctl", {"list-unit-files", "--state=enabled", "-q", "--no-pager"}, false).output;
     const QStringList outputList = bashOutput.split('\n');
     QStringList serviceList;
     for (const QString &line : outputList) {
@@ -68,14 +68,6 @@ bool System::isSubvolidInFstab()
     return false;
 }
 
-Result System::runCmd(const QString &cmd, bool includeStderr, milliseconds timeout)
-{
-    return runCmd("/usr/bin/env",
-                  QStringList() << "bash"
-                                << "-c" << cmd,
-                  includeStderr, timeout);
-}
-
 Result System::runCmd(const QString &cmd, const QStringList &args, bool includeStderr, milliseconds timeout)
 {
     QProcess proc;
@@ -84,8 +76,18 @@ Result System::runCmd(const QString &cmd, const QStringList &args, bool includeS
         proc.setProcessChannelMode(QProcess::MergedChannels);
 
     proc.start(cmd, args);
-
-    proc.waitForFinished(static_cast<int>(timeout.count()));
+    // Fail closed on failed spawn, timeout, or signal termination. The
+    // previous implementation returned the exit code of an unfinished process,
+    // which could incorrectly report success before a destructive action ends.
+    if (!proc.waitForStarted(5000))
+        return {-1, proc.errorString()};
+    if (!proc.waitForFinished(static_cast<int>(timeout.count()))) {
+        proc.kill();
+        proc.waitForFinished(2000);
+        return {-1, QStringLiteral("Command timed out: %1").arg(cmd)};
+    }
+    if (proc.exitStatus() != QProcess::NormalExit)
+        return {-1, QStringLiteral("Command terminated abnormally: %1").arg(cmd)};
     return {proc.exitCode(), proc.readAllStandardOutput().trimmed()};
 }
 

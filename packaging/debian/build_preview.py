@@ -13,7 +13,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-VERSION = "0.1.0~alpha9-4"
+VERSION = "0.1.0-1"
 
 def call(*args: str, cwd: Path | None = None, env: dict | None = None) -> str:
     result = subprocess.run(args, cwd=cwd, env=env, check=True,
@@ -29,7 +29,7 @@ def main():
     parser.add_argument("--out", required=True, type=Path,
                         help="empty disposable release output directory")
     args = parser.parse_args()
-    if not re.fullmatch(r"0[.]1[.]0~alpha9-[1-9][0-9]*(?:[+][A-Za-z0-9.]+)?", args.version):
+    if not re.fullmatch(r"0[.]1[.]0-[1-9][0-9]*(?:[+][A-Za-z0-9.]+)?", args.version):
         parser.error("unsafe or incompatible version")
     project = Path(__file__).resolve().parents[2]
     build = args.build.resolve()
@@ -48,7 +48,7 @@ def main():
     rust = stage / "usr/bin/harbor-transport"
     rescue = stage / "usr/lib/btrfs-harbor/recovery/harbor-rear-restore"
     assert gui.is_file() and rust.is_file() and rescue.is_file()
-    assert "0.1.0-alpha9" in call(str(gui), "--version")
+    assert "0.1.0" in call(str(gui), "--version") and "alpha" not in call(str(gui), "--version")
     call("bash", "-n", str(rescue))
     doc = stage / "usr/share/doc/btrfs-assistant-harbor"
     doc.mkdir(parents=True, exist_ok=True)
@@ -64,7 +64,7 @@ def main():
         "Source: btrfs-assistant-harbor\nSection: admin\nPriority: optional\n"
         "Maintainer: Btrfs Assistant Harbor community <noreply@github.com>\n"
         "Standards-Version: 4.6.2\n\n"
-        "Package: btrfs-assistant-harbor\nArchitecture: any\nDescription: Harbor QA preview\n"
+        "Package: btrfs-assistant-harbor\nArchitecture: any\nDescription: Btrfs Assistant Harbor Linux backup release\n"
     )
     dynamic = call("dpkg-shlibdeps", "-O", "-e" + str(gui),
                    "-e" + str(rust), cwd=check).strip()
@@ -84,7 +84,7 @@ def main():
         "Maintainer: Btrfs Assistant Harbor community <noreply@github.com>\n"
         f"Depends: {deps}\n"
         "Description: Btrfs Assistant fork with Harbor CAS and ReaR rescue integration\n"
-        " Experimental alpha release. Local Snapper features are inherited from\n"
+        " Linux x86-64 stable scope. Local Snapper features are inherited from\n"
         " upstream; UEFI recovery is qualified only on the documented VM profile.\n"
     )
     target = out / f"btrfs-assistant-harbor_{args.version}_amd64.deb"

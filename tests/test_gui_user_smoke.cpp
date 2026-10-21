@@ -30,6 +30,7 @@
 #include "ui/DiffViewer.h"
 #include "util/Btrfs.h"
 #include "util/Snapper.h"
+#include "util/System.h"
 class HarborGuiUserSmoke : public QObject {
     Q_OBJECT
     static QPushButton *button(RemoteBackupWidget &w, const QString &label) {
@@ -72,6 +73,24 @@ class HarborGuiUserSmoke : public QObject {
         return nullptr;
     }
 private slots:
+    void commandExecutionFailsClosedOnTimeoutAndNoShellInterpretation() {
+        const auto literal = System::runCmd(QStringLiteral("/usr/bin/printf"),
+                                            {QStringLiteral("%s"), QStringLiteral("literal;$(exit 66)")},
+                                            false, System::seconds(2));
+        QCOMPARE(literal.exitCode, 0);
+        QCOMPARE(literal.output, QStringLiteral("literal;$(exit 66)"));
+
+        QElapsedTimer timer;
+        timer.start();
+        const auto timedOut = System::runCmd(QStringLiteral("/usr/bin/sleep"),
+                                             {QStringLiteral("3")}, true,
+                                             System::milliseconds(50));
+        QVERIFY(timedOut.exitCode != 0);
+        QVERIFY(timer.elapsed() < 2600);
+        const auto missing = System::runCmd(QStringLiteral("/this/harbor/command/does/not/exist"),
+                                            {}, true, System::milliseconds(100));
+        QVERIFY(missing.exitCode != 0);
+    }
     void nativeDiffViewerSnapshotDiscoveryHandlesUntrustedFilenames() {
         QTemporaryDir scratch;
         QVERIFY(scratch.isValid());

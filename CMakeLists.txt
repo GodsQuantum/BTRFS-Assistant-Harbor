@@ -75,4 +75,5 @@ add_test(NAME machine-set-protocol COMMAND test-machine-set-protocol)
 add_test(NAME harbor-release-version
          COMMAND $<TARGET_FILE:btrfs-assistant-harbor-bin> --version)
 set_tests_properties(harbor-release-version PROPERTIES
-                     PASS_REGULAR_EXPRESSION "0.1.0-alpha9")
+                     PASS_REGULAR_EXPRESSION "Btrfs Assistant Harbor 0[.]1[.]0"
+                     FAIL_REGULAR_EXPRESSION "alpha")

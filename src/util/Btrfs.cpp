@@ -172,7 +172,7 @@ bool Btrfs::isSubvolumeBackup(QString subvolPath)
 bool Btrfs::isMounted(const QString &uuid, const uint64_t subvolid)
 {
     const QStringList outputList =
-        System::runCmd(QStringLiteral("findmnt -nO subvolid=%1 -o uuid").arg(subvolid), false).output.trimmed().split("\n");
+        System::runCmd("findmnt", {"-nO", QStringLiteral("subvolid=%1").arg(subvolid), "-o", "uuid"}, false).output.trimmed().split("\n");
     return uuid == outputList.at(0).trimmed();
 }
 
@@ -183,7 +183,7 @@ bool Btrfs::isQuotaEnabled(const QString &mountpoint)
 
 QStringList Btrfs::listFilesystems()
 {
-    const QStringList outputList = System::runCmd("btrfs filesystem show -m", false).output.split('\n');
+    const QStringList outputList = System::runCmd("btrfs", {"filesystem", "show", "-m"}, false).output.split('\n');
     QStringList uuids;
     for (const QString &line : outputList) {
         if (line.contains("uuid:")) {
@@ -198,7 +198,7 @@ QStringList Btrfs::listMountpoints()
     QStringList mountpoints;
 
     // Find all btrfs mountpoints
-    const QStringList output = System::runCmd("findmnt --real -t btrfs -lno target", false).output.trimmed().split('\n');
+    const QStringList output = System::runCmd("findmnt", {"--real", "-t", "btrfs", "-lno", "target"}, false).output.trimmed().split('\n');
     for (const QString &line : output) {
         const QString mountpoint = line.trimmed();
         if (!mountpoint.isEmpty()) {
@@ -311,7 +311,7 @@ void Btrfs::loadVolumes()
             BtrfsFilesystem btrfs;
             btrfs.isPopulated = true;
             QStringList usageLines =
-                System::runCmd(QStringLiteral("LANG=C ; btrfs fi usage -b \"%1\"").arg(mountpoint), false).output.split('\n');
+                System::runCmd("/usr/bin/env", {"LANG=C", "btrfs", "fi", "usage", "-b", mountpoint}, false).output.split('\n');
             for (const QString &line : std::as_const(usageLines)) {
                 const QStringList &cols = line.split(':');
                 QString type = cols.at(0).trimmed();

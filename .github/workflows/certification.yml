@@ -89,7 +89,7 @@ jobs:
           build/ci/src/test-harbor-gui-user-smoke cancellationDuringRealCasTransferRejectsPartialManifestAndAllowsRetry
 
   debian13-package:
-    name: Native Debian 13 candidate (no stable release)
+    name: Native Debian 13 Linux release candidate
     runs-on: ubuntu-24.04
     container: debian:13
     needs: [rust]
@@ -113,7 +113,7 @@ jobs:
           QT_QPA_PLATFORM=offscreen ctest --test-dir build/debian13 --output-on-failure
           mkdir -p build/debian13/harbor-rust/release
           install -m 0755 prebuilt/harbor-transport build/debian13/harbor-rust/release/harbor-transport
-          python3 packaging/debian/build_preview.py --version '0.1.0~alpha9-12+deb13' --build build/debian13 --out dist/debian13
+          python3 packaging/debian/build_preview.py --version '0.1.0-1+deb13' --build build/debian13 --out dist/debian13
           dpkg-deb -f dist/debian13/*.deb Package Version Architecture Depends
           (cd dist/debian13 && sha256sum *.deb > SHA256SUMS)
       - name: Debian 13 install, uninstall, reinstall and purge (disposable container)
@@ -131,14 +131,14 @@ jobs:
       # Baseline artifacts are pinned to an earlier green QA commit. This
       # branch-scoped gate must not silently disappear: expired baselines fail.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: github.ref == 'refs/heads/cert/alpha9-20261015-qa-hardening'
+        if: startsWith(github.ref, 'refs/heads/cert/')
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: 39654023427
           name: harbor-debian13-QA-candidate
           path: dist/debian13-baseline
       - name: Debian cross-version upgrade, downgrade, re-upgrade
-        if: github.ref == 'refs/heads/cert/alpha9-20261015-qa-hardening'
+        if: startsWith(github.ref, 'refs/heads/cert/')
         shell: bash
         run: |
           set -euo pipefail

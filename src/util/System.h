@@ -65,15 +65,6 @@ class System {
     static QString mountPathRoot() { return QStringLiteral("/run/BtrfsAssistant"); }
 
     /**
-     * @brief An overloaded version of runCmd which takes a string and runs it with bash -c
-     * @param cmd - The command to pass to bash -c
-     * @param includeStderr - When true stderr is included in the Result.output
-     * @param timeout - How long (in milliseconds resolution) the command should run before timing out
-     * @return A Result containing the exit code and the output from the running the command
-     */
-    static Result runCmd(const QString &cmd, bool includeStderr, milliseconds timeout = minutes(1));
-
-    /**
      * @brief Runs a command on the host system
      * @param cmd - The absolute path to the binary/script to run
      * @param args - A list of arguments for @p cmd

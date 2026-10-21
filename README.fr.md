@@ -1,6 +1,10 @@
 # Btrfs Assistant Harbor
 
-**Dernier état de certification (21 octobre 2026).** Les essais Codespaces/GitHub ont couvert Rust, les sauvegardes Btrfs en VM, Snapper natif, l'annulation réelle via Qt, un banc CAS de 1 000 cycles, les paquets Debian 13/Fedora 44/Arch et les contrôles français/chinois. [Consulter la matrice de preuves et les limitations](docs/validation/QA_CODESPACES_RELEASE_CANDIDATE_2026-10-21.md). Les bilans R29/alpha9 ci-dessous sont conservés comme historique et ne remplacent pas le dernier contrôle du commit concerné. **Stable non publié** : parité exhaustive des écrans Snapper, bureau Plasma complet et tests matériels de longue durée restent hors périmètre validé.
+**Périmètre de production Linux 0.1.0 (candidat en certification, 22 octobre 2026) :**
+Btrfs Assistant Harbor vise **Linux x86-64 avec Btrfs et Snapper**, avec des paquets natifs Debian 13, Fedora 44 et Arch/CachyOS. Sauvegardes CAS et restaurations sont testées sur de vrais volumes Btrfs jetables et dans des invités Linux QEMU. La restauration doit cibler **un nouveau répertoire Btrfs de préparation vide**, sans écrasement automatique du système en cours. ReaR reste facultatif et limité à UEFI/GRUB, ESP FAT32, racine Btrfs unique et Secure Boot désactivé. GC destructif NAS, restauration chiffrée/multi-racine et **macOS/APFS** restent non pris en charge. « Production » ne signifie pas support matériel universel. [Preuves et critères de publication](docs/validation/QA_LINUX_STABLE_SCOPE_2026-10-22.md).
+
+
+**Dernier état de certification (21 octobre 2026).** Les essais Codespaces/GitHub ont couvert Rust, les sauvegardes Btrfs en VM, Snapper natif, l'annulation réelle via Qt, un banc CAS de 1 000 cycles, les paquets Debian 13/Fedora 44/Arch et les contrôles français/chinois. [Consulter la matrice de preuves et les limitations](docs/validation/QA_CODESPACES_RELEASE_CANDIDATE_2026-10-21.md). Les bilans R29/alpha9 ci-dessous sont conservés comme historique et ne remplacent pas le dernier contrôle du commit concerné. **Historique alpha9 : stable non publiée** : parité exhaustive des écrans Snapper, bureau Plasma complet et tests matériels de longue durée restent hors périmètre validé.
 
 **Fork de Btrfs Assistant 2.3.2** intégrant les sauvegardes distantes Snapper, un moteur CAS Rust et une récupération UEFI avec ReaR.
 
