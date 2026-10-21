@@ -116,3 +116,33 @@ jobs:
           path: dist/arch/
           if-no-files-found: error
           retention-days: 14
+
+  fedora44-kwin6:
+    runs-on: ubuntu-24.04
+    container: fedora:44
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Native Fedora 44 KWin6 Qt compositor + test toolchain
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qttools-devel \
+            libzstd-devel btrfs-progs-devel python3 btrfs-progs snapper \
+            rust cargo pkgconf-pkg-config \
+            kwin qt6-qtwayland dbus-daemon libcap mesa-dri-drivers \
+            mesa-libEGL mesa-libGL shadow-utils
+          command -v kwin_wayland
+          kwin_wayland --version || true
+          getcap /usr/bin/kwin_wayland || true
+          setcap -r /usr/bin/kwin_wayland 2>/dev/null || true
+      - name: Test Harbor Qt under genuine KWin6 Wayland session
+        env:
+          ZSTD_SYS_USE_PKG_CONFIG: "1"
+          CARGO_BUILD_JOBS: "3"
+        run: |
+          cmake -S . -B build/kwin6 -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/kwin6 --parallel 3 --target test-harbor-gui-user-smoke
+          useradd -m -s /bin/bash harbor-kwin-qa
+          runuser -u harbor-kwin-qa -- bash -c 'cd "$1"; bash tests/qa_kwin_wayland_smoke.sh build/kwin6' bash "$GITHUB_WORKSPACE"

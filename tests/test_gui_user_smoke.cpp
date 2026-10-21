@@ -1,5 +1,6 @@
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QAccessible>
 #include <QTemporaryDir>
 #include <QFile>
 #include <QFileInfo>
@@ -78,6 +79,41 @@ private slots:
         QCOMPARE(backend(w)->currentData().toString(), QString("legacy"));
         QVERIFY(w.findChildren<QListWidget*>().size() >= 2);
         QCOMPARE(w.findChildren<QPlainTextEdit*>().size(), 1);
+    }
+    void keyboardFocusAndAccessibilityNamesForCriticalControls() {
+        RemoteBackupWidget w(nullptr);
+        w.resize(1040, 900);
+        w.show();
+        QApplication::processEvents();
+        QAccessibleInterface *window = QAccessible::queryAccessibleInterface(&w);
+        QVERIFY(window);
+        QVERIFY(window->isValid());
+        for (const auto &label : QStringList{
+                 QStringLiteral("Cancel current operation"),
+                 QStringLiteral("Send selected snapshot"),
+                 QStringLiteral("Verify selected archive"),
+                 QStringLiteral("List remote backups")}) {
+            QPushButton *control = button(w, label);
+            QVERIFY2(control, qPrintable(label));
+            QAccessibleInterface *accessible = QAccessible::queryAccessibleInterface(control);
+            QVERIFY2(accessible, qPrintable(label));
+            QVERIFY(accessible->isValid());
+            QCOMPARE(accessible->role(), QAccessible::PushButton);
+            QCOMPARE(accessible->text(QAccessible::Name), label);
+            // Disabled destructive actions remain discoverable to AT-SPI but
+            // must not accept keyboard focus until their preconditions hold.
+            QVERIFY(control->focusPolicy() != Qt::NoFocus);
+            if (control->isEnabled()) {
+                control->setFocus(Qt::TabFocusReason);
+                QApplication::processEvents();
+                QVERIFY2(control->hasFocus(), qPrintable(label));
+            }
+        }
+        auto *engine = backend(w);
+        QVERIFY(engine && engine->isEnabled());
+        engine->setFocus(Qt::TabFocusReason);
+        QApplication::processEvents();
+        QVERIFY(engine->hasFocus());
     }
     void switchingEnginesUpdatesEnabledActions() {
         RemoteBackupWidget w(nullptr);
