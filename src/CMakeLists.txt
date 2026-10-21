@@ -16,11 +16,27 @@ set(btrfsassistant_SRCS
 
 file(GLOB TS_FILES ${PROJECT_SOURCE_DIR}/translations/*.ts)
 
-# Only compile reviewed TS catalogs into QM artifacts. Avoid automatic lupdate
-# during normal builds: it rewrites tracked translations with unfinished strings.
-# qt6_add_lrelease exists in Qt >= 6.2 (our minimum Debian13 Qt is 6.8).
-qt6_add_lrelease(TS_FILES ${TS_FILES}
-    QM_FILES_OUTPUT_VARIABLE FILES_TS)
+# Build reviewed translations with the imported Qt6 lrelease tool. The API of
+# qt6_add_lrelease changed across Qt 6.4/6.8/6.10, so use explicit output rules
+# that remain compatible with all three distributions. Never run lupdate.
+if(TARGET Qt6::lrelease)
+    set(HARBOR_LRELEASE "$<TARGET_FILE:Qt6::lrelease>")
+else()
+    find_program(HARBOR_LRELEASE NAMES lrelease-qt6 lrelease6 lrelease REQUIRED)
+endif()
+set(FILES_TS)
+foreach(TS_FILE IN LISTS TS_FILES)
+    get_filename_component(TS_BASENAME "${TS_FILE}" NAME_WE)
+    set(QM_FILE "${CMAKE_CURRENT_BINARY_DIR}/${TS_BASENAME}.qm")
+    add_custom_command(
+        OUTPUT "${QM_FILE}"
+        COMMAND "${HARBOR_LRELEASE}" "${TS_FILE}" -qm "${QM_FILE}"
+        DEPENDS "${TS_FILE}"
+        COMMENT "Compile reviewed translation ${TS_BASENAME}"
+        VERBATIM)
+    list(APPEND FILES_TS "${QM_FILE}")
+endforeach()
+add_custom_target(btrfs-assistant-harbor_lrelease ALL DEPENDS ${FILES_TS})
 
 add_executable(btrfs-assistant-harbor-bin
     ${btrfsassistant_SRCS} ${FILES_TS}
