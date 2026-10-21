@@ -1,8 +1,16 @@
 [Desktop Entry]
 Name=Btrfs Assistant Harbor
 Name[fr]=Btrfs Assistant Harbor
-Comment=Btrfs, Snapper and verified remote snapshot backups
-Comment[fr]=Gestion Btrfs et Snapper avec sauvegardes distantes vérifiées
+Name[zh_CN]=Btrfs Assistant Harbor
+GenericName=Btrfs snapshot and backup manager
+GenericName[fr]=Gestionnaire de snapshots et sauvegardes Btrfs
+GenericName[zh_CN]=Btrfs 快照与备份管理器
+Comment=Snapper snapshots, verified off-device Btrfs backups and staged recovery
+Comment[fr]=Snapshots Snapper, sauvegardes Btrfs distantes vérifiées et restauration préparée
+Comment[zh_CN]=Snapper 快照、可验证的异机 Btrfs 备份和分阶段恢复
+Keywords=btrfs;snapper;backup;snapshot;restore;recovery;
+Keywords[fr]=btrfs;snapper;sauvegarde;instantané;restauration;
+Keywords[zh_CN]=Btrfs;Snapper;备份;快照;恢复;
 Exec=btrfs-assistant-harbor-launcher
 Terminal=false
 Type=Application

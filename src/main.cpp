@@ -15,7 +15,7 @@
 void setApplicationInfo()
 {
     QCoreApplication::setApplicationName(QCoreApplication::translate("main", "Btrfs Assistant Harbor"));
-    QCoreApplication::setApplicationVersion("0.1.0");
+    QCoreApplication::setApplicationVersion("0.1.1");
 }
 
 int main(int argc, char *argv[])
@@ -67,7 +67,7 @@ int main(int argc, char *argv[])
         qDebug() << "DISPLAY / WAYLAND_DISPLAY variable is set, launching in GUI mode";
         QApplication app(argc, argv);
 
-        app.setWindowIcon(QIcon(":/icons/btrfs-assistant.svg"));
+        app.setWindowIcon(QIcon(":/icons/btrfs-assistant-harbor.svg"));
 
         QTranslator translator;
         if (!translator.load("btrfsassistant_" + QLocale::system().name(), "/usr/share/btrfs-assistant-harbor/translations")) {

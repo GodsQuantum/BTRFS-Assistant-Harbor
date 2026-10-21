@@ -1,81 +1,80 @@
-# Btrfs Assistant Harbor
+<p align="center">
+  <img src="branding/logo.svg" alt="Btrfs Assistant Harbor — layered snapshots forming an anchor" width="780">
+</p>
 
-**Linux 0.1.0 production release scope (candidate under certification, 22 October 2026):**
-Btrfs Assistant Harbor targets **Linux x86-64 with Btrfs and Snapper**, packaging natively for Debian 13, Fedora 44 and Arch/CachyOS. CAS backups and restores are tested on disposable real Btrfs volumes and Linux QEMU guests. The supported restore path is an **empty Btrfs staging directory**, never unattended overwrite of the running system. ReaR rescue is opt-in and qualified only for UEFI/GRUB/FAT32 ESP/single Btrfs root/Secure Boot off. Network destructive CAS GC, encrypted/multi-root rescue and **macOS/APFS** are not implemented/supportable. This stable designation is **scoped**, not a guarantee of all hardware or GUI combinations. [Evidence and release criteria](docs/validation/QA_LINUX_STABLE_SCOPE_2026-10-22.md).
+<h1 align="center">⚓ Btrfs Assistant Harbor</h1>
 
+<p align="center"><strong>Snapshots in. Systems back.</strong></p>
+<p align="center">A familiar Btrfs Assistant desktop — now with verifiable, off-device backups and staged recovery.</p>
 
-**Latest certification checkpoint (21 October 2026).** Codespaces/GitHub checks cover Rust, real QEMU Btrfs backups, native Snapper, real Qt cancel/retry, a 1,000-round shared CAS soak, Debian 13/Fedora 44/Arch package lifecycle, and French/Chinese translations. [Current exact-commit evidence and exclusions](docs/validation/QA_CODESPACES_RELEASE_CANDIDATE_2026-10-21.md). The old R29/alpha9 results below are retained as historical context, not as the latest commit's proof. **Historical alpha9 stable not published**: exhaustive Snapper GUI parity, complete Plasma desktop accessibility and extended real-hardware endurance remain outside the verified scope.
+<p align="center">
+  <a href="https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/actions/workflows/certification.yml"><img alt="Certification CI" src="https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/actions/workflows/certification.yml/badge.svg"></a>
+  <a href="https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/actions/workflows/native-packages.yml"><img alt="Native Linux packages" src="https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/actions/workflows/native-packages.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-58D6C5"></a>
+  <img alt="Linux x86-64" src="https://img.shields.io/badge/platform-Linux%20x86--64-0B1622">
+  <img alt="Qt 6" src="https://img.shields.io/badge/desktop-Qt%206-14283A">
+  <img alt="Rust CAS" src="https://img.shields.io/badge/engine-Rust%20CAS-58D6C5">
+</p>
+<p align="center"><a href="README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.zh-CN.md">简体中文</a></p>
+<p align="center"><a href="https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/releases/latest"><strong>📦 Download stable release</strong></a> · <a href="docs/guides/GETTING_STARTED.md">Getting started</a> · <a href="docs/validation/QA_LINUX_STABLE_SCOPE_2026-10-22.md">Verified scope</a></p>
 
-**Btrfs Assistant 2.3.2 fork with Snapper-aware remote backups, a Rust CAS engine and an opt-in ReaR recovery helper.**
+## 🛟 Your local snapshots deserve an off-device backup
 
-[Français](README.fr.md) · [Getting started](docs/guides/GETTING_STARTED.md) · [UEFI recovery](docs/guides/RECUPERATION_REAR_FR.md) · [Test status](docs/VALIDATION.md) · [Current release gates](docs/validation/RELEASE_GATES_CURRENT_2026-10-16.md) · [Project map](docs/PROJECT_MAP.md) · [Development](docs/DEVELOPMENT.md)
+A Snapper snapshot helps roll back a change — but **a snapshot on the same disk is not a backup**. Harbor builds on the familiar [Btrfs Assistant](https://gitlab.com/btrfs-assistant/btrfs-assistant) interface and adds tools to transfer read-only Btrfs snapshots, verify stored data and stage a restore without overwriting your live root filesystem.
 
-> **Historical alpha9 (superseded by Linux 0.1.0 candidate).** Recovery has been tested on disposable QEMU virtual disks, not arbitrary physical user hardware. Preserve a separate, verified backup. This fork installs alongside the original Btrfs Assistant.
+| | What you can do |
+|---|---|
+| 🧭 **Keep Btrfs Assistant** | Manage Snapper snapshots, Btrfs subvolumes and local rollback in the native Qt 6 interface. |
+| 📦 **Back up off-device** | Send full and incremental Btrfs snapshots with verification. A dedicated NFS-backed folder is suitable for storage; validate the mount before writing. |
+| 🧩 **Share a CAS repository** | Keep one `Workstations/` repository and one chunk pool; separate archives by machine under `machines/<name>/manifests/`. |
+| ♻️ **Resume and retain safely** | Inspect interrupted transfers, verify archives and preview retention decisions. Destructive CAS garbage collection on NFS/SMB is intentionally blocked. |
+| 🔎 **Rehearse recovery** | Restore into a new empty Btrfs staging destination, verify it, and choose next steps yourself. Live-root overwrite is never automatic. |
+| 🌍 **Three languages** | English, français and 简体中文, plus upstream translations. |
 
-## Features
+<p align="center"><img src="branding/workflow.svg" alt="Snapper snapshots travel through a verified Btrfs CAS backup to a shared Workstations repository, then to staged recovery" width="880"></p>
 
-| Area | What works | Boundary |
-| --- | --- | --- |
-| Btrfs and Snapper | Existing upstream snapshot browsing, local rollback, subvolume management and maintenance | Snapper owns local snapshots |
-| Checkpoint v2 | Legacy Harbor remote backups, interrupted-transfer inventory and systemd schedules | This format is NOT interchangeable with CAS |
-| Harbor CAS | Rust FastCDC/BLAKE3 chunk deduplication, zstd, Btrfs full/incremental send, chain validation and staged recovery | Source must be read-only Btrfs; destination a dedicated initialized repository |
-| Retention | Read-only preview, explicit matching confirmation token, protection of parent archives and shared chunks | Destructive pruning on NFS/SMB is refused until verified distributed locking |
-| Machine rescue | Real ReaR 2.9 ISO recovery and automatic GRUB standard/fallback repair | Only x86-64 UEFI, one Btrfs root, FAT32 ESP, GRUB, Secure Boot OFF |
+## 📥 Install
 
-The **Remote backups** tab exposes both engines, verification, recovery preview, schedules, CAS retention and historical machine-set inventory. It does not replace the original Btrfs Assistant nor reconfigure user mounts.
+Download the verified **Linux x86-64** package for your distribution from [GitHub Releases](https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/releases/latest). Current release families: **Arch/CachyOS** (`.pkg.tar.zst`), **Debian 13** (`.deb`) and **Fedora 44** (`.rpm`). Confirm the `SHA256SUMS` file before installation.
 
-## Build and inspect safely
+On Arch/CachyOS, from the directory containing the downloaded assets:
 
-Prerequisites: Linux x86-64, C++17, CMake, Ninja, Qt6 Widgets and LinguistTools, libbtrfsutil, btrfs-progs, Rust/Cargo and Python 3. Snapper and polkit are needed for supported user workflows.
+```bash
+sha256sum -c SHA256SUMS
+sudo pacman -U ./btrfs-assistant-harbor-*-x86_64.pkg.tar.zst
+```
 
-    git clone https://github.com/GodsQuantum/BTRFS-Assistant-Harbor.git
-    cd BTRFS-Assistant-Harbor
-    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
-    cmake --build build --parallel 4
-    QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
-    DESTDIR="$PWD/staging" cmake --install build
+Launch **Btrfs Assistant Harbor** from the KDE application menu. It installs alongside upstream Btrfs Assistant; it does not delete that package or rewrite Snapper configurations.
 
-Review the staged files, then install a distribution-compatible package only after testing it in a disposable environment. Never overwrite your existing Btrfs Assistant package.
+## 🚀 First workstation backup
 
-**Package compatibility checkpoint (16 October 2026):** the GitHub alpha9 rev2 DEB is **not compatible with Debian 13 (Qt 6.8.2)** and must not be installed there. The R29 candidate packages were rebuilt against each target distribution and exercised in disposable UEFI/Btrfs VMs: Debian 13 `0.1.0~alpha9-9+deb13` (rev7→rev9→rev7→rev9→purge, French X11/125% DPI), Fedora 44 `0.1.0-0.alpha9.10.fc44` (rev9→rev10→rev9→rev10→remove), and Arch Linux `0.1.0alpha9-9` (rev8→rev9→rev8→rev9→remove). See the exact version, SHA-256 and guest logs in [R29 validation](docs/validation/QA_ALPHA9_R29_GUI_CANCEL_PACKAGING_2026-10-16.md). These are **unreleased validation candidates**, not general user stable packages. Ubuntu 26.04 and full KDE Plasma/Wayland remain unverified (a Weston headless Qt smoke test passed); test each target before real installation. Open the GUI with its desktop launcher and use `harbor-transport --help` for the CAS CLI.
+1. Open the **Remote backups** tab and select a Snapper configuration and an existing **read-only** snapshot.
+2. Select the **Harbor CAS** engine. Use a **dedicated NFS-mounted backup directory**, never an unmounted lookalike local folder.
+3. Use **Initialize CAS destination** once, at your shared `Workstations/` root. Harbor creates `.harbor-repo-id`, `objects/`, and per-machine `machines/<hostname>/manifests/`. The machine name can be edited.
+4. **Send selected snapshot**, then **List remote backups** and **Verify selected archive**. Reuse the same repository for other Linux workstations without making a separate object pool.
+5. Test restoration into a new empty **Btrfs staging** directory. Keep an independent backup until you have validated recovery for your own machine.
 
-## Start a backup
+**Important:** a network mount is not the same as a local disk. The CAS engine refuses destructive garbage collection on NFS/SMB/SSHFS/9p because distributed locking has not been certified. Preserve that safety guard. The legacy **checkpoint-v2** archive format is separate from CAS.
 
-1. Create or select an existing **read-only** Snapper snapshot.
-2. In **Remote backups**, choose the Snapper configuration and snapshot, and select either checkpoint-v2 or Harbor CAS. Use **different** repository directories.
-3. Specify an existing accessible destination; for CAS use **Initialize CAS destination** in a dedicated directory.
-4. Click **Send selected snapshot**, then **List remote backups** and **Verify selected archive**.
-5. Preview recovery only into a **new, empty Btrfs staging directory**, never the active system.
-6. CAS removal always starts with a dry-run. Review the plan before an explicit confirmation; network GC remains prohibited.
+## ✅ Verified, with explicit boundaries
 
-### Shared CAS across multiple workstations (alpha9 candidate; not stable)
+The [Linux 0.1.0 certification](docs/validation/QA_LINUX_STABLE_SCOPE_2026-10-22.md) covers Rust tests/Clippy, Qt/Python, real Snapper on Btrfs, two Linux QEMU backup/restore guests, cancellation of a real `btrfs send`, multi-client CAS checks, 1,000 cycles and native package lifecycle in CI. Each new release must pass its own checks.
 
-For Pegasus and Galactica, select **one common `Workstations/` repository root**, not separate machine repositories. Harbor keeps one `.harbor-repo-id` and one FastCDC/BLAKE3 `objects/` pool, while writing per-machine manifests to `machines/<machine>/manifests/`. The hostname is detected automatically and can be edited in the GUI. The Btrfs source/receiver implementation is **Linux-specific**: macOS/APFS Galactica backup and portable restore require a separate future capture adapter, and are **not implemented**.
+**Not supported:** native macOS/APFS backup; destructive CAS cleanup on network filesystems; Secure Boot, LUKS/RAID/LVM or multi-root bare-metal ReaR recovery. The optional ReaR path has been validated only for a single-root UEFI/GRUB Btrfs topology with a FAT32 ESP and Secure Boot off. Physical power-loss and every hardware/desktop combination have not been certified.
 
-Pruning considers all machine and legacy manifests under a repository-wide lock, preserving chunks still referenced by other machines. Destructive GC over NFS, SMB, SSHFS and 9p remains disabled until distributed locking is certified. Existing `manifests/` CAS repositories remain readable with no destructive migration. See [multimachine CAS design, tests and restrictions](docs/CAS_MULTIMACHINE_2026-10-21.md).
+## 🧰 Build and contribute
 
-The ReaR rescue integration is **opt-in** and does **not** install a live /etc/rear/local.conf. Read the [rescue guide](docs/guides/RECUPERATION_REAR_FR.md) and test your exact machine topology in a VM before relying on it.
+Requirements: CMake, Ninja, C++17, Qt 6 Widgets/Test/LinguistTools, libbtrfsutil, btrfs-progs, Rust/Cargo and Python 3.
 
-## Verification
+```bash
+git clone https://github.com/GodsQuantum/BTRFS-Assistant-Harbor.git
+cd BTRFS-Assistant-Harbor
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+cmake --build build --parallel 4
+QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
+cargo test --locked --manifest-path transport/Cargo.toml --all-targets
+```
 
-At commit `64cc7c2`, Rust all-targets, rustfmt and Clippy strict PASS, **47 Python tests** and **6 Qt CTests** PASS (including French translation, tab navigation and cancel-process-group smoke). Debian 13 X11/125% DPI and Weston headless Wayland Qt smoke passed, along with three repeated Alpine/Btrfs CAS full/incremental runs, an in-flight SIGKILL/recovery test, real SMB3/NFS locking QA, and candidate package lifecycle VMs for Debian/Fedora/Arch. On 14 October 2026 the product's ReaR helper passed the **real ReaR 2.9** sequence: generate rescue ISO in Debian 13, boot on a blank QEMU disk, rebuild GPT/ESP/Btrfs, invoke the Harbor restore, rebuild both EFI GRUB loaders automatically, reboot without the ISO and verify restored data with exit code 0.
+Read [contributing guidelines](CONTRIBUTING.md), [security policy](SECURITY.md), [branding](branding/BRAND.md) and the [tested recovery scope](docs/validation/QA_LINUX_STABLE_SCOPE_2026-10-22.md). Bug reports and reproducible failure cases: [Issues](https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/issues).
 
-**Additional real QA:** Debian 13 Snapper number retention, pre/post diff and undochange passed 22 guest commands and QEMU exit 0. Older R30/R31 receive QA runners exited RC1 due to fixture/timing faults, and those failures remain preserved. Subsequent isolated tests **R31b (send), R32 (receive) and R33 (local GC)** each killed the entire running QEMU VM process during real Btrfs work, cold-booted the same disk, rejected unsafe staging or stale GC plans and restored retained content (all Python harness /usr/bin/time exit 0). See [Snapper/receive evidence](docs/validation/QA_ALPHA9_R32_SNAPPER_RECEIVE_2026-10-16.md) and [new QEMU power-loss evidence](docs/validation/QA_ALPHA9_R33_QEMU_POWERLOSS_EVIDENCE_2026-10-16.md).
-
-**Not certified:** complete parity of GUI workflows with upstream Btrfs Assistant and Snapper, end-to-end Qt cancellation during an active real Btrfs transfer, extended CPU/RAM/I/O soak, KDE Plasma Wayland and accessibility. Hardware power-loss caching behavior remains untested; Secure Boot, encryption/RAID/LVM, multi-root system recovery, destructive CAS NFS/SMB GC and physical machines remain unsupported without their own tests. See [validation and evidence](docs/VALIDATION.md).
-
-## Project structure
-
-- **src/** – native C++/Qt GUI, Btrfs and Snapper compatibility
-- **transport/** – Rust CAS engine, integration tests
-- **backend/** – checkpoint-v2 compatibility, schedules and ReaR recovery script
-- **vendor/harbor-legacy/** – separately licensed legacy Python engine
-- **tests/** – negative and positive checks, including end-user GUI smoke tests
-- **packaging/** – distribution sources
-- **docs/guides/** – use and recovery instructions
-- **docs/validation/** – detailed test evidence
-- **docs/archive/** – historical development notes
-
-## Credits and license
-
-Independent fork of [Btrfs Assistant](https://gitlab.com/btrfs-assistant/btrfs-assistant), GPL-3.0-or-later. The legacy Harbor-compatible Python component includes its own MIT license. See [LICENSE](LICENSE) and the respective vendor license. This repository does not claim upstream endorsement.
+**Credits & license.** This is an independent fork of **Btrfs Assistant** (GPL-3.0-or-later), not an upstream-endorsed product. The bundled legacy Harbor/Python component has its own MIT notices. See [LICENSE](LICENSE) and its included third-party licenses.
