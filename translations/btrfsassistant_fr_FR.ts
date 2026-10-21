@@ -525,7 +525,31 @@ Restauration amorçable sur machine nue : NON CERTIFIÉE.
             <source>Operation cancelled; incomplete transfer must be resumed or retried.</source>
             <translation>Opération annulée : le transfert incomplet doit être repris ou relancé.</translation>
         </message>
-</context>
+        <message>
+            <source>Machine identity inside a shared CAS repository (not a sub-repository).</source>
+            <translation>Identité de la machine dans un dépôt CAS partagé (et non un sous-dépôt distinct).</translation>
+        </message>
+        <message>
+            <source>CAS machine name</source>
+            <translation>Nom de la machine CAS</translation>
+        </message>
+        <message>
+            <source>Invalid machine identity</source>
+            <translation>Identité de machine invalide</translation>
+        </message>
+        <message>
+            <source>Enter a machine name using letters, digits, dots, underscores or hyphens (maximum 64 characters).</source>
+            <translation>Saisissez un nom de machine composé de lettres, chiffres, points, tirets bas ou traits d'union (64 caractères maximum).</translation>
+        </message>
+        <message>
+            <source>Archive belongs to another machine</source>
+            <translation>Cette archive appartient à une autre machine</translation>
+        </message>
+        <message>
+            <source>Select the correct machine identity and refresh the repository list before pruning.</source>
+            <translation>Sélectionnez la bonne identité de machine et actualisez la liste du dépôt avant toute purge.</translation>
+        </message>
+    </context>
     <context>
         <name>Btrfs</name>
         <message>

@@ -65,6 +65,8 @@ jobs:
           QT_QPA_PLATFORM=offscreen ctest --test-dir build/ci --output-on-failure
       - name: Python regression suite
         run: PYTHONPATH=vendor/harbor-legacy:. python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Full French and Chinese Qt remote-backup translation coverage
+        run: python3 tests/qa_translation_coverage.py
       - name: Headless real Wayland compositor Qt navigation
         run: |
           sudo apt-get install -y --no-install-recommends weston qt6-wayland
