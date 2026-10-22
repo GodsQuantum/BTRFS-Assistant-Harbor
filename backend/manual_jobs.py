@@ -13,6 +13,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import re
 import stat
 import subprocess
@@ -22,11 +23,9 @@ import uuid
 
 try:
     from .cas_schedule import build_send, is_readonly_snapshot, snapshot_uuid
-    from .remote_schedule import Profile
 except ImportError:
     # When installed as an executable under /usr/bin without a package parent.
     from cas_schedule import build_send, is_readonly_snapshot, snapshot_uuid
-    from remote_schedule import Profile
 
 ROOT = Path("/var/lib/btrfs-assistant-harbor/manual-jobs")
 UNIT = "btrfs-assistant-harbor-job@{}.service"
@@ -144,8 +143,12 @@ def check_snapshot_identities(doc: dict) -> None:
 
 def verify_committed(doc: dict) -> bool:
     archive = recorded_archive(doc)
+    # systemd does not inherit PKEXEC_UID. It must be reinstated explicitly
+    # for NFS root-squash: the Rust CAS client switches FSUID to the real owner.
+    env = {**os.environ, "PKEXEC_UID": str(doc["owner_uid"])}
     cmd = ["/usr/bin/harbor-transport", "list", "--repo", doc["repository"]]
-    raw = subprocess.run(cmd, check=True, text=True, capture_output=True, timeout=90)
+    raw = subprocess.run(cmd, check=True, text=True, capture_output=True,
+                         timeout=90, env=env)
     entries = json.loads(raw.stdout)
     if not isinstance(entries, list):
         raise RuntimeError("Invalid repository inventory")
@@ -153,7 +156,7 @@ def verify_committed(doc: dict) -> bool:
         return False
     subprocess.run(
         ["/usr/bin/harbor-transport", "verify-stream", "--repo", doc["repository"],
-         "--name", archive], check=True, timeout=7200)
+         "--name", archive], check=True, timeout=7200, env=env)
     return True
 
 
@@ -167,7 +170,13 @@ def register(config: str, repo: str, machine: str, number: int,
     if not 1 <= number <= 2**31 - 1:
         raise ValueError("Invalid selected Snapper number")
     require_network_repo(repo)
-    profile = Profile(config, repo, "daily", False, "cas", owner_uid, machine)
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,69}", config):
+        raise ValueError("Invalid or oversized Snapper configuration")
+    # The installed scheduler is named btrfs-assistant-harbor-schedule, NOT
+    # remote_schedule.py. Only the read-only attributes required by the
+    # existing, fully validated CAS planning logic are needed here.
+    profile = SimpleNamespace(config=config, target=repo, allow_local=False,
+                              machine=machine, owner_uid=owner_uid)
     # Immutable snap UUID matching, archived-parent verification, and first
     # empty-repository FULL handling live in the existing scheduler helper.
     argv = command_builder(profile, selected_number=number)
@@ -307,15 +316,22 @@ def main() -> int:
         print(json.dumps(output))
     elif args.action == "run":
         return runner(check_id(args.id))
-    elif args.action == "cancel":
-        print(json.dumps(cancel(check_id(args.id))))
-    elif args.action == "status":
-        print(json.dumps(load(check_id(args.id))))
-    elif args.action == "list":
-        print(json.dumps(all_jobs()))
-    else:
-        changed = [cancel(x["id"]) for x in all_jobs() if x["state"] in RUNNING]
-        print(json.dumps(changed))
+    elif args.action in ("cancel", "status", "list", "cancel-all"):
+        desktop_uid = os.environ.get("PKEXEC_UID", "")
+        if not desktop_uid.isdecimal() or not 1 <= int(desktop_uid) <= 65534:
+            parser.error("Authenticated original desktop UID required")
+        uid = int(desktop_uid)
+        if args.action in ("cancel", "status"):
+            doc = load(check_id(args.id))
+            if doc["owner_uid"] != uid:
+                parser.error("Job belongs to another desktop user")
+            print(json.dumps(cancel(args.id) if args.action == "cancel" else doc))
+        elif args.action == "list":
+            print(json.dumps([x for x in all_jobs() if x["owner_uid"] == uid]))
+        else:
+            changed = [cancel(x["id"]) for x in all_jobs()
+                       if x["owner_uid"] == uid and x["state"] in RUNNING]
+            print(json.dumps(changed))
     return 0
 
 

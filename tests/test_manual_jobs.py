@@ -82,6 +82,18 @@ class DurableJobTests(unittest.TestCase):
         self.assertEqual(job.recorded_archive(job.load(first["id"], root)),
                          "m@Pegasus@snap-root-21-20261022-uuid")
 
+    def test_verify_uses_original_uid_under_root_squash(self):
+        root = self.fixture()
+        with patch.object(job, "check_store"), patch.object(job, "require_network_repo"), \
+             patch.object(job, "snapshot_uuid", return_value="1234"):
+            job_doc = job.register(**GOOD, root=root, activate=False,
+                                   command_builder=lambda profile, selected_number: list(SEND))
+        doc = job.load(job_doc["id"], root)
+        response = type("Result", (), {"stdout": "[]"})()
+        with patch.object(job.subprocess, "run", return_value=response) as run:
+            self.assertFalse(job.verify_committed(doc))
+            self.assertEqual(run.call_args.kwargs["env"]["PKEXEC_UID"], "1000")
+
     def test_existing_verified_archive_skips_replaying_transfer(self):
         root = self.fixture()
         with patch.object(job, "check_store"), patch.object(job, "require_network_repo"), \

@@ -15,6 +15,8 @@
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QProcess>
+#include <QMessageBox>
+#include <QTimer>
 #ifdef Q_OS_UNIX
 #include <signal.h>
 #endif
@@ -227,6 +229,63 @@ private slots:
         QVERIFY2(created > 0, "full user snapshot description not retained verbatim");
         QCOMPARE(snapper.deleteSnapshot(configName, int(created)).exitCode, 0);
         QVERIFY(!QFileInfo::exists(marker));
+#endif
+    }
+    // Disposable CI runner only. This starts the *real button* and verifies
+    // that systemd accepted the job before the entire Qt widget is destroyed.
+    // The shell harness then checks the job actually completes after closing.
+    void manualCasButtonSurvivesActualQtWindowDestruction() {
+#ifdef Q_OS_LINUX
+        const QString repo = qEnvironmentVariable("HARBOR_GUI_QA_SYSTEMD_NFS_REPO");
+        const QString config = qEnvironmentVariable("HARBOR_GUI_QA_SYSTEMD_SNAPPER_CONFIG");
+        if (repo.isEmpty() || config.isEmpty())
+            QSKIP("Dedicated root-owned systemd/NFS/Btrfs disposable runner required");
+        QCOMPARE(QFileInfo(repo).isDir(), true);
+        Btrfs btrfs;
+        Snapper snapper(&btrfs, QStringLiteral("/usr/bin/snapper --no-dbus"));
+        QVERIFY2(snapper.configs().contains(config), qPrintable(config));
+        QSettings settings(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+        settings.setValue(QStringLiteral("remote/engine"), QStringLiteral("cas"));
+        settings.setValue(QStringLiteral("remote/targetPath"), repo);
+        settings.setValue(QStringLiteral("cas/machineName"), QStringLiteral("HarborQATest"));
+        settings.setValue(QStringLiteral("remote/independentSend"), true);
+        auto widget = std::make_unique<RemoteBackupWidget>(&snapper);
+        widget->resize(1300, 1000);
+        widget->show();
+        QComboBox *configs = nullptr;
+        for (auto *combo : widget->findChildren<QComboBox*>()) {
+            if (combo->findText(config) >= 0) { configs = combo; break; }
+        }
+        QVERIFY(configs);
+        configs->setCurrentText(config);
+        QCOMPARE(backend(*widget)->currentData().toString(), QString("cas"));
+        auto *send = button(*widget, QStringLiteral("Send selected snapshot"));
+        QVERIFY(send);
+        // Accept only the confirmation opened by this exact button.
+        QTimer::singleShot(150, widget.get(), [] {
+            if (auto *message = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
+                message->done(QMessageBox::Yes);
+        });
+        QTest::mouseClick(send, Qt::LeftButton);
+        const QString registry = QStringLiteral("/var/lib/btrfs-assistant-harbor/manual-jobs");
+        QTRY_VERIFY_WITH_TIMEOUT(!QDir(registry).entryList(
+            {QStringLiteral("*.json")}, QDir::Files).isEmpty(), 25000);
+        auto *request = widget->findChild<QProcess*>(QStringLiteral("harborCommandProcess"));
+        QVERIFY(request);
+        QTRY_COMPARE_WITH_TIMEOUT(request->state(), QProcess::NotRunning, 35000);
+        QCOMPARE(request->exitCode(), 0);
+        const auto manifests = QDir(registry).entryList({QStringLiteral("*.json")}, QDir::Files);
+        QVERIFY(!manifests.isEmpty());
+        const QString jobId = manifests.last().left(36);
+        QVERIFY2(QProcess::execute(QStringLiteral("/usr/bin/systemctl"),
+                  {QStringLiteral("is-active"), QStringLiteral("--quiet"),
+                   QStringLiteral("btrfs-assistant-harbor-job@") + jobId +
+                   QStringLiteral(".service")}) == 0,
+                 "Real systemd job must be active before Qt window destruction");
+        widget->close();
+        widget.reset();  // actual QProcess destructor / full Qt window destruction
+        QVERIFY(QDir(registry).entryList({QStringLiteral("*.json")}, QDir::Files).size() >= 1);
+        qInfo() << "HARBOR_QA_REAL_GUI_DESTROYED_WITH_DURABLE_JOB";
 #endif
     }
     void keyboardFocusAndAccessibilityNamesForCriticalControls() {
