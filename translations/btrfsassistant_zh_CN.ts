@@ -1275,7 +1275,15 @@
         <source>Enable Btrfs Quotas</source>
         <translation>启用 Btrfs 配额</translation>
     </message>
-</context>
+        <message>
+            <source>Language</source>
+            <translation>语言</translation>
+        </message>
+            <message>
+            <source>Remote backups</source>
+            <translation>远程备份</translation>
+        </message>
+    </context>
 <context>
     <name>RestoreConfirmDialog</name>
     <message>
@@ -1428,7 +1436,15 @@
         <source>Exclusive</source>
         <translation>独占用量</translation>
     </message>
-</context>
+        <message>
+            <source>Yes</source>
+            <translation>是</translation>
+        </message>
+        <message>
+            <source>No</source>
+            <translation>否</translation>
+        </message>
+    </context>
 <context>
     <name>main</name>
     <message>
@@ -1466,7 +1482,11 @@
         <source>Warning: No translations available</source>
         <translation>警告：没有可用的翻译</translation>
     </message>
-</context>
+        <message>
+            <source>Btrfs Assistant Harbor</source>
+            <translation>Btrfs Assistant Harbor</translation>
+        </message>
+    </context>
     <context>
         <name>RemoteBackupWidget</name>
         <message>
@@ -2026,6 +2046,33 @@ This cannot be undone. The plan will be checked again under repository lock.</so
         <message>
             <source>Backup or recovery destination changed; refusing stale restore preview.</source>
             <translation>备份或恢复目标已更改；拒绝使用过期的恢复预览。</translation>
+        </message>
+    </context>
+    <context>
+        <name>HarborLanguage</name>
+        <message>
+            <source>Interface language</source>
+            <translation>界面语言</translation>
+        </message>
+        <message>
+            <source>Choose English, French or Simplified Chinese. Reopen Harbor to apply.</source>
+            <translation>选择英语、法语或简体中文。重新打开 Harbor 以应用语言。</translation>
+        </message>
+        <message>
+            <source>Language saved</source>
+            <translation>语言设置已保存</translation>
+        </message>
+        <message>
+            <source>Close and reopen Harbor to apply the selected language to every screen.</source>
+            <translation>关闭并重新打开 Harbor，以在所有界面中应用所选语言。</translation>
+        </message>
+        <message>
+            <source>Language setting failed</source>
+            <translation>语言设置失败</translation>
+        </message>
+        <message>
+            <source>The language preference could not be saved.</source>
+            <translation>无法保存语言偏好设置。</translation>
         </message>
     </context>
 </TS>

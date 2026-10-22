@@ -28,6 +28,7 @@
 #include "ui_MainWindow.h"
 #include "model/SubvolModel.h"
 #include "ui/RemoteBackupWidget.h"
+#include "ui/HarborLanguage.h"
 #include "ui/DiffViewer.h"
 #include "util/Btrfs.h"
 #include "util/Snapper.h"
@@ -368,6 +369,66 @@ private slots:
             staging |= line->placeholderText().contains("Btrfs staging");
         }
         QVERIFY(destination && staging);
+    }
+    void languageSelectionPersistsAndLoadsReviewedCatalogs() {
+        QSettings prefs(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+        const auto key = QStringLiteral("ui/language");
+        const bool existed = prefs.contains(key);
+        const QVariant previous = prefs.value(key);
+        prefs.remove(key);
+        QCOMPARE(HarborLanguage::selected(QStringLiteral("fr_FR")), QStringLiteral("fr_FR"));
+        QCOMPARE(HarborLanguage::selected(QStringLiteral("zh_CN")), QStringLiteral("zh_CN"));
+        QCOMPARE(HarborLanguage::selected(QStringLiteral("C")), QStringLiteral("en_US"));
+        // A root-owned GUI with a sanitized C locale still honors the user's
+        // explicit French preference saved by its language selector.
+        QWidget host;
+        auto *selector = HarborLanguage::createSelector(&host, false);
+        QCOMPARE(selector->objectName(), QStringLiteral("harborLanguageSelector"));
+        QCOMPARE(selector->count(), 3);
+        for (const auto &language : QStringList{
+                    QStringLiteral("fr_FR"), QStringLiteral("zh_CN"), QStringLiteral("en_US")}) {
+            const int index = selector->findData(language);
+            QVERIFY(index >= 0);
+            selector->setCurrentIndex(index);
+            QSettings updated(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+            QCOMPARE(updated.value(key).toString(), language);
+            QCOMPARE(HarborLanguage::selected(QStringLiteral("C")), language);
+        }
+        QTranslator translator;
+        const QString qmDir = QCoreApplication::applicationDirPath();
+        for (const auto &language : {QStringLiteral("fr_FR"), QStringLiteral("zh_CN")}) {
+            QVERIFY2(HarborLanguage::loadCatalog(translator, language, qmDir),
+                     qPrintable(language));
+            QCoreApplication::installTranslator(&translator);
+            const QString expected = language == QLatin1String("fr_FR")
+                 ? QStringLiteral("Langue") : QString::fromUtf8("语言");
+            QCOMPARE(QCoreApplication::translate("MainWindow", "Language"), expected);
+            QCoreApplication::removeTranslator(&translator);
+        }
+        if (existed) prefs.setValue(key, previous);
+        else prefs.remove(key);
+    }
+    void backupEngineChoicePersistsWithoutScheduling() {
+        QSettings prefs(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+        const auto key = QStringLiteral("remote/engine");
+        const bool existed = prefs.contains(key);
+        const QVariant previous = prefs.value(key);
+        prefs.setValue(key, QStringLiteral("cas"));
+        {
+            RemoteBackupWidget first(nullptr);
+            auto *engine = backend(first);
+            QVERIFY(engine);
+            QCOMPARE(engine->currentData().toString(), QStringLiteral("cas"));
+            engine->setCurrentIndex(engine->findData(QStringLiteral("legacy")));
+        }
+        {
+            RemoteBackupWidget second(nullptr);
+            auto *engine = backend(second);
+            QVERIFY(engine);
+            QCOMPARE(engine->currentData().toString(), QStringLiteral("legacy"));
+        }
+        if (existed) prefs.setValue(key, previous);
+        else prefs.remove(key);
     }
     void frenchUiAndReadOnlyStatusAreConsistent() {
         QTranslator translator;

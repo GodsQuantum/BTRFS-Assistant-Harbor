@@ -1,5 +1,6 @@
 #include "ui/MainWindow.h"
 #include "ui/RemoteBackupWidget.h"
+#include "ui/HarborLanguage.h"
 #include <QScrollArea>
 #include <QFrame>
 #include "model/SubvolModel.h"
@@ -18,6 +19,8 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QTimer>
+#include <QToolBar>
+#include <QLabel>
 
 namespace {
 enum class SnapperRestoreTableColumn { Number, Subvolume, DateTime, Type, Description };
@@ -54,6 +57,12 @@ MainWindow::MainWindow(Btrfs *btrfs, BtrfsMaintenance *btrfsMaintenance, Snapper
     : QMainWindow(parent), m_ui(new Ui::MainWindow), m_btrfs(btrfs), m_btrfsMaint(btrfsMaintenance), m_snapper(snapper)
 {
     m_ui->setupUi(this);
+    // Always-visible compact language control for English / French / Chinese.
+    auto *languageToolbar = addToolBar(tr("Language"));
+    languageToolbar->setObjectName(QStringLiteral("harborLanguageToolbar"));
+    languageToolbar->setMovable(false);
+    languageToolbar->addWidget(new QLabel(tr("Language") + QStringLiteral(" : "), languageToolbar));
+    languageToolbar->addWidget(HarborLanguage::createSelector(languageToolbar));
     // The custom QLineEdit placeholder must follow the active Qt translator.
     m_ui->lineEdit_subvolFilter->setPlaceholderText(tr("Filter..."));
     // The remote-backup wizard contains status, schedules and recovery tables.

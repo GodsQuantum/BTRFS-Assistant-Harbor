@@ -37,6 +37,8 @@ A snapshot on your laptop protects you from a bad update. **A backup on another 
 <p align="center"><img src="docs/screenshots/remote-backups-qt6.png" width="100%" alt="Actual native Qt 6 Remote backups interface showing Harbor CAS options"></p>
 <p align="center"><em>Real Qt 6 backup tab — captured in an offline test environment, with no invented backups.</em></p>
 
+**🌍 Interface language:** choose **English**, **Français** or **简体中文** in the top toolbar. Reopen Harbor to apply your choice to every screen. The choice is saved even when Harbor runs as administrator.
+
 ## 🚀 Get started in 3 steps
 
 1. **Download** the Linux package for Arch/CachyOS, Debian 13 or Fedora 44 from [Releases](https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/releases/latest) and check its `SHA256SUMS`.
