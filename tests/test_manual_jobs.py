@@ -108,6 +108,41 @@ class DurableJobTests(unittest.TestCase):
             disabled.assert_called_once_with(first["id"])
             self.assertEqual(job.load(first["id"], root)["state"], "completed")
 
+    def test_network_mount_loss_fails_closed_and_same_job_can_recover(self):
+        root = self.fixture()
+        with patch.object(job, "check_store"), patch.object(job, "require_network_repo"), \
+             patch.object(job, "snapshot_uuid", return_value="1234"):
+            initial = job.register(**GOOD, root=root, activate=False,
+                                   command_builder=lambda profile, selected_number: list(SEND))
+        original = job.load(initial["id"], root)["command"]
+        with patch.object(job, "require_network_repo", side_effect=RuntimeError("NFS disappeared")), \
+             patch.object(job.subprocess, "Popen") as transport:
+            self.assertEqual(job.runner(initial["id"], root=root), 1)
+            transport.assert_not_called()
+        persisted = job.load(initial["id"], root)
+        self.assertEqual(persisted["state"], "retrying")
+        self.assertEqual(persisted["command"], original)
+        with patch.object(job, "require_network_repo"), \
+             patch.object(job, "verify_committed", return_value=True), \
+             patch.object(job, "disable_completed") as disable, \
+             patch.object(job.subprocess, "Popen") as transport:
+            self.assertEqual(job.runner(initial["id"], root=root), 0)
+            transport.assert_not_called()
+            disable.assert_called_once_with(initial["id"])
+        self.assertEqual(job.load(initial["id"], root)["state"], "completed")
+
+    def test_explicit_cancellation_is_not_restarted(self):
+        root = self.fixture()
+        with patch.object(job, "check_store"), patch.object(job, "require_network_repo"), \
+             patch.object(job, "snapshot_uuid", return_value="1234"):
+            initial = job.register(**GOOD, root=root, activate=False,
+                                   command_builder=lambda profile, selected_number: list(SEND))
+        job.cancel(initial["id"], root=root, perform_systemd=False)
+        with patch.object(job.subprocess, "Popen") as transport:
+            self.assertEqual(job.runner(initial["id"], root=root), 1)
+            transport.assert_not_called()
+        self.assertEqual(job.load(initial["id"], root)["state"], "cancelled")
+
     def test_old_scheduled_profiles_are_not_activated_by_manual_package(self):
         unit = Path(__file__).resolve().parents[1] / "packaging/systemd/btrfs-assistant-harbor-job@.service"
         content = unit.read_text()
