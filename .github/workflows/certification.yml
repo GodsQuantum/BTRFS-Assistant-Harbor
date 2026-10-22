@@ -57,6 +57,13 @@ jobs:
           persist-credentials: false
       - name: Native Qt/Snapper build tools
         run: |
+          # Microsoft repo on hosted Ubuntu 24.04 runners sometimes returns 403;
+          # no Harbor dependency comes from that unrelated third-party source.
+          for source in /etc/apt/sources.list.d/*; do
+            if [ -f "$source" ] && grep -q packages.microsoft.com "$source"; then
+              sudo mv -- "$source" "$source.disabled"
+            fi
+          done
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends cmake ninja-build g++ pkg-config qt6-base-dev qt6-tools-dev qt6-tools-dev-tools libbtrfsutil-dev btrfs-progs snapper zstd libzstd-dev python3 python3-filelock python3-rich
       - name: Qt6 build and CTest
@@ -109,7 +116,7 @@ jobs:
       - name: Debian native GUI, CTest, package
         run: |
           cmake -S . -B build/debian13 -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCARGO_EXECUTABLE=/usr/bin/true
-          cmake --build build/debian13 --parallel 4 --target btrfs-assistant-harbor-bin test-harbor-gui-user-smoke test-remote-backup-plan test-machine-set-protocol
+          cmake --build build/debian13 --parallel 4 --target btrfs-assistant-harbor-bin btrfs-assistant-harbor-tray test-harbor-gui-user-smoke test-remote-backup-plan test-machine-set-protocol
           QT_QPA_PLATFORM=offscreen ctest --test-dir build/debian13 --output-on-failure
           mkdir -p build/debian13/harbor-rust/release
           install -m 0755 prebuilt/harbor-transport build/debian13/harbor-rust/release/harbor-transport
