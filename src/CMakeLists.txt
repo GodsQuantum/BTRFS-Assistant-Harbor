@@ -103,7 +103,10 @@ install(FILES ${PROJECT_SOURCE_DIR}/backend/cas_schedule.py
 # Dedicated unprivileged user-session status controller; never runs as root.
 add_executable(btrfs-assistant-harbor-tray tray.cpp)
 target_link_libraries(btrfs-assistant-harbor-tray PRIVATE Qt6::Widgets)
-target_compile_options(btrfs-assistant-harbor-tray PRIVATE -Wall -Wextra -Wconversion)
+# Qt6 built with GNU_PROPERTY_1_NEEDED_INDIRECT_EXTERN_ACCESS (e.g. CachyOS
+# Qt 6.12) rejects R_X86_64_COPY on QTimer/QSystemTrayIcon::staticMetaObject.
+# Force PIC also for the PIE executable: ordinary -fPIE can emit COPY relocations.
+target_compile_options(btrfs-assistant-harbor-tray PRIVATE -fPIC -Wall -Wextra -Wconversion)
 install(TARGETS btrfs-assistant-harbor-tray RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(PROGRAMS ${PROJECT_SOURCE_DIR}/backend/harbor-tray-stop
         DESTINATION ${CMAKE_INSTALL_BINDIR} RENAME btrfs-assistant-harbor-tray-stop)
