@@ -638,6 +638,10 @@ Restauration amorçable sur machine nue : NON CERTIFIÉE.
             <translation>Arrêter le service de sauvegarde systemd ? Les blocs CAS déjà terminés seront conservés.</translation>
         </message>
         <message>
+            <source>Estimated progress: %p%</source>
+            <translation>Progression estimée : %p%</translation>
+        </message>
+        <message>
             <source>Background backup: %1 — %2 bytes read</source>
             <translation>Sauvegarde en arrière-plan : %1 — %2 octets lus</translation>
         </message>
