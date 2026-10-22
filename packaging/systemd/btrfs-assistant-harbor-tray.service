@@ -1,0 +1,12 @@
+[Unit]
+Description=Btrfs Assistant Harbor unprivileged KDE tray
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/btrfs-assistant-harbor-tray
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
