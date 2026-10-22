@@ -12,8 +12,10 @@ class BrandingTest(unittest.TestCase):
         for name in ('README.md','README.fr.md','README.zh-CN.md'):
             text=(ROOT/name).read_text()
             with self.subTest(name=name):
-                self.assertIn('branding/logo.svg',text)
+                self.assertTrue('branding/logo.svg' in text or 'branding/logo-mark.svg' in text)
                 self.assertIn('branding/workflow.svg',text)
+                self.assertLess(len(text),4500)
+                self.assertIn('docs/WORKSTATION_BACKUPS',text)
                 self.assertIn('Snapshots in. Systems back.',text)
                 self.assertIn('GodsQuantum/BTRFS-Assistant-Harbor/releases/latest',text)
                 self.assertIn('GPL-3.0-or-later',text)

@@ -1,75 +1,58 @@
-<p align="center"><img src="branding/logo.svg" alt="Btrfs Assistant Harbor — snapshots superposés dessinant une ancre" width="780"></p>
+<p align="center"><img src="branding/logo.svg" width="780" alt="Btrfs Assistant Harbor — snapshots et ancre"></p>
+
 <h1 align="center">⚓ Btrfs Assistant Harbor</h1>
-<p align="center"><strong>Snapshots in. Systems back.</strong></p>
-<p align="center">L'interface familière de Btrfs Assistant, enrichie de sauvegardes hors machine vérifiables et d'une restauration préparée.</p>
-
-<p align="center">
-  <a href="https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/actions/workflows/certification.yml"><img alt="Certification CI" src="https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/actions/workflows/certification.yml/badge.svg"></a>
-  <a href="https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/actions/workflows/native-packages.yml"><img alt="Paquets natifs" src="https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/actions/workflows/native-packages.yml/badge.svg"></a>
-  <a href="LICENSE"><img alt="Licence GPL-3.0-or-later" src="https://img.shields.io/badge/licence-GPL--3.0--or--later-58D6C5"></a>
-  <img alt="Linux x86-64" src="https://img.shields.io/badge/plateforme-Linux%20x86--64-0B1622">
-  <img alt="Qt 6" src="https://img.shields.io/badge/interface-Qt%206-14283A">
+<p align="center"><strong>Snapshots in. Systems back.</strong><br>
+<strong>Vos snapshots méritent un endroit plus sûr.</strong> Sauvegardez votre poste Linux, vérifiez chaque transfert et préparez votre restauration — dans l'interface Btrfs Assistant que vous connaissez déjà.
 </p>
-<p align="center"><a href="README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.zh-CN.md">简体中文</a></p>
-<p align="center"><a href="https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/releases/latest"><strong>📦 Télécharger la version stable</strong></a> · <a href="docs/guides/UTILISATION_FR.md">Guide</a> · <a href="docs/validation/QA_LINUX_STABLE_SCOPE_2026-10-22.md">Périmètre certifié</a></p>
+<p align="center">
+  <a href="https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/releases/latest"><strong>📦 Télécharger pour Linux</strong></a> ·
+  <a href="docs/WORKSTATION_BACKUPS.fr.md">📖 Démarrer</a> ·
+  <a href="docs/TECHNICAL.fr.md">⚙️ Comprendre</a>
+</p>
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+<p align="center">
+  <a href="https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/actions/workflows/certification.yml"><img alt="CI" src="https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/actions/workflows/certification.yml/badge.svg"></a>
+  <img alt="Linux x86-64" src="https://img.shields.io/badge/plateforme-Linux%20x86--64-14283A">
+  <img alt="Qt 6" src="https://img.shields.io/badge/interface-Qt%206-58D6C5">
+  <a href="LICENSE"><img alt="GPL 3" src="https://img.shields.io/badge/licence-GPL--3.0--or--later-0B1622"></a>
+</p>
 
-## 🛟 Un snapshot local ne remplace pas une sauvegarde
+---
 
-Snapper permet de revenir sur une modification. Mais **un snapshot présent sur le même disque ne protège pas contre une panne de ce disque**. Harbor conserve les fonctions de [Btrfs Assistant](https://gitlab.com/btrfs-assistant/btrfs-assistant) et ajoute le transfert de snapshots Btrfs en lecture seule, leur vérification et la restauration en zone de préparation, jamais directement à la place de la racine active.
+Un snapshot sur votre ordinateur protège d'une mauvaise mise à jour. **Une sauvegarde sur un autre disque protège d'une panne de ce disque.** Harbor réunit les deux.
 
-| | Ce que permet Harbor |
-|---|---|
-| 🧭 **Gestion Btrfs et Snapper** | Snapshots locaux, sous-volumes et retour arrière dans l'interface native Qt 6. |
-| 📦 **Sauvegardes distantes** | Envois Btrfs complets et incrémentaux, vérification et destination NFS dédiée. |
-| 🧩 **Dépôt CAS commun** | Un unique `Workstations/`, un seul pool de blocs, des manifestes distincts par machine. |
-| ♻️ **Reprise et rétention** | Transferts interrompus, inventaire, contrôle d'intégrité et aperçu avant suppression. **GC destructif NFS/SMB interdit.** |
-| 🔎 **Restauration prudente** | Réception dans un nouveau dossier Btrfs vide, puis vérification avant toute intervention sur le système. |
-| 🌍 **Interface multilingue** | English, français et 简体中文. |
+## ✨ Ce que ça change
 
-<p align="center"><img src="branding/workflow.svg" alt="Du snapshot Snapper vers un dépôt CAS partagé, puis vers une restauration préparée" width="880"></p>
+- **🛟 Des snapshots vraiment protégés.** Envoyez vos snapshots Btrfs/Snapper vers un autre disque ou NAS, puis vérifiez leur intégrité.
+- **🧩 Un seul foyer pour vos sauvegardes.** La déduplication partage les données identiques entre postes **Linux**, sans confondre les archives de chacun.
+- **♻️ Une restauration sans improvisation.** Parcourez les sauvegardes, vérifiez-les et répétez la récupération dans un dossier Btrfs vide et distinct.
+- **🖥️ L'interface connue, avec davantage de possibilités.** Conservez Btrfs Assistant et ses fonctions Snapper ; Harbor ajoute les sauvegardes distantes dans une application Qt native.
 
-## 📥 Installation
+<p align="center"><img src="branding/workflow.svg" width="880" alt="De Snapper vers un stockage commun vérifié puis vers la restauration préparée"></p>
 
-Télécharge le paquet **Linux x86-64** correspondant à ton système depuis les [Releases GitHub](https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/releases/latest) : **Arch/CachyOS** (`.pkg.tar.zst`), **Debian 13** (`.deb`) ou **Fedora 44** (`.rpm`). Vérifie `SHA256SUMS` avant installation.
+## 📸 L'application en images
 
-Sur Arch/CachyOS, depuis le dossier contenant les fichiers téléchargés :
+<p align="center"><img src="docs/screenshots/remote-backups-qt6.png" width="100%" alt="Véritable interface native Qt 6 des sauvegardes distantes Harbor CAS"></p>
+<p align="center"><em>Capture réelle de l'onglet Qt 6, dans un environnement de test hors ligne, sans fausses sauvegardes.</em></p>
 
-```bash
-sha256sum -c SHA256SUMS
-sudo pacman -U ./btrfs-assistant-harbor-*-x86_64.pkg.tar.zst
-```
+## 🚀 Trois étapes pour commencer
 
-Lance ensuite **Btrfs Assistant Harbor** depuis KDE. L'application s'installe **à côté de Btrfs Assistant**, sans le supprimer ni modifier les configurations Snapper.
+1. **Téléchargez** le paquet Arch/CachyOS, Debian 13 ou Fedora 44 depuis les [Releases](https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/releases/latest), puis vérifiez `SHA256SUMS`.
+2. **Ouvrez Harbor → Sauvegardes distantes.** Choisissez un snapshot Snapper en lecture seule et une destination existante correctement montée.
+3. **Envoyez → Vérifiez.** Contrôlez l'archive et effectuez une restauration de test en zone de préparation.
 
-## 🚀 Première sauvegarde vers Cloud9 ou un NAS
+Harbor peut être installé **à côté** de Btrfs Assistant. Pas de compte cloud, pas de serveur Docker obligatoire et aucune suppression de votre configuration Snapper.
 
-1. Dans **Sauvegardes distantes**, choisis la configuration Snapper et un snapshot **en lecture seule** déjà créé.
-2. Sélectionne le moteur **Harbor CAS** et le dossier de sauvegarde **réellement monté en NFS**. Vérifie le montage pour éviter toute écriture dans un dossier local de remplacement.
-3. Clique une seule fois sur **Initialiser la destination CAS** à la racine commune `Workstations/`. Le dépôt crée `.harbor-repo-id`, `objects/` et `machines/<nom>/manifests/`. Le nom de machine est modifiable.
-4. Lance **Envoyer le snapshot sélectionné**, puis **Lister les sauvegardes distantes** et **Vérifier l'archive sélectionnée**. Les autres postes Linux peuvent partager le même pool.
-5. Teste une restauration **dans un nouveau dossier Btrfs vide**, en conservant une sauvegarde indépendante tant que la récupération de ta machine n'a pas été éprouvée.
+**Plusieurs postes sur un même NAS ?** Utilisez la même racine CAS déjà présente pour vos postes **Linux** : le pool de données est commun, mais les archives restent séparées par machine. [Guide complet →](docs/WORKSTATION_BACKUPS.fr.md)
 
-Le moteur interdit volontairement le **garbage collection destructif sur NFS/SMB/SSHFS/9p** : ne contourne pas cette protection. Les anciennes archives **checkpoint-v2** et CAS ne sont pas interchangeables.
+## 🧭 Les limites, sans surprise
 
-## ✅ Certifié pour un périmètre Linux précis
+Harbor vise **Linux x86-64 / Btrfs / Snapper**. L'écriture et la vérification sur NAS sont possibles, mais le nettoyage CAS **destructif sur NFS/SMB est volontairement bloqué**. macOS/APFS n'est pas encore pris en charge ; la récupération intégrale d'un système chiffré/multi-racines n'est pas promise. [Compatibilité et certification →](docs/TECHNICAL.fr.md)
 
-La [certification Linux 0.1.0](docs/validation/QA_LINUX_STABLE_SCOPE_2026-10-22.md) couvre Rust/Clippy, Qt/Python, Snapper réel sur Btrfs, deux invités Linux QEMU avec sauvegarde/restauration, annulation d'un vrai `btrfs send`, concurrence CAS, 1 000 cycles et tests des paquets natifs. Chaque nouvelle version doit passer sa propre CI.
+<p align="center"><strong>⚓ Sauvegarder le snapshot. Garder la liberté de restaurer.</strong></p>
 
-**Non pris en charge :** capture macOS/APFS native ; suppression destructive CAS sur stockage réseau ; récupération ReaR avec Secure Boot, LUKS/LVM/RAID ou plusieurs racines. La récupération ReaR facultative n'a été validée que sur UEFI/GRUB, ESP FAT32, une racine Btrfs et Secure Boot désactivé. Les coupures électriques physiques et toutes les configurations matérielles ne sont pas certifiées.
+[📖 Configuration & restauration](docs/WORKSTATION_BACKUPS.fr.md) · [⚙️ Détails techniques](docs/TECHNICAL.fr.md) · [🛡️ Sécurité](SECURITY.md) · [🤝 Contribuer](CONTRIBUTING.md) · [🎨 Branding](branding/PRESSKIT.md)
 
-## 🧰 Développement
-
-Prérequis : C++17, CMake, Ninja, Qt 6 Widgets/Test/LinguistTools, libbtrfsutil, btrfs-progs, Rust/Cargo et Python 3.
-
-```bash
-git clone https://github.com/GodsQuantum/BTRFS-Assistant-Harbor.git
-cd BTRFS-Assistant-Harbor
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
-cmake --build build --parallel 4
-QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
-cargo test --locked --manifest-path transport/Cargo.toml --all-targets
-```
-
-Voir [Contribution](CONTRIBUTING.md), [Sécurité](SECURITY.md), [Charte visuelle](branding/BRAND.md), [documentation ReaR](docs/guides/RECUPERATION_REAR_FR.md) et [Issues](https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/issues).
-
-**Crédits et licence :** fork indépendant de **Btrfs Assistant**, sous **GPL-3.0-or-later**, sans affiliation ni validation de l'équipe upstream. Le composant Python Harbor historique dispose de ses propres mentions MIT. Voir [LICENSE](LICENSE) et les licences tierces.
+<sub>Fork indépendant de <a href="https://gitlab.com/btrfs-assistant/btrfs-assistant">Btrfs Assistant</a>, sous GPL-3.0-or-later, sans affiliation ni validation par l'équipe d'origine.</sub>

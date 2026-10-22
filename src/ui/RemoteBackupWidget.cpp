@@ -67,7 +67,7 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     snapshotLayout->addWidget(m_snapshots, 1);
     snapshotLayout->addWidget(refresh);
     m_backend->addItem(tr("Harbor checkpoint v2 — compatible archives"), QStringLiteral("legacy"));
-    m_backend->addItem(tr("Harbor CAS / FastCDC — experimental"), QStringLiteral("cas"));
+    m_backend->addItem(tr("Harbor CAS — deduplicated backups"), QStringLiteral("cas"));
     form->addRow(tr("Backup engine"), m_backend);
     QString detected = QSysInfo::machineHostName();
     detected.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9_.-]")), QStringLiteral("-"));

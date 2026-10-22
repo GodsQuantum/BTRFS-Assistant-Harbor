@@ -1506,8 +1506,8 @@
             <translation>Harbor 检查点 v2 — 兼容旧归档</translation>
         </message>
         <message>
-            <source>Harbor CAS / FastCDC — experimental</source>
-            <translation>Harbor CAS / FastCDC — 实验性功能</translation>
+            <source>Harbor CAS — deduplicated backups</source>
+            <translation>Harbor CAS — 去重备份</translation>
         </message>
         <message>
             <source>Backup engine</source>

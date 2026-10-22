@@ -1,0 +1,16 @@
+name: ✨ Suggest a feature
+description: Describe a useful new backup or recovery capability.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What should users be able to do?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Environment and workflow
+      description: "Linux Btrfs / future macOS APFS, NFS/local/SSH target, etc."

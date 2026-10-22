@@ -29,7 +29,7 @@ def main():
     parser.add_argument("--out", required=True, type=Path,
                         help="empty disposable release output directory")
     args = parser.parse_args()
-    if not re.fullmatch(r"0[.]1[.]0-[1-9][0-9]*(?:[+][A-Za-z0-9.]+)?", args.version):
+    if not re.fullmatch(rf"{re.escape(VERSION)}(?:[+][A-Za-z0-9.]+)?", args.version):
         parser.error("unsafe or incompatible version")
     project = Path(__file__).resolve().parents[2]
     build = args.build.resolve()

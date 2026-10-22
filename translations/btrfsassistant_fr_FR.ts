@@ -20,8 +20,8 @@
             <translation>Harbor checkpoint v2 — archives compatibles</translation>
         </message>
         <message>
-            <source>Harbor CAS / FastCDC — experimental</source>
-            <translation>Harbor CAS / FastCDC — expérimental</translation>
+            <source>Harbor CAS — deduplicated backups</source>
+            <translation>Harbor CAS — sauvegardes dédupliquées</translation>
         </message>
         <message>
             <source>Snapper configuration</source>

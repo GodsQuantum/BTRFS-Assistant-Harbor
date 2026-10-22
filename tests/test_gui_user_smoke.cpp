@@ -73,6 +73,31 @@ class HarborGuiUserSmoke : public QObject {
         return nullptr;
     }
 private slots:
+    // Produces honest screenshots of the *real Qt widget* in a disposable
+    // headless environment; no fabricated connected archive or backup state.
+    // Not executed unless explicitly requested by the documentation workflow.
+    void captureRealQtBackupTabForDocumentation() {
+        const QString dir = qEnvironmentVariable("HARBOR_DOC_SCREENSHOT_DIR");
+        if (dir.isEmpty()) return;
+        QVERIFY(QDir().mkpath(dir));
+        RemoteBackupWidget widget(nullptr);
+        widget.setWindowTitle(QStringLiteral("Btrfs Assistant Harbor — Remote backups"));
+        widget.resize(1450, 1110);
+        widget.show();
+        QApplication::processEvents();
+        auto *engine = backend(widget);
+        QVERIFY(engine);
+        engine->setCurrentIndex(1);
+        QVERIFY(engine->itemText(1).contains(QStringLiteral("deduplicated")));
+        for (auto *field : widget.findChildren<QLineEdit*>()) {
+            if (field->toolTip().contains(QStringLiteral("Machine identity")))
+                field->setText(QStringLiteral("Workstation"));
+        }
+        QApplication::processEvents();
+        const QString path = QDir(dir).filePath(QStringLiteral("remote-backups-qt6.png"));
+        QVERIFY2(widget.grab().save(path, "PNG"), qPrintable(path));
+        QVERIFY2(QFileInfo(path).size() > 20000, "Screenshot did not render");
+    }
     void commandExecutionFailsClosedOnTimeoutAndNoShellInterpretation() {
         const auto literal = System::runCmd(QStringLiteral("/usr/bin/printf"),
                                             {QStringLiteral("%s"), QStringLiteral("literal;$(exit 66)")},
