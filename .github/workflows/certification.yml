@@ -357,9 +357,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Disposable Btrfs NFS4 systemd and Qt native prerequisites
+        timeout-minutes: 9
         run: |
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          sudo timeout 180s apt-get update -qq -o Acquire::Retries=3 -o Acquire::http::Timeout=20
+          sudo timeout 300s env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             nfs-ganesha nfs-ganesha-vfs nfs-common btrfs-progs snapper pv \
             cmake ninja-build g++ pkg-config qt6-base-dev qt6-tools-dev \
             qt6-tools-dev-tools libbtrfsutil-dev python3
