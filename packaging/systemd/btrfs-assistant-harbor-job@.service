@@ -1,6 +1,6 @@
 [Unit]
 Description=Btrfs Assistant Harbor durable manual backup %i
-Wants=network-online.target
+Wants=network-online.target btrfs-assistant-harbor-progress.service
 After=network-online.target remote-fs.target
 StartLimitIntervalSec=0
 
