@@ -2,6 +2,9 @@
 # Safely forward the existing graphical environment to the polkit wrapper.
 # No eval, no shell expansion of untrusted desktop variables.
 set -euo pipefail
+# Start the tray inside the KDE user session, BEFORE pkexec.
+# Closing the privileged GUI does not stop this native systemd user service.
+systemctl --user start btrfs-assistant-harbor-tray.service >/dev/null 2>&1 || true
 params=(btrfs-assistant-harbor)
 if [[ -n "${XDG_CURRENT_DESKTOP:-}" ]]; then
     params+=("--xdg-desktop=${XDG_CURRENT_DESKTOP}")

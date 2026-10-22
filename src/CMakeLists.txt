@@ -99,3 +99,16 @@ install(FILES ${PROJECT_SOURCE_DIR}/packaging/systemd/btrfs-assistant-harbor-job
 # CAS scheduler shared by the root-owned systemd profile runner.
 install(FILES ${PROJECT_SOURCE_DIR}/backend/cas_schedule.py
         DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# Dedicated unprivileged user-session status controller; never runs as root.
+add_executable(btrfs-assistant-harbor-tray tray.cpp)
+target_link_libraries(btrfs-assistant-harbor-tray PRIVATE Qt6::Widgets)
+target_compile_options(btrfs-assistant-harbor-tray PRIVATE -Wall -Wextra -Wconversion)
+install(TARGETS btrfs-assistant-harbor-tray RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(PROGRAMS ${PROJECT_SOURCE_DIR}/backend/harbor-tray-stop
+        DESTINATION ${CMAKE_INSTALL_BINDIR} RENAME btrfs-assistant-harbor-tray-stop)
+install(FILES ${PROJECT_SOURCE_DIR}/packaging/systemd/btrfs-assistant-harbor-tray.service
+        DESTINATION lib/systemd/user)
+add_test(NAME harbor-tray-qt-smoke
+         COMMAND ${CMAKE_COMMAND} -E env QT_QPA_PLATFORM=offscreen
+                 $<TARGET_FILE:btrfs-assistant-harbor-tray> --self-test)

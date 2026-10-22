@@ -23,7 +23,7 @@
 void setApplicationInfo()
 {
     QCoreApplication::setApplicationName(QCoreApplication::translate("main", "Btrfs Assistant Harbor"));
-    QCoreApplication::setApplicationVersion("0.1.3");
+    QCoreApplication::setApplicationVersion("0.1.4");
 }
 
 int main(int argc, char *argv[])
@@ -118,7 +118,9 @@ int main(int argc, char *argv[])
         // systemd, so a GUI crash still cannot kill a Btrfs send.
         std::unique_ptr<QSystemTrayIcon> tray;
         std::unique_ptr<QMenu> trayMenu;
-        if (QSystemTrayIcon::isSystemTrayAvailable()) {
+        // pkexec processes do not own the user's KDE D-Bus tray session.
+        if (qEnvironmentVariableIsEmpty("PKEXEC_UID") &&
+            QSystemTrayIcon::isSystemTrayAvailable()) {
             app.setQuitOnLastWindowClosed(false);
             tray = std::make_unique<QSystemTrayIcon>(app.windowIcon(), &app);
             trayMenu = std::make_unique<QMenu>(&mainWindow);
