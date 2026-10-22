@@ -42,10 +42,12 @@ impl RepoAccess {
         let gid = unsafe { (*user).pw_gid };
         let old_gid = unsafe { libc::setfsgid(gid) };
         let old_uid = unsafe { libc::setfsuid(uid) };
-        // Linux setfsuid/setfsgid return the old value even if the change was
-        // denied. Explicitly verify rather than silently writing root-owned data.
-        let actual_uid = unsafe { libc::setfsuid(libc::uid_t::MAX) };
-        let actual_gid = unsafe { libc::setfsgid(libc::gid_t::MAX) };
+        // Linux setfsuid/setfsgid return the PREVIOUS value. Probe by
+        // reapplying the target ID, which leaves the credential unchanged.
+        // NEVER query with uid_t::MAX/gid_t::MAX: a root/CAP_SETUID process
+        // can actually switch to those IDs, breaking NFS root-squash access.
+        let actual_uid = unsafe { libc::setfsuid(uid) };
+        let actual_gid = unsafe { libc::setfsgid(gid) };
         if actual_uid != uid as libc::c_int || actual_gid != gid as libc::c_int {
             unsafe {
                 libc::setfsuid(old_uid as libc::uid_t);
