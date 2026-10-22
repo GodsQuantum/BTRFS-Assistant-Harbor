@@ -1,5 +1,6 @@
 #include "ui/Cli.h"
 #include "ui/MainWindow.h"
+#include "ui/HarborLanguage.h"
 #include "util/BtrfsMaintenance.h"
 #include "util/Settings.h"
 #include "util/System.h"
@@ -15,7 +16,7 @@
 void setApplicationInfo()
 {
     QCoreApplication::setApplicationName(QCoreApplication::translate("main", "Btrfs Assistant Harbor"));
-    QCoreApplication::setApplicationVersion("0.1.1");
+    QCoreApplication::setApplicationVersion("0.1.2");
 }
 
 int main(int argc, char *argv[])
@@ -70,11 +71,16 @@ int main(int argc, char *argv[])
         app.setWindowIcon(QIcon(":/icons/btrfs-assistant-harbor.svg"));
 
         QTranslator translator;
-        if (!translator.load("btrfsassistant_" + QLocale::system().name(), "/usr/share/btrfs-assistant-harbor/translations")) {
-            QTextStream(stdout) << QCoreApplication::translate("main", "Warning: No translations available") << Qt::endl;
-            ;
+        const QString language = HarborLanguage::selected();
+        if (language != QLatin1String("en_US")) {
+            if (HarborLanguage::loadCatalog(translator, language,
+                    QStringLiteral("/usr/share/btrfs-assistant-harbor/translations"))) {
+                app.installTranslator(&translator);
+            } else {
+                QTextStream(stderr) << "Warning: requested Harbor translation is unavailable: "
+                                    << language << Qt::endl;
+            }
         }
-        app.installTranslator(&translator);
 
         setApplicationInfo();
 

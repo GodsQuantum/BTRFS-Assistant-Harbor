@@ -37,6 +37,8 @@
 <p align="center"><img src="docs/screenshots/remote-backups-qt6.png" width="100%" alt="真实的 Qt 6 Harbor CAS 远程备份界面"></p>
 <p align="center"><em>真实 Qt 6 界面截图，来自离线测试环境，没有虚构的备份数据。</em></p>
 
+**🌍 界面语言：** 在顶部工具栏中选择 **English**、**Français** 或 **简体中文**。关闭并重新打开 Harbor，即可将语言应用到所有界面；管理员启动时也会保留该设置。
+
 ## 🚀 三步开始
 
 1. 从 [Releases](https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/releases/latest) 下载 Arch/CachyOS、Debian 13 或 Fedora 44 的 Linux 软件包，检查 `SHA256SUMS`。

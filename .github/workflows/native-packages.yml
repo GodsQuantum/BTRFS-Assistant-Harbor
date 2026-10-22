@@ -37,7 +37,7 @@ jobs:
           test -f "$GITHUB_WORKSPACE/CMakeLists.txt"
           tar -C "$GITHUB_WORKSPACE" --exclude=.git --exclude=build \
             --transform='s|^\./|btrfs-assistant-harbor/|' \
-            -czf "$RUNNER_TEMP/rpmbuild/SOURCES/btrfs-assistant-harbor-0.1.1.tar.gz" .
+            -czf "$RUNNER_TEMP/rpmbuild/SOURCES/btrfs-assistant-harbor-0.1.2.tar.gz" .
           cp packaging/fedora/btrfs-assistant-harbor.spec "$RUNNER_TEMP/rpmbuild/SPECS/"
           rpmbuild --define "_topdir $RUNNER_TEMP/rpmbuild" \
             -ba "$RUNNER_TEMP/rpmbuild/SPECS/btrfs-assistant-harbor.spec"
@@ -60,7 +60,7 @@ jobs:
         if: startsWith(github.ref, 'refs/heads/cert/')
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: 39685747690
+          run-id: 39699791484
           name: harbor-fedora44-rpm-QA
           path: dist/fedora44-baseline
       - name: Fedora native RPM cross-version upgrade/rollback
@@ -116,9 +116,9 @@ jobs:
           test -f "$GITHUB_WORKSPACE/CMakeLists.txt"
           tar -C "$GITHUB_WORKSPACE" --exclude=.git --exclude=build -cf - . \
             | tar -xf - -C "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor"
-          tar -czf "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-0.1.1.tar.gz" \
+          tar -czf "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-0.1.2.tar.gz" \
             -C "$RUNNER_TEMP/arch-build" btrfs-assistant-harbor
-          SOURCE_SHA="$(sha256sum "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-0.1.1.tar.gz" | cut -d' ' -f1)"
+          SOURCE_SHA="$(sha256sum "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-0.1.2.tar.gz" | cut -d' ' -f1)"
           sed "s/@SHA256@/$SOURCE_SHA/g" packaging/arch/PKGBUILD.in > "$RUNNER_TEMP/arch-build/PKGBUILD"
           useradd -m -s /bin/bash harbor-builder
           chown -R harbor-builder:harbor-builder "$RUNNER_TEMP/arch-build"
@@ -142,7 +142,7 @@ jobs:
         if: startsWith(github.ref, 'refs/heads/cert/')
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: 39685747690
+          run-id: 39699791484
           name: harbor-arch-pkg-QA
           path: dist/arch-baseline
       - name: Arch native cross-version pacman upgrade and rollback

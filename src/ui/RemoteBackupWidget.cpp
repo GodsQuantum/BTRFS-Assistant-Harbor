@@ -73,6 +73,13 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     detected.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9_.-]")), QStringLiteral("-"));
     if (detected.isEmpty()) detected = QStringLiteral("Machine");
     QSettings harborSettings(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+    const auto preferredEngine = harborSettings.value(QStringLiteral("remote/engine"), QStringLiteral("legacy")).toString();
+    const int engineIndex = m_backend->findData(preferredEngine);
+    if (engineIndex >= 0) m_backend->setCurrentIndex(engineIndex);
+    connect(m_backend, &QComboBox::currentIndexChanged, this, [this] {
+        QSettings preferences(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+        preferences.setValue(QStringLiteral("remote/engine"), m_backend->currentData());
+    });
     m_machineName->setText(harborSettings.value(QStringLiteral("cas/machineName"), detected).toString());
     m_machineName->setToolTip(tr("Machine identity inside a shared CAS repository (not a sub-repository)."));
     form->addRow(tr("CAS machine name"), m_machineName);

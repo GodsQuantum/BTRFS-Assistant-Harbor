@@ -1541,6 +1541,10 @@ Restauration amorçable sur machine nue : NON CERTIFIÉE.
             <source>Remote backups</source>
             <translation>Sauvegardes distantes</translation>
         </message>
+            <message>
+            <source>Language</source>
+            <translation>Langue</translation>
+        </message>
     </context>
     <context>
         <name>RestoreConfirmDialog</name>
@@ -1707,6 +1711,33 @@ Restauration amorçable sur machine nue : NON CERTIFIÉE.
         <message>
             <source>Btrfs Assistant Harbor</source>
             <translation>Btrfs Assistant Harbor</translation>
+        </message>
+    </context>
+    <context>
+        <name>HarborLanguage</name>
+        <message>
+            <source>Interface language</source>
+            <translation>Langue de l’interface</translation>
+        </message>
+        <message>
+            <source>Choose English, French or Simplified Chinese. Reopen Harbor to apply.</source>
+            <translation>Choisissez anglais, français ou chinois simplifié. Rouvrez Harbor pour appliquer la langue.</translation>
+        </message>
+        <message>
+            <source>Language saved</source>
+            <translation>Langue enregistrée</translation>
+        </message>
+        <message>
+            <source>Close and reopen Harbor to apply the selected language to every screen.</source>
+            <translation>Fermez puis rouvrez Harbor pour appliquer cette langue à tous les écrans.</translation>
+        </message>
+        <message>
+            <source>Language setting failed</source>
+            <translation>Impossible d’enregistrer la langue</translation>
+        </message>
+        <message>
+            <source>The language preference could not be saved.</source>
+            <translation>La préférence de langue n’a pas pu être enregistrée.</translation>
         </message>
     </context>
 </TS>

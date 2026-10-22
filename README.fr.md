@@ -37,6 +37,8 @@ Un snapshot sur votre ordinateur protège d'une mauvaise mise à jour. **Une sau
 <p align="center"><img src="docs/screenshots/remote-backups-qt6.png" width="100%" alt="Véritable interface native Qt 6 des sauvegardes distantes Harbor CAS"></p>
 <p align="center"><em>Capture réelle de l'onglet Qt 6, dans un environnement de test hors ligne, sans fausses sauvegardes.</em></p>
 
+**🌍 Langue de l’interface :** sélectionnez **English**, **Français** ou **简体中文** dans la barre supérieure. Fermez puis rouvrez Harbor pour appliquer la langue à tous les écrans, même avec les droits administrateur.
+
 ## 🚀 Trois étapes pour commencer
 
 1. **Téléchargez** le paquet Arch/CachyOS, Debian 13 ou Fedora 44 depuis les [Releases](https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/releases/latest), puis vérifiez `SHA256SUMS`.
