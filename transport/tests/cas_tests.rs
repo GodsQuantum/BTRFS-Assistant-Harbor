@@ -259,12 +259,15 @@ fn progress_events_are_monotonic_and_measure_source_bytes_only() {
             parent_archive: None,
             protocol: 2,
         },
-        |count| samples.push(count),
+        |count, uploaded, reused| samples.push((count, uploaded, reused)),
     )
     .unwrap();
     assert!(!samples.is_empty());
-    assert_eq!(*samples.last().unwrap(), data.len() as u64);
-    assert!(samples.windows(2).all(|a| a[0] < a[1]));
+    assert_eq!(samples.last().unwrap().0, data.len() as u64);
+    assert!(samples.windows(2).all(|a| a[0].0 < a[1].0));
+    assert!(samples.windows(2).all(|a| a[0].1 <= a[1].1));
+    assert!(samples.windows(2).all(|a| a[0].2 <= a[1].2));
+    assert!(samples.last().unwrap().1 > 0);
     assert_eq!(repo.verify("progress").unwrap(), data.len() as u64);
 }
 

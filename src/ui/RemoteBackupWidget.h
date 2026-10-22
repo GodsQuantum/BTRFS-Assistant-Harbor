@@ -14,6 +14,7 @@ class QListWidget;
 class QPushButton;
 class QPlainTextEdit;
 class QLabel;
+class QProgressBar;
 
 class RemoteBackupWidget final : public QWidget {
     Q_OBJECT
@@ -47,6 +48,8 @@ private:
     QListWidget *m_machineSets;
     QPlainTextEdit *m_log;
     QLabel *m_state;
+    QLabel *m_progressDetails;
+    QProgressBar *m_progressBar;
     QPushButton *m_send;
     QPushButton *m_cancel;
     bool m_cancelRequested = false;

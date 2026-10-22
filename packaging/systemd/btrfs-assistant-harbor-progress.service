@@ -1,0 +1,22 @@
+[Unit]
+Description=Read-only Harbor transfer progress and ETA observer
+After=local-fs.target
+ConditionPathExists=/var/lib/btrfs-assistant-harbor/manual-jobs
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/btrfs-assistant-harbor-progress
+Restart=on-failure
+RestartSec=8
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/run/btrfs-assistant-harbor
+RuntimeDirectory=btrfs-assistant-harbor
+RuntimeDirectoryMode=0755
+UMask=0022
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

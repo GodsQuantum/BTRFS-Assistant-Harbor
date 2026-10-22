@@ -829,7 +829,13 @@ impl Repository {
         stream: R,
         eof_success: F,
     ) -> Result<IngestStats> {
-        self.ingest_inner(name, stream, eof_success, None, &mut |_: u64| {})
+        self.ingest_inner(
+            name,
+            stream,
+            eof_success,
+            None,
+            &mut |_: u64, _: u64, _: u64| {},
+        )
     }
 
     pub fn ingest_snapshot<R: Read, F: FnOnce() -> bool>(
@@ -839,12 +845,18 @@ impl Repository {
         eof_success: F,
         identity: SnapshotIdentity,
     ) -> Result<IngestStats> {
-        self.ingest_inner(name, stream, eof_success, Some(identity), &mut |_: u64| {})
+        self.ingest_inner(
+            name,
+            stream,
+            eof_success,
+            Some(identity),
+            &mut |_: u64, _: u64, _: u64| {},
+        )
     }
 
     /// Report bytes already read from the Btrfs send stream (not destination
     /// bytes and not a forecast of final compressed size).
-    pub fn ingest_snapshot_with_progress<R: Read, F: FnOnce() -> bool, P: FnMut(u64)>(
+    pub fn ingest_snapshot_with_progress<R: Read, F: FnOnce() -> bool, P: FnMut(u64, u64, u64)>(
         &self,
         name: &str,
         stream: R,
@@ -861,7 +873,7 @@ impl Repository {
         stream: R,
         eof_success: F,
         identity: Option<SnapshotIdentity>,
-        progress: &mut dyn FnMut(u64),
+        progress: &mut dyn FnMut(u64, u64, u64),
     ) -> Result<IngestStats> {
         let _lock = self.lock()?;
         if let Some((machine, _)) = Self::machine_parts(name)? {
@@ -879,6 +891,8 @@ impl Repository {
         }
         let mut raw_digest = Sha256::new();
         let mut raw_size = 0u64;
+        let mut uploaded_bytes = 0u64;
+        let mut reused_bytes = 0u64;
         let mut entries = Vec::new();
         let mut new_objects = 0usize;
         let mut reused_objects = 0usize;
@@ -914,14 +928,16 @@ impl Repository {
                 &packed,
             )? {
                 new_objects += 1;
+                uploaded_bytes = uploaded_bytes.saturating_add(packed.len() as u64);
             } else {
                 entry = self
                     .inspect_existing_object(&hash, chunk.data.len())
                     .context("existing content-addressed object differs or is corrupt")?;
                 reused_objects += 1;
+                reused_bytes = reused_bytes.saturating_add(entry.zstd_size as u64);
             }
             entries.push(entry);
-            progress(raw_size);
+            progress(raw_size, uploaded_bytes, reused_bytes);
         }
         ensure!(
             eof_success(),

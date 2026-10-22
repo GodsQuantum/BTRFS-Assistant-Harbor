@@ -2,6 +2,8 @@
 #include "util/RemoteBackupPlan.h"
 #include "util/MachineSetProtocol.h"
 #include "util/Snapper.h"
+#include "util/HarborProgress.h"
+#include <QProgressBar>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -46,7 +48,8 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
       m_independentSend(new QCheckBox(tr("Continue backup after closing Harbor (systemd)"), this)),
       m_allowLocal(new QCheckBox(tr("Allow explicitly selected local destination"), this)),
       m_archives(new QListWidget(this)), m_machineSets(new QListWidget(this)), m_log(new QPlainTextEdit(this)),
-      m_state(new QLabel(tr("Ready: no backup in progress"), this)), m_send(new QPushButton(tr("Send selected snapshot"), this)),
+      m_state(new QLabel(tr("Ready: no backup in progress"), this)),
+      m_progressDetails(new QLabel(this)), m_progressBar(new QProgressBar(this)), m_send(new QPushButton(tr("Send selected snapshot"), this)),
       m_cancel(new QPushButton(tr("Cancel current operation"), this)),
       m_process(new QProcess(this)), m_jobPoller(new QProcess(this))
 {
@@ -238,6 +241,15 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     machineLayout->addWidget(machineNote);
     layout->addWidget(machineBox);
     layout->addWidget(m_state);
+    m_progressBar->setObjectName(QStringLiteral("harborBackupEstimatedProgress"));
+    m_progressBar->setRange(0, 0);
+    m_progressBar->setVisible(false);
+    layout->addWidget(m_progressBar);
+    m_progressDetails->setObjectName(QStringLiteral("harborBackupEstimatedETA"));
+    m_progressDetails->setWordWrap(true);
+    m_progressDetails->setTextFormat(Qt::PlainText);
+    m_progressDetails->setVisible(false);
+    layout->addWidget(m_progressDetails);
     m_log->setReadOnly(true);
     m_log->setMaximumBlockCount(1500);
     m_log->setPlaceholderText(tr("Transfers run asynchronously; process output appears here."));
@@ -627,6 +639,21 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
             const auto state = obj.value(QStringLiteral("state")).toString();
             if (state == QLatin1String("running") || state == QLatin1String("queued") ||
                 state == QLatin1String("retrying")) m_activeJobId = obj.value(QStringLiteral("id")).toString();
+        }
+        const QJsonObject estimate = m_activeJobId.isEmpty()
+            ? QJsonObject{} : HarborProgress::active(m_activeJobId);
+        m_progressDetails->setVisible(!estimate.isEmpty());
+        m_progressBar->setVisible(!estimate.isEmpty());
+        if (!estimate.isEmpty()) {
+            m_progressDetails->setText(HarborProgress::overview(estimate));
+            const auto percentage = estimate.value(QStringLiteral("progress_percent_estimate"));
+            if (percentage.isDouble()) {
+                m_progressBar->setRange(0, 1000);
+                m_progressBar->setValue(qBound(0, qRound(percentage.toDouble() * 10), 990));
+                m_progressBar->setFormat(tr("Estimated progress: %p%"));
+            } else {
+                m_progressBar->setRange(0, 0);
+            }
         }
         if (!m_activeJobId.isEmpty()) {
             m_cancel->setEnabled(m_process->state() == QProcess::NotRunning);

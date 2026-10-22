@@ -343,12 +343,14 @@ fn run_send(
                     &mut source,
                     || child.wait().is_ok_and(|status| status.success()),
                     identity.clone(),
-                    |bytes| {
+                    |bytes, uploaded, reused| {
                         if last_report.elapsed() >= Duration::from_millis(750) {
                             // Framed, parseable progress on stderr. A retry
                             // starts at zero; the Qt UI labels this as bytes
                             // read from source, not remote bytes committed.
                             eprintln!("HARBOR_PROGRESS_BYTES={bytes}");
+                            eprintln!("HARBOR_PROGRESS_UPLOADED_BYTES={uploaded}");
+                            eprintln!("HARBOR_PROGRESS_REUSED_BYTES={reused}");
                             last_report = std::time::Instant::now();
                         }
                     },
