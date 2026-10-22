@@ -15,6 +15,7 @@
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QProcess>
+#include <QStandardPaths>
 #include <QMessageBox>
 #include <QTimer>
 #ifdef Q_OS_UNIX
@@ -33,6 +34,7 @@
 #include "ui/HarborLanguage.h"
 #include "ui/DiffViewer.h"
 #include "util/Btrfs.h"
+#include "util/RemoteBackupPlan.h"
 #include "util/Snapper.h"
 #include "util/System.h"
 class HarborGuiUserSmoke : public QObject {
@@ -265,17 +267,35 @@ private slots:
         auto *request = widget->findChild<QProcess*>(QStringLiteral("harborCommandProcess"));
         QVERIFY(request);
         QSignalSpy launched(request, &QProcess::started);
+        QSignalSpy failedStart(request, &QProcess::errorOccurred);
+        const auto executable = QStandardPaths::findExecutable(QStringLiteral("btrfs-assistant-harbor-job"));
+        qInfo() << "HARBOR_QA_BACKEND_PREFLIGHT" << executable
+                << QFileInfo(executable).isExecutable()
+                << HarborRemote::trustedBackendExecutable(executable);
+        QVERIFY2(!executable.isEmpty() && HarborRemote::trustedBackendExecutable(executable),
+                 "Installed backend must pass strict Qt root-owned executable validation");
         // The test accepts ONLY the expected confirmation, never a warning.
         QTimer::singleShot(150, widget.get(), [] {
             if (auto *message = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
                 qInfo() << "HARBOR_QA_DIALOG" << message->windowTitle() << message->text();
-                if (message->windowTitle().contains(QStringLiteral("background"), Qt::CaseInsensitive))
-                    message->done(QMessageBox::Yes);
-                else
-                    message->done(QMessageBox::No);
+                if (message->windowTitle().contains(QStringLiteral("background"), Qt::CaseInsensitive)) {
+                    if (auto *yes = message->button(QMessageBox::Yes)) yes->click();
+                    else message->done(QMessageBox::Yes);
+                } else {
+                    if (auto *no = message->button(QMessageBox::No)) no->click();
+                    else message->done(QMessageBox::No);
+                }
             }
         });
         QTest::mouseClick(send, Qt::LeftButton);
+        if (launched.isEmpty()) {
+            qWarning() << "HARBOR_QA_NO_QPROCESS_START" << request->program()
+                       << request->arguments() << "state" << request->state()
+                       << "error" << request->error() << request->errorString()
+                       << "failedStart" << failedStart.size();
+            for (auto *log : widget->findChildren<QPlainTextEdit*>())
+                qWarning().noquote() << "HARBOR_QA_GUI_LOG" << log->toPlainText();
+        }
         QTRY_VERIFY_WITH_TIMEOUT(launched.size() >= 1, 15000);
         QTRY_COMPARE_WITH_TIMEOUT(request->state(), QProcess::NotRunning, 45000);
         for (auto *log : widget->findChildren<QPlainTextEdit*>())
