@@ -23,7 +23,7 @@
 void setApplicationInfo()
 {
     QCoreApplication::setApplicationName(QCoreApplication::translate("main", "Btrfs Assistant Harbor"));
-    QCoreApplication::setApplicationVersion("0.1.4");
+    QCoreApplication::setApplicationVersion("0.1.5");
 }
 
 int main(int argc, char *argv[])
