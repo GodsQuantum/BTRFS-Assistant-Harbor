@@ -2148,6 +2148,10 @@ This cannot be undone. The plan will be checked again under repository lock.</so
             <translation>停止 systemd 备份服务？已完成的 CAS 数据块将被保留。</translation>
         </message>
         <message>
+            <source>Estimated progress: %p%</source>
+            <translation>预计进度：%p%</translation>
+        </message>
+        <message>
             <source>Background backup: %1 — %2 bytes read</source>
             <translation>后台备份：%1 — 已读取 %2 字节</translation>
         </message>
