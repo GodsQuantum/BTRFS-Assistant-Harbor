@@ -1,4 +1,5 @@
 #include <QApplication>
+#include "util/HarborProgress.h"
 #include <QDir>
 #include <QFileInfo>
 #include <QIcon>
@@ -77,8 +78,16 @@ int main(int argc, char **argv) {
                     "备份进行中 (systemd)")
             : label("No active manual backup", "Aucune sauvegarde manuelle active",
                     "没有正在运行的手动备份");
-        state->setText(status);
-        tray.setToolTip(QStringLiteral("Btrfs Assistant Harbor — ") + status);
+        const QJsonObject stats = HarborProgress::active();
+        if (!stats.isEmpty()) {
+            state->setText(status + QStringLiteral(" — ") +
+                           HarborProgress::size(stats.value(QStringLiteral("bytes_read")).toDouble()));
+            tray.setToolTip(QStringLiteral("Btrfs Assistant Harbor\n") +
+                            HarborProgress::overview(stats, true));
+        } else {
+            state->setText(status);
+            tray.setToolTip(QStringLiteral("Btrfs Assistant Harbor — ") + status);
+        }
     };
     QObject::connect(open, &QAction::triggered, &app, [] {
         if (!QProcess::startDetached(QStringLiteral("/usr/bin/btrfs-assistant-harbor-launcher")))

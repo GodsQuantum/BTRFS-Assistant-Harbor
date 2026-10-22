@@ -32,6 +32,8 @@ UNIT = "btrfs-assistant-harbor-job@{}.service"
 ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$")
 PROGRESS = re.compile(r"^HARBOR_PROGRESS_BYTES=(\d+)$")
+UPLOADED = re.compile(r"^HARBOR_PROGRESS_UPLOADED_BYTES=(\d+)$")
+REUSED = re.compile(r"^HARBOR_PROGRESS_REUSED_BYTES=(\d+)$")
 RUNNING = {"queued", "running", "retrying"}
 
 
@@ -244,6 +246,10 @@ def runner(job_id: str, *, root: Path = ROOT) -> int:
         check_snapshot_identities(doc)
         doc["state"] = "running"
         doc["attempts"] += 1
+        doc["bytes_read"] = 0
+        doc["uploaded_bytes"] = 0
+        doc["reused_bytes"] = 0
+        doc["upload_metrics_available"] = False
         doc["last_started"] = time.time()
         save(path, doc)
         command = list(doc["command"])
@@ -258,6 +264,13 @@ def runner(job_id: str, *, root: Path = ROOT) -> int:
                 match = PROGRESS.fullmatch(line.strip())
                 if match:
                     doc["bytes_read"] = int(match.group(1))
+                match_up = UPLOADED.fullmatch(line.strip())
+                if match_up:
+                    doc["uploaded_bytes"] = int(match_up.group(1))
+                    doc["upload_metrics_available"] = True
+                match_reused = REUSED.fullmatch(line.strip())
+                if match_reused:
+                    doc["reused_bytes"] = int(match_reused.group(1))
                 if time.monotonic() - last_written > 2.5:
                     if load(job_id, root)["state"] == "cancelled":
                         proc.terminate()

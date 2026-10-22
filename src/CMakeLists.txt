@@ -100,8 +100,15 @@ install(FILES ${PROJECT_SOURCE_DIR}/packaging/systemd/btrfs-assistant-harbor-job
 install(FILES ${PROJECT_SOURCE_DIR}/backend/cas_schedule.py
         DESTINATION ${CMAKE_INSTALL_BINDIR})
 
+install(PROGRAMS ${PROJECT_SOURCE_DIR}/backend/progress_status.py
+        DESTINATION ${CMAKE_INSTALL_BINDIR}
+        RENAME btrfs-assistant-harbor-progress)
+install(FILES ${PROJECT_SOURCE_DIR}/packaging/systemd/btrfs-assistant-harbor-progress.service
+        DESTINATION lib/systemd/system)
+
 # Dedicated unprivileged user-session status controller; never runs as root.
 add_executable(btrfs-assistant-harbor-tray tray.cpp)
+target_include_directories(btrfs-assistant-harbor-tray PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(btrfs-assistant-harbor-tray PRIVATE Qt6::Widgets)
 # Qt6 built with GNU_PROPERTY_1_NEEDED_INDIRECT_EXTERN_ACCESS (e.g. CachyOS
 # Qt 6.12) rejects R_X86_64_COPY on QTimer/QSystemTrayIcon::staticMetaObject.
