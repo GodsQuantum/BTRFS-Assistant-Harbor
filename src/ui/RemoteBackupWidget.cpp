@@ -8,6 +8,8 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QFileInfo>
 #include <QFileDialog>
@@ -223,6 +225,12 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     auto *machineBox = new QGroupBox(tr("Whole-computer backup sets — checkpoint-v2 (QA)"), this);
     auto *machineLayout = new QVBoxLayout(machineBox);
     auto *machineActions = new QHBoxLayout();
+    auto *wholeBackup = new QPushButton(tr("Back up the entire computer"), machineBox);
+    wholeBackup->setObjectName(QStringLiteral("harborBackupWholeComputer"));
+    auto *wholeRestore = new QPushButton(tr("Restore a computer"), machineBox);
+    wholeRestore->setObjectName(QStringLiteral("harborRestoreWholeComputer"));
+    machineLayout->addWidget(wholeBackup);
+    machineLayout->addWidget(wholeRestore);
     auto *auditMachine = new QPushButton(tr("Audit backup coverage"), machineBox);
     auto *listMachines = new QPushButton(tr("List machine backup sets"), machineBox);
     auto *previewMachine = new QPushButton(tr("Preview staged machine restore"), machineBox);
@@ -378,6 +386,33 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
             tr("Initialize or open the dedicated CAS repository in this destination? "
                "Existing legacy archives are not modified.")) == QMessageBox::Yes)
             launch(args, QStringLiteral("cas-init"), QStringLiteral("harbor-transport"));
+    });
+    connect(wholeBackup, &QPushButton::clicked, this, [this] {
+        const auto profile = HarborRemote::profileId(QStringLiteral("whole-machine"),
+                                                     m_target->text());
+        const auto unit = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        const auto args = HarborRemote::wholeMachineStartArguments(
+            m_target->text(), profile, unit);
+        if (args.isEmpty()) {
+            QMessageBox::warning(this, tr("Invalid machine backup destination"),
+                tr("Choose a mounted remote backup directory before starting a whole-computer backup."));
+            return;
+        }
+        if (QMessageBox::question(this, tr("Back up this entire computer"),
+            tr("Capture ALL persistent Btrfs subvolumes, the EFI files and a dated machine set. "
+               "Harbor will run the job independently of this window using systemd. "
+               "No local snapshot or existing backup is deleted. Continue?"))
+            != QMessageBox::Yes) return;
+        launch(args, QStringLiteral("whole-machine-start"), QStringLiteral("systemd-run"));
+    });
+    connect(wholeRestore, &QPushButton::clicked, this, [this] {
+        const auto args = HarborRemote::machineSetListArguments(m_target->text());
+        if (args.isEmpty()) {
+            QMessageBox::warning(this, tr("Choose backup destination"),
+                tr("Select the mounted Cloud9 backup directory first."));
+            return;
+        }
+        launch(args, QStringLiteral("whole-machine-catalog"));
     });
     connect(auditMachine, &QPushButton::clicked, this, [this] {
         launch(HarborRemote::machineInventoryArguments(), QStringLiteral("machine-inventory"));
@@ -808,6 +843,140 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
     m_state->setText(ok ? tr("Operation finished: %1").arg(m_purpose)
                         : tr("Operation failed: %1 (exit %2)").arg(m_purpose).arg(code));
     if (!ok) return;
+    if (m_purpose == QLatin1String("whole-machine-catalog")) {
+        if (m_requestRepo != m_target->text() || m_requestRevision != m_contextRevision)
+            return;
+        QJsonParseError parse{};
+        const auto payload = QJsonDocument::fromJson(m_stdout, &parse);
+        if (parse.error != QJsonParseError::NoError || !payload.isArray()) {
+            QMessageBox::warning(this, tr("Backup catalog unavailable"),
+                                 tr("Could not load verified computer backups."));
+            return;
+        }
+        QDialog dialog(this);
+        dialog.setWindowTitle(tr("Restore a computer"));
+        auto *layout = new QVBoxLayout(&dialog);
+        auto *note = new QLabel(tr("Choose a complete dated machine backup. "
+            "The first step receives all volumes into an empty Btrfs staging area. "
+            "Boot restoration is separate and must be verified."), &dialog);
+        note->setWordWrap(true);
+        layout->addWidget(note);
+        auto *form = new QFormLayout();
+        auto *machines = new QComboBox(&dialog);
+        auto *dates = new QComboBox(&dialog);
+        auto *policy = new QComboBox(&dialog);
+        auto *newHost = new QLineEdit(&dialog);
+        auto *staging = new QLineEdit(m_staging->text(), &dialog);
+        machines->setObjectName(QStringLiteral("harborRestoreComputer"));
+        dates->setObjectName(QStringLiteral("harborRestoreComputerDate"));
+        policy->setObjectName(QStringLiteral("harborRestoreHostPolicy"));
+        staging->setObjectName(QStringLiteral("harborRestoreComputerStaging"));
+        policy->addItem(tr("Keep original machine name"), QStringLiteral("original"));
+        policy->addItem(tr("Keep current installation name"), QStringLiteral("installed"));
+        policy->addItem(tr("Use a different name"), QStringLiteral("custom"));
+        form->addRow(tr("Computer"), machines);
+        form->addRow(tr("Backup date"), dates);
+        form->addRow(tr("Name after restoration"), policy);
+        form->addRow(tr("Custom name"), newHost);
+        form->addRow(tr("Empty Btrfs staging directory"), staging);
+        layout->addLayout(form);
+        QJsonArray complete;
+        for (const auto &v : payload.array()) {
+            const auto obj = v.toObject();
+            const auto name = obj.value(QStringLiteral("machine_name")).toString();
+            const auto state = obj.value(QStringLiteral("status")).toString();
+            if (name.isEmpty() || state != QLatin1String("completed_btrfs_and_boot_files"))
+                continue;
+            complete.append(obj);
+            if (machines->findText(name) < 0) machines->addItem(name);
+        }
+        const auto reloadDates = [&] {
+            dates->clear();
+            for (const auto &v : complete) {
+                const auto obj = v.toObject();
+                if (obj.value(QStringLiteral("machine_name")).toString() != machines->currentText())
+                    continue;
+                const auto created = QDateTime::fromString(
+                    obj.value(QStringLiteral("created_utc")).toString(), Qt::ISODate);
+                dates->addItem(created.isValid()
+                    ? created.toLocalTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"))
+                    : obj.value(QStringLiteral("created_utc")).toString(),
+                    obj.value(QStringLiteral("set_id")).toString());
+            }
+        };
+        connect(machines, &QComboBox::currentTextChanged, &dialog, reloadDates);
+        connect(policy, &QComboBox::currentIndexChanged, &dialog,
+                [=] { newHost->setEnabled(policy->currentData() == QLatin1String("custom")); });
+        newHost->setEnabled(false);
+        reloadDates();
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+        buttons->button(QDialogButtonBox::Ok)->setText(tr("Verify backup and prepare recovery"));
+        buttons->button(QDialogButtonBox::Ok)->setEnabled(!complete.isEmpty());
+        layout->addWidget(buttons);
+        if (complete.isEmpty())
+            note->setText(tr("No complete machine backup is available here yet. "
+                             "A single Snapper root snapshot is not a whole-computer backup."));
+        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+        if (dialog.exec() != QDialog::Accepted) return;
+        static const QRegularExpression allowed(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9-]{0,62}$"));
+        const auto choice = policy->currentData().toString();
+        const auto name = choice == QLatin1String("original") ? machines->currentText()
+            : choice == QLatin1String("installed") ? QSysInfo::machineHostName()
+            : newHost->text().trimmed();
+        if (!allowed.match(name).hasMatch()) {
+            QMessageBox::warning(this, tr("Invalid computer name"),
+                                 tr("Use 1–63 ASCII letters, digits or hyphens."));
+            return;
+        }
+        const auto id = dates->currentData().toString();
+        const auto args = HarborRemote::machineSetPreviewArguments(
+            m_target->text(), id, staging->text());
+        if (args.isEmpty()) {
+            QMessageBox::warning(this, tr("Invalid recovery selection"),
+                                 tr("Choose a completed computer backup and a safe absolute staging directory."));
+            return;
+        }
+        m_computerRecoveryId = id;
+        m_computerRecoveryName = name;
+        m_computerRecoveryPolicy = choice;
+        m_computerRecoveryStaging = staging->text();
+        m_computerRecoveryRepository = m_target->text();
+        launch(args, QStringLiteral("whole-machine-restore-preview"));
+        return;
+    }
+    if (m_purpose == QLatin1String("whole-machine-restore-preview")) {
+        if (m_requestRepo != m_target->text() ||
+            m_computerRecoveryRepository != m_target->text() ||
+            m_requestRevision != m_contextRevision ||
+            m_computerRecoveryId.isEmpty()) return;
+        HarborMachineProtocol::RestorePreview plan;
+        QString error;
+        if (!HarborMachineProtocol::preview(m_stdout, m_computerRecoveryStaging, &plan, &error)) {
+            QMessageBox::warning(this, tr("Computer recovery refused"),
+                                 tr("Backup verification failed: %1").arg(error));
+            return;
+        }
+        if (QMessageBox::question(this, tr("Receive a complete computer backup"),
+            tr("Verified: %1 Btrfs volumes and %2 EFI archives. "
+               "Recover these volumes to the EMPTY staging directory? "
+               "The running CachyOS installation will NOT be overwritten. "
+               "Selected future machine name: %3.").arg(plan.volumesCount)
+              .arg(plan.bootFiles).arg(m_computerRecoveryName)) != QMessageBox::Yes) return;
+        const auto args = HarborRemote::machineSetPreviewArguments(
+            m_target->text(), m_computerRecoveryId, m_computerRecoveryStaging);
+        QStringList confirmed = args;
+        confirmed << QStringLiteral("--confirm");
+        launch(confirmed, QStringLiteral("whole-machine-restore-staged"));
+        return;
+    }
+    if (m_purpose == QLatin1String("whole-machine-restore-staged")) {
+        QMessageBox::information(this, tr("Files safely recovered"),
+            tr("All backup volumes have been received into the staging directory. "
+               "The bootable machine activation phase still requires an offline recovery environment "
+               "and is not yet certified for LUKS/Limine."));
+        return;
+    }
     if (m_purpose == QLatin1String("machine-inventory")) {
         QJsonParseError error{};
         const auto doc = QJsonDocument::fromJson(m_stdout, &error);

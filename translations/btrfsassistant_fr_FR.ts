@@ -649,6 +649,130 @@ Restauration amorçable sur machine nue : NON CERTIFIÉE.
             <source>Last background backup: %1</source>
             <translation>Dernière sauvegarde en arrière-plan : %1</translation>
         </message>
+        <message>
+            <source>Back up the entire computer</source>
+            <translation>Sauvegarder tout l’ordinateur</translation>
+        </message>
+        <message>
+            <source>Restore a computer</source>
+            <translation>Restaurer un ordinateur</translation>
+        </message>
+        <message>
+            <source>Invalid machine backup destination</source>
+            <translation>Destination de sauvegarde machine invalide</translation>
+        </message>
+        <message>
+            <source>Choose a mounted remote backup directory before starting a whole-computer backup.</source>
+            <translation>Choisissez un dossier de sauvegarde distant monté avant de lancer la sauvegarde complète.</translation>
+        </message>
+        <message>
+            <source>Back up this entire computer</source>
+            <translation>Sauvegarder cet ordinateur entièrement</translation>
+        </message>
+        <message>
+            <source>Capture ALL persistent Btrfs subvolumes, the EFI files and a dated machine set. Harbor will run the job independently of this window using systemd. No local snapshot or existing backup is deleted. Continue?</source>
+            <translation>Capturer TOUS les sous-volumes Btrfs persistants, les fichiers EFI et un jeu de sauvegarde daté. Harbor exécutera la tâche indépendamment de cette fenêtre via systemd. Aucun instantané local ni aucune sauvegarde existante ne sera supprimé. Continuer ?</translation>
+        </message>
+        <message>
+            <source>Choose backup destination</source>
+            <translation>Choisir la destination de sauvegarde</translation>
+        </message>
+        <message>
+            <source>Select the mounted Cloud9 backup directory first.</source>
+            <translation>Sélectionnez d’abord le répertoire de sauvegarde Cloud9 monté.</translation>
+        </message>
+        <message>
+            <source>Backup catalog unavailable</source>
+            <translation>Catalogue de sauvegardes indisponible</translation>
+        </message>
+        <message>
+            <source>Could not load verified computer backups.</source>
+            <translation>Impossible de charger les sauvegardes d’ordinateurs vérifiées.</translation>
+        </message>
+        <message>
+            <source>Choose a complete dated machine backup. The first step receives all volumes into an empty Btrfs staging area. Boot restoration is separate and must be verified.</source>
+            <translation>Choisissez une sauvegarde machine complète et datée. La première étape restaure tous les volumes dans un répertoire Btrfs de préparation vide. Le rétablissement du démarrage est séparé et doit être vérifié.</translation>
+        </message>
+        <message>
+            <source>Keep original machine name</source>
+            <translation>Conserver le nom d’origine</translation>
+        </message>
+        <message>
+            <source>Keep current installation name</source>
+            <translation>Conserver le nom de cette installation</translation>
+        </message>
+        <message>
+            <source>Use a different name</source>
+            <translation>Utiliser un autre nom</translation>
+        </message>
+        <message>
+            <source>Computer</source>
+            <translation>Ordinateur</translation>
+        </message>
+        <message>
+            <source>Backup date</source>
+            <translation>Date de sauvegarde</translation>
+        </message>
+        <message>
+            <source>Name after restoration</source>
+            <translation>Nom après restauration</translation>
+        </message>
+        <message>
+            <source>Custom name</source>
+            <translation>Nom personnalisé</translation>
+        </message>
+        <message>
+            <source>Empty Btrfs staging directory</source>
+            <translation>Répertoire Btrfs de préparation vide</translation>
+        </message>
+        <message>
+            <source>Verify backup and prepare recovery</source>
+            <translation>Vérifier la sauvegarde et préparer la restauration</translation>
+        </message>
+        <message>
+            <source>No complete machine backup is available here yet. A single Snapper root snapshot is not a whole-computer backup.</source>
+            <translation>Aucune sauvegarde machine complète disponible ici. Un instantané Snapper de la racine ne représente pas une sauvegarde intégrale.</translation>
+        </message>
+        <message>
+            <source>Invalid computer name</source>
+            <translation>Nom d’ordinateur invalide</translation>
+        </message>
+        <message>
+            <source>Use 1–63 ASCII letters, digits or hyphens.</source>
+            <translation>Utilisez entre 1 et 63 lettres ASCII, chiffres ou tirets.</translation>
+        </message>
+        <message>
+            <source>Invalid recovery selection</source>
+            <translation>Sélection de restauration invalide</translation>
+        </message>
+        <message>
+            <source>Choose a completed computer backup and a safe absolute staging directory.</source>
+            <translation>Choisissez une sauvegarde machine terminée et un dossier de préparation absolu et sûr.</translation>
+        </message>
+        <message>
+            <source>Computer recovery refused</source>
+            <translation>Restauration machine refusée</translation>
+        </message>
+        <message>
+            <source>Backup verification failed: %1</source>
+            <translation>Échec de la vérification de la sauvegarde : %1</translation>
+        </message>
+        <message>
+            <source>Receive a complete computer backup</source>
+            <translation>Récupérer une sauvegarde machine complète</translation>
+        </message>
+        <message>
+            <source>Verified: %1 Btrfs volumes and %2 EFI archives. Recover these volumes to the EMPTY staging directory? The running CachyOS installation will NOT be overwritten. Selected future machine name: %3.</source>
+            <translation>Vérifiés : %1 volumes Btrfs et %2 archives EFI. Récupérer ces volumes dans le dossier de préparation VIDE ? L’installation CachyOS en cours ne sera PAS écrasée. Nom prévu pour la future machine : %3.</translation>
+        </message>
+        <message>
+            <source>Files safely recovered</source>
+            <translation>Fichiers récupérés en sécurité</translation>
+        </message>
+        <message>
+            <source>All backup volumes have been received into the staging directory. The bootable machine activation phase still requires an offline recovery environment and is not yet certified for LUKS/Limine.</source>
+            <translation>Tous les volumes de sauvegarde ont été récupérés dans le dossier de préparation. L’activation du système démarrable exige encore un environnement de récupération hors ligne et n’est pas certifiée pour LUKS/Limine.</translation>
+        </message>
 </context>
     <context>
         <name>Btrfs</name>

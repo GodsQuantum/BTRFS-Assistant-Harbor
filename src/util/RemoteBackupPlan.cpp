@@ -252,6 +252,25 @@ QStringList machineInventoryArguments() {
     return {QStringLiteral("raw"), QStringLiteral("checkpoint-v2"),
             QStringLiteral("machine-inventory")};
 }
+QStringList wholeMachineStartArguments(const QString &target, const QString &profile,
+                                       const QString &unitId) {
+    const QUuid profileUuid(profile);
+    const QUuid jobUuid(unitId);
+    if (!safePath(target) || profileUuid.isNull() || jobUuid.isNull() ||
+        profileUuid.toString(QUuid::WithoutBraces) != profile ||
+        jobUuid.toString(QUuid::WithoutBraces) != unitId)
+        return {};
+    return {QStringLiteral("--unit"), QStringLiteral("harbor-machine-backup-") + unitId,
+            QStringLiteral("--collect"), QStringLiteral("--service-type=exec"),
+            QStringLiteral("--property=TimeoutStartSec=infinity"),
+            QStringLiteral("--property=RequiresMountsFor=") + target,
+            QStringLiteral("/usr/bin/harbor-checkpoint-v2"),
+            QStringLiteral("raw"), QStringLiteral("checkpoint-v2"),
+            QStringLiteral("set-start"), QStringLiteral("--target"), target,
+            QStringLiteral("--profile-id"), profile,
+            QStringLiteral("--snapshot-provider"), QStringLiteral("snapper-fresh"),
+            QStringLiteral("--experimental")};
+}
 QStringList machineSetListArguments(const QString &target) {
     if (!safePath(target)) return {};
     return {QStringLiteral("raw"), QStringLiteral("checkpoint-v2"),

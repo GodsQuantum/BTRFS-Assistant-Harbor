@@ -11,6 +11,7 @@ import argparse
 import fcntl
 import json
 import os
+import socket
 import re
 import stat
 import subprocess
@@ -97,6 +98,12 @@ def _read(root: Path, set_id: str) -> dict:
         or len(data["members"]) > 1024
     ):
         raise ValueError("invalid machine-set catalog")
+    machine_name = data.get("machine_name")
+    if machine_name is not None and (
+        not isinstance(machine_name, str)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,62}", machine_name)
+    ):
+        raise ValueError("invalid source hostname in machine backup catalog")
     _canonical_uuid(data.get("profile_id", ""))
     for index, member in enumerate(data["members"]):
         if not isinstance(member, dict) or not isinstance(member.get("archive"), str):
@@ -1358,6 +1365,7 @@ def _execute_machine_set_unlocked(args: argparse.Namespace) -> int:
                 rows.append(
                     {
                         "set_id": data["set_id"],
+                        "machine_name": data.get("machine_name", ""),
                         "status": data["status"],
                         "coverage": data["coverage"],
                         "bootable": False,
@@ -1492,6 +1500,7 @@ def _execute_machine_set_unlocked(args: argparse.Namespace) -> int:
         ]
         data = {
             "schema_version": 1,
+            "machine_name": socket.gethostname(),
             "max_incremental_depth": max_depth,
             "set_id": set_id,
             "profile_id": args.profile_id,
