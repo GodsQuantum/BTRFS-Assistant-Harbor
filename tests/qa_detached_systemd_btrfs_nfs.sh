@@ -37,8 +37,9 @@ trap finish EXIT
 mkdir -p "$WORK"/{export,nfs,btrfs}
 chmod 755 "$WORK"
 sudo chown "$RUN_UID":"$(id -g)" "$WORK/export"
-sudo mkdir -p /run/ganesha
 sudo systemctl stop nfs-ganesha 2>/dev/null || true
+# systemd removes RuntimeDirectory on stop; create the PID directory AFTER.
+sudo mkdir -p /var/run/ganesha
 cat > "$WORK/ganesha.conf" <<EOF
 NFS_CORE_PARAM {
     Protocols = 4;
@@ -58,7 +59,7 @@ EXPORT {
 EOF
 sudo /usr/bin/ganesha.nfsd -f "$WORK/ganesha.conf" -L "$WORK/ganesha.log"
 sleep 3
-sudo mount -t nfs4 -o vers=4.1,port=20490,proto=tcp,timeo=100,retrans=2 \
+sudo timeout 30s mount -t nfs4 -o vers=4.1,port=20490,proto=tcp,timeo=30,retrans=1,soft \
     127.0.0.1:/harborqa "$WORK/nfs"
 test "$(findmnt -T "$WORK/nfs" -n -o FSTYPE)" = "nfs4"
 echo "PASS REAL_NFS4_DISPOSABLE"
