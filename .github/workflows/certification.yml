@@ -346,3 +346,31 @@ jobs:
             ${{ runner.temp }}/galactica-qemu.log
           if-no-files-found: ignore
           retention-days: 14
+
+  detached-systemd-nfs-btrfs:
+    name: Real NFS4 Btrfs + systemd survives actual Qt close
+    runs-on: ubuntu-24.04
+    needs: [rust]
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Disposable Btrfs NFS4 systemd and Qt native prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            nfs-ganesha nfs-ganesha-vfs nfs-common btrfs-progs snapper pv \
+            cmake ninja-build g++ pkg-config qt6-base-dev qt6-tools-dev \
+            qt6-tools-dev-tools libbtrfsutil-dev python3
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: harbor-transport-static
+          path: build/qa-btrfs
+      - name: Build actual Qt test harness without production installation
+        run: |
+          cmake -S . -B build/qa-btrfs -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build build/qa-btrfs --target test-harbor-gui-user-smoke --parallel 4
+          test -x build/qa-btrfs/harbor-transport
+      - name: Click backup, destroy Qt window, finish real Btrfs over NFS4, verify and restore
+        run: bash tests/qa_detached_systemd_btrfs_nfs.sh
