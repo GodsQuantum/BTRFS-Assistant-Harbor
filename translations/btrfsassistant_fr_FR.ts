@@ -73,7 +73,7 @@
         </message>
         <message>
             <source>Send selected snapshot</source>
-            <translation>Envoyer l'instantané sélectionné</translation>
+            <translation>Sauvegarder</translation>
         </message>
         <message>
             <source>List remote backups</source>
