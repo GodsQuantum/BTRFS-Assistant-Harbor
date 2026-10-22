@@ -110,6 +110,28 @@ echo "PASS QT_GUI_WINDOW_DESTROYED_JOB_WAS_ACTIVE"
 ID="$(sudo find /var/lib/btrfs-assistant-harbor/manual-jobs -maxdepth 1 \
     -name '*.json' -printf '%f\n' | sed 's/\.json$//' | head -1)"
 test -n "$ID"
+JOB_FILE="/var/lib/btrfs-assistant-harbor/manual-jobs/$ID.json"
+UNIT="btrfs-assistant-harbor-job@$ID.service"
+# Crash the SUPERVISED Python process after at least one real source chunk
+# has been ingested, but only in this disposable GitHub runner fixture.
+# The Qt window was ALREADY destroyed above.
+SAW_PROGRESS=false
+for step in $(seq 1 35); do
+    STATE="$(sudo python3 -c 'import json,sys; x=json.load(open(sys.argv[1])); print(x["state"],x.get("bytes_read",0))' "$JOB_FILE")"
+    read -r job_state bytes_read <<< "$STATE"
+    if [[ "$job_state" == "running" && "$bytes_read" -gt 1048576 ]]; then
+        SAW_PROGRESS=true
+        break
+    fi
+    sleep 1
+done
+if [[ "$SAW_PROGRESS" != true ]]; then
+    echo "FAIL_NO_LIVE_CAS_PROGRESS_BEFORE_CRASH"
+    sudo journalctl -u "$UNIT" --no-pager -n 80 || true
+    exit 1
+fi
+sudo systemctl kill --kill-whom=main --signal=SIGKILL "$UNIT"
+echo "PASS SUPERVISED_JOB_SIGKILL_IN_PROGRESS"
 STATE=""
 for step in $(seq 1 160); do
     STATE="$(sudo python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["state"])' \
@@ -129,6 +151,9 @@ if [[ "$STATE" != completed ]]; then
     exit 1
 fi
 echo "PASS SYSTEMD_COMPLETED_AFTER_GUI_CLOSE"
+ATTEMPTS="$(sudo python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["attempts"])' "$JOB_FILE")"
+test "$ATTEMPTS" -ge 2
+echo "PASS SYSTEMD_RESTART_AFTER_SIGKILL attempts=$ATTEMPTS"
 ARCHIVE="$(sudo python3 -c 'import sys;sys.path.insert(0,"/usr/bin");from importlib.machinery import SourceFileLoader; mod=SourceFileLoader("manual_jobs","/usr/bin/btrfs-assistant-harbor-job").load_module(); print(mod.recorded_archive(mod.load(sys.argv[1])))' "$ID")"
 sudo env PKEXEC_UID="$RUN_UID" /usr/bin/harbor-transport verify-stream \
     --repo "$WORK/nfs" --name "$ARCHIVE"
@@ -137,3 +162,22 @@ sudo env PKEXEC_UID="$RUN_UID" /usr/bin/harbor-transport receive \
     --repo "$WORK/nfs" --name "$ARCHIVE" --staging "$WORK/btrfs/staging" --confirm
 sudo cmp "$WORK/btrfs/root/payload.bin" "$WORK/btrfs/staging/snapshot/payload.bin"
 echo "PASS VERIFIED_RESTORED_MATCHES_SOURCE"
+# Loss of the actual NFS4 mount must NEVER cause a local-directory fallback.
+sudo umount "$WORK/nfs"
+set +e
+sudo env PKEXEC_UID="$RUN_UID" /usr/bin/btrfs-assistant-harbor-job start \
+    --repo "$WORK/nfs" --machine HarborQATest --snapper-config "$SNAP_CONFIG" \
+    --snapper-number 1 >"$WORK/offline.stdout" 2>"$WORK/offline.stderr"
+offline_rc=$?
+set -e
+if [[ "$offline_rc" -eq 0 ]]; then
+    echo "FAIL_CAS_TRANSFER_ACCEPTED_UNMOUNTED_NFS"
+    exit 1
+fi
+echo "PASS LOST_NFS_MOUNT_FAILS_CLOSED"
+sudo mount -t nfs4 -o vers=4.1,port=20490,proto=tcp,timeo=30,retrans=1,soft \
+     127.0.0.1:/harborqa "$WORK/nfs"
+test "$(findmnt -T "$WORK/nfs" -n -o FSTYPE)" = "nfs4"
+sudo env PKEXEC_UID="$RUN_UID" /usr/bin/harbor-transport verify-stream \
+     --repo "$WORK/nfs" --name "$ARCHIVE"
+echo "PASS NFS_REMOUNT_VERIFIED_EXISTING_ARCHIVE"

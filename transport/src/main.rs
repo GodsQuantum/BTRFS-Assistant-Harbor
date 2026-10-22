@@ -595,8 +595,15 @@ fn execute(action: Action) -> Result<()> {
             preview,
             confirm,
         } => {
-            let repo = Repository::open(&repo)?;
-            recover_btrfs(&repo, &name, &staging, preview, confirm)?;
+            // Open the CAS repository as its authenticated NFS owner, but
+            // release FSUID delegation BEFORE spawning privileged btrfs
+            // receive into the disposable staging filesystem. The recovery
+            // helper separately scopes CAS chain and chunk reads.
+            let repository = {
+                let _owner = RepoAccess::begin()?;
+                Repository::open(&repo)?
+            };
+            recover_btrfs(&repository, &name, &staging, preview, confirm)?;
         }
         Action::VerifyStream { repo, name } => {
             let _owner = RepoAccess::begin()?;
