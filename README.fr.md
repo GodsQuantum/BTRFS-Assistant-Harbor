@@ -21,14 +21,14 @@
 
 ---
 
-Un snapshot sur votre ordinateur protège d'une mauvaise mise à jour. **Une sauvegarde sur un autre disque protège d'une panne de ce disque.** Harbor réunit les deux.
+**Un snapshot local ne remplace pas une sauvegarde sur un autre disque.** Harbor réunit les deux.
 
 ## ✨ Ce que ça change
 
-- **🛟 Des snapshots vraiment protégés.** Envoyez vos snapshots Btrfs/Snapper vers un autre disque ou NAS, puis vérifiez leur intégrité.
+- **🛟 Snapshots protégés.** Envoyez-les vers un NAS et vérifiez leur intégrité.
 - **🧩 Un seul foyer pour vos sauvegardes.** La déduplication partage les données identiques entre postes **Linux**, sans confondre les archives de chacun.
-- **♻️ Une restauration sans improvisation.** Parcourez les sauvegardes, vérifiez-les et répétez la récupération dans un dossier Btrfs vide et distinct.
-- **🖥️ L'interface connue, avec davantage de possibilités.** Conservez Btrfs Assistant et ses fonctions Snapper ; Harbor ajoute les sauvegardes distantes dans une application Qt native.
+- **♻️ Restauration maîtrisée.** Vérifiez et récupérez dans un dossier Btrfs vide.
+- **🖥️ Btrfs Assistant, en mieux.** Snapper et sauvegardes distantes dans une application Qt native.
 
 <p align="center"><img src="branding/workflow.svg" width="880" alt="De Snapper vers un stockage commun vérifié puis vers la restauration préparée"></p>
 
@@ -45,7 +45,7 @@ Un snapshot sur votre ordinateur protège d'une mauvaise mise à jour. **Une sau
 2. **Ouvrez Harbor → Sauvegardes distantes.** Choisissez un snapshot Snapper en lecture seule et une destination existante correctement montée.
 3. **Envoyez → Vérifiez.** Contrôlez l'archive et effectuez une restauration de test en zone de préparation.
 
-Harbor peut être installé **à côté** de Btrfs Assistant. Pas de compte cloud, pas de serveur Docker obligatoire et aucune suppression de votre configuration Snapper.
+Harbor coexiste avec Btrfs Assistant : **aucun compte cloud, Docker ou changement Snapper imposé**.
 
 **Plusieurs postes sur un même NAS ?** Utilisez la même racine CAS déjà présente pour vos postes **Linux** : le pool de données est commun, mais les archives restent séparées par machine. [Guide complet →](docs/WORKSTATION_BACKUPS.fr.md)
 

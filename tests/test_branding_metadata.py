@@ -37,7 +37,8 @@ class BrandingTest(unittest.TestCase):
         main=(ROOT/'src/main.cpp').read_text()
         self.assertIn('<file>btrfs-assistant-harbor.svg</file>',qrc)
         self.assertIn('QIcon(":/icons/btrfs-assistant-harbor.svg")',main)
-        self.assertIn('setApplicationVersion("0.1.1")',main)
+        version = self.release_version()
+        self.assertIn(f'setApplicationVersion("{version}")', main)
         self.assertEqual((ROOT/'icons/btrfs-assistant-harbor.svg').read_bytes(),
                          (ROOT/'branding/logo-mark.svg').read_bytes())
 
@@ -54,12 +55,21 @@ class BrandingTest(unittest.TestCase):
         self.assertEqual(metadata.findtext('project_license'),'GPL-3.0-or-later')
         self.assertIn('GodsQuantum/BTRFS-Assistant-Harbor',ET.tostring(metadata,encoding='unicode'))
 
+    @staticmethod
+    def release_version():
+        cmake = (ROOT/'CMakeLists.txt').read_text()
+        match = re.search(r'project\(btrfs-assistant-harbor VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES', cmake)
+        if match is None:
+            raise AssertionError("CMake stable semantic version is missing")
+        return match.group(1)
+
     def test_packages_share_stable_semver(self):
-        self.assertIn('VERSION 0.1.1 LANGUAGES', (ROOT/'CMakeLists.txt').read_text())
-        self.assertIn('VERSION = "0.1.1-1"',(ROOT/'packaging/debian/build_preview.py').read_text())
-        self.assertIn('Version: 0.1.1',(ROOT/'packaging/fedora/btrfs-assistant-harbor.spec').read_text())
-        self.assertIn('pkgver=0.1.1',(ROOT/'packaging/arch/PKGBUILD.in').read_text())
-        self.assertIn("0.1.1-1+deb13",(ROOT/'.github/workflows/certification.yml').read_text())
+        version = self.release_version()
+        self.assertIn(f'VERSION {version} LANGUAGES', (ROOT/'CMakeLists.txt').read_text())
+        self.assertIn(f'VERSION = "{version}-1"',(ROOT/'packaging/debian/build_preview.py').read_text())
+        self.assertIn(f'Version: {version}',(ROOT/'packaging/fedora/btrfs-assistant-harbor.spec').read_text())
+        self.assertIn(f'pkgver={version}',(ROOT/'packaging/arch/PKGBUILD.in').read_text())
+        self.assertIn(f"{version}-1+deb13",(ROOT/'.github/workflows/certification.yml').read_text())
         for path in ('CHANGELOG.md','CONTRIBUTING.md','SECURITY.md','branding/BRAND.md','branding/PRESSKIT.md'):
             self.assertTrue((ROOT/path).is_file(),path)
 
