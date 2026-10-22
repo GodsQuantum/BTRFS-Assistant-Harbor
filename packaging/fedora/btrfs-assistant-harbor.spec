@@ -57,6 +57,7 @@ install -Dm644 README.fr.md %{buildroot}/usr/share/doc/btrfs-assistant-harbor/RE
 /usr/lib/btrfs-assistant-harbor/
 /usr/lib/btrfs-harbor/
 %{_unitdir}/btrfs-assistant-harbor-job@.service
+/usr/lib/systemd/user/btrfs-assistant-harbor-tray.service
 /usr/share/applications/btrfs-assistant-harbor.desktop
 /usr/share/metainfo/btrfs-assistant-harbor.metainfo.xml
 /usr/share/polkit-1/actions/org.btrfs-assistant-harbor.pkexec.policy
