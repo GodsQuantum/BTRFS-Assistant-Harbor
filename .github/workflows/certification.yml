@@ -371,6 +371,7 @@ jobs:
         run: |
           cmake -S . -B build/qa-btrfs -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
           cmake --build build/qa-btrfs --target test-harbor-gui-user-smoke --parallel 4
+          chmod 0755 build/qa-btrfs/harbor-transport
           test -x build/qa-btrfs/harbor-transport
       - name: Click backup, destroy Qt window, finish real Btrfs over NFS4, verify and restore
         run: bash tests/qa_detached_systemd_btrfs_nfs.sh
