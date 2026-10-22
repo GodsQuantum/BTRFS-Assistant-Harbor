@@ -13,7 +13,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-VERSION = "0.1.2-1"
+VERSION = "0.1.3-1"
 
 def call(*args: str, cwd: Path | None = None, env: dict | None = None) -> str:
     result = subprocess.run(args, cwd=cwd, env=env, check=True,
@@ -48,7 +48,7 @@ def main():
     rust = stage / "usr/bin/harbor-transport"
     rescue = stage / "usr/lib/btrfs-harbor/recovery/harbor-rear-restore"
     assert gui.is_file() and rust.is_file() and rescue.is_file()
-    assert "0.1.2" in call(str(gui), "--version") and "alpha" not in call(str(gui), "--version")
+    assert "0.1.3" in call(str(gui), "--version") and "alpha" not in call(str(gui), "--version")
     call("bash", "-n", str(rescue))
     doc = stage / "usr/share/doc/btrfs-assistant-harbor"
     doc.mkdir(parents=True, exist_ok=True)

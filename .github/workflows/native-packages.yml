@@ -1,7 +1,7 @@
 name: Native packages (Fedora and Arch)
 on:
   push:
-    branches: [main, 'cert/**']
+    branches: [main, 'cert/**', 'feat/detached-cas-calendar-20261022']
   workflow_dispatch:
 permissions:
   contents: read
@@ -37,7 +37,7 @@ jobs:
           test -f "$GITHUB_WORKSPACE/CMakeLists.txt"
           tar -C "$GITHUB_WORKSPACE" --exclude=.git --exclude=build \
             --transform='s|^\./|btrfs-assistant-harbor/|' \
-            -czf "$RUNNER_TEMP/rpmbuild/SOURCES/btrfs-assistant-harbor-0.1.2.tar.gz" .
+            -czf "$RUNNER_TEMP/rpmbuild/SOURCES/btrfs-assistant-harbor-0.1.3.tar.gz" .
           cp packaging/fedora/btrfs-assistant-harbor.spec "$RUNNER_TEMP/rpmbuild/SPECS/"
           rpmbuild --define "_topdir $RUNNER_TEMP/rpmbuild" \
             -ba "$RUNNER_TEMP/rpmbuild/SPECS/btrfs-assistant-harbor.spec"
@@ -49,6 +49,10 @@ jobs:
           dnf install -y --setopt=install_weak_deps=False ./dist/fedora44/*.rpm
           rpm -q btrfs-assistant-harbor
           test -x /usr/bin/harbor-transport
+          test -x /usr/bin/btrfs-assistant-harbor-job
+          /usr/bin/btrfs-assistant-harbor-job --help >/dev/null
+          test -f /usr/lib/systemd/system/btrfs-assistant-harbor-job@.service
+          test ! -d /etc/systemd/system/multi-user.target.wants/btrfs-assistant-harbor-job@.service
           /usr/bin/btrfs-assistant-harbor-bin --version
           dnf remove -y btrfs-assistant-harbor
           if rpm -q btrfs-assistant-harbor; then exit 31; fi
@@ -116,9 +120,9 @@ jobs:
           test -f "$GITHUB_WORKSPACE/CMakeLists.txt"
           tar -C "$GITHUB_WORKSPACE" --exclude=.git --exclude=build -cf - . \
             | tar -xf - -C "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor"
-          tar -czf "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-0.1.2.tar.gz" \
+          tar -czf "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-0.1.3.tar.gz" \
             -C "$RUNNER_TEMP/arch-build" btrfs-assistant-harbor
-          SOURCE_SHA="$(sha256sum "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-0.1.2.tar.gz" | cut -d' ' -f1)"
+          SOURCE_SHA="$(sha256sum "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-0.1.3.tar.gz" | cut -d' ' -f1)"
           sed "s/@SHA256@/$SOURCE_SHA/g" packaging/arch/PKGBUILD.in > "$RUNNER_TEMP/arch-build/PKGBUILD"
           useradd -m -s /bin/bash harbor-builder
           chown -R harbor-builder:harbor-builder "$RUNNER_TEMP/arch-build"
@@ -131,6 +135,10 @@ jobs:
           pacman -U --noconfirm ./dist/arch/*.pkg.tar.zst
           pacman -Q btrfs-assistant-harbor
           test -x /usr/bin/harbor-transport
+          test -x /usr/bin/btrfs-assistant-harbor-job
+          /usr/bin/btrfs-assistant-harbor-job --help >/dev/null
+          test -f /usr/lib/systemd/system/btrfs-assistant-harbor-job@.service
+          test ! -d /etc/systemd/system/multi-user.target.wants/btrfs-assistant-harbor-job@.service
           /usr/bin/btrfs-assistant-harbor-bin --version
           pacman -R --noconfirm btrfs-assistant-harbor
           if pacman -Q btrfs-assistant-harbor; then exit 31; fi
