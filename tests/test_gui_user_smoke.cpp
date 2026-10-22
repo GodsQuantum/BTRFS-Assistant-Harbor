@@ -261,19 +261,31 @@ private slots:
         QCOMPARE(backend(*widget)->currentData().toString(), QString("cas"));
         auto *send = button(*widget, QStringLiteral("Send selected snapshot"));
         QVERIFY(send);
-        // Accept only the confirmation opened by this exact button.
+        QVERIFY2(send->isEnabled(), "Manual CAS send button is disabled");
+        auto *request = widget->findChild<QProcess*>(QStringLiteral("harborCommandProcess"));
+        QVERIFY(request);
+        QSignalSpy launched(request, &QProcess::started);
+        // The test accepts ONLY the expected confirmation, never a warning.
         QTimer::singleShot(150, widget.get(), [] {
-            if (auto *message = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
-                message->done(QMessageBox::Yes);
+            if (auto *message = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                qInfo() << "HARBOR_QA_DIALOG" << message->windowTitle() << message->text();
+                if (message->windowTitle().contains(QStringLiteral("background"), Qt::CaseInsensitive))
+                    message->done(QMessageBox::Yes);
+                else
+                    message->done(QMessageBox::No);
+            }
         });
         QTest::mouseClick(send, Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(launched.size() >= 1, 15000);
+        QTRY_COMPARE_WITH_TIMEOUT(request->state(), QProcess::NotRunning, 45000);
+        for (auto *log : widget->findChildren<QPlainTextEdit*>())
+            qInfo().noquote() << "HARBOR_QA_TRANSPORT_OUTPUT" << log->toPlainText();
+        qInfo() << "HARBOR_QA_START_RESULT" << request->exitStatus() << request->exitCode();
+        QCOMPARE(request->exitStatus(), QProcess::NormalExit);
+        QCOMPARE(request->exitCode(), 0);
         const QString registry = QStringLiteral("/var/lib/btrfs-assistant-harbor/manual-jobs");
         QTRY_VERIFY_WITH_TIMEOUT(!QDir(registry).entryList(
             {QStringLiteral("*.json")}, QDir::Files).isEmpty(), 25000);
-        auto *request = widget->findChild<QProcess*>(QStringLiteral("harborCommandProcess"));
-        QVERIFY(request);
-        QTRY_COMPARE_WITH_TIMEOUT(request->state(), QProcess::NotRunning, 35000);
-        QCOMPARE(request->exitCode(), 0);
         const auto manifests = QDir(registry).entryList({QStringLiteral("*.json")}, QDir::Files);
         QVERIFY(!manifests.isEmpty());
         const QString jobId = manifests.last().left(36);
