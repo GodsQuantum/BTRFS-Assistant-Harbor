@@ -1,0 +1,27 @@
+"""No backup is launched or cancelled during these source-level safety tests."""
+from pathlib import Path
+import unittest
+ROOT = Path(__file__).resolve().parents[1]
+class TraySessionContract(unittest.TestCase):
+    def test_unprivileged_session_before_root_gui(self):
+        script = (ROOT / "src/btrfs-assistant-harbor-launcher").read_text()
+        self.assertLess(script.index("systemctl --user start btrfs-assistant-harbor-tray.service"),
+                        script.index('exec pkexec'))
+        tray = (ROOT / "src/tray.cpp").read_text()
+        self.assertIn("geteuid() == 0", tray)
+        self.assertIn("QLockFile lock(", tray)
+        self.assertIn("Quit tray and stop backups", tray)
+        self.assertIn("No active manual backup", tray)
+    def test_tray_has_fixed_polkit_stop_only(self):
+        policy = (ROOT / "src/org.btrfs-assistant-harbor.pkexec.policy").read_text()
+        self.assertIn("/usr/bin/btrfs-assistant-harbor-tray-stop", policy)
+        stop = (ROOT / "backend/harbor-tray-stop").read_text()
+        self.assertIn("PKEXEC_UID", stop)
+        self.assertIn("exec /usr/bin/btrfs-assistant-harbor-job cancel-all", stop)
+        self.assertNotIn('"$@"', stop)
+    def test_no_autostart_backup(self):
+        unit = (ROOT / "packaging/systemd/btrfs-assistant-harbor-tray.service").read_text()
+        self.assertIn("ExecStart=/usr/bin/btrfs-assistant-harbor-tray", unit)
+        self.assertNotIn("btrfs send", unit)
+        self.assertNotIn("harbor-transport send", unit)
+        self.assertIn("WantedBy=default.target", unit)
