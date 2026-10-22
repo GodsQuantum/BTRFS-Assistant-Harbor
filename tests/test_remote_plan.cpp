@@ -118,6 +118,21 @@ int main() {
   REQUIRE(casSchedule.contains("cas"));
   REQUIRE(!casSchedule.contains("--allow-local"));
   REQUIRE(scheduleInstallerArguments("root", "/mnt/backup", "hourly", true, true).contains("--allow-local"));
+  const auto timed = scheduleInstallerArguments("root", casPath, "weekly", false, true,
+      "Pegasus", "03:45", {"Mon", "Wed", "Fri"}, true);
+  REQUIRE(timed.contains("--at"));
+  REQUIRE(timed.at(timed.indexOf("--at") + 1) == "03:45");
+  REQUIRE(timed.at(timed.indexOf("--weekdays") + 1) == "Mon,Wed,Fri");
+  REQUIRE(!timed.contains("--no-catch-up"));
+  const auto noCatchup = scheduleInstallerArguments("root", casPath, "daily", false, true,
+      "Pegasus", "21:30", {}, false);
+  REQUIRE(noCatchup.contains("--no-catch-up"));
+  REQUIRE(scheduleInstallerArguments("root", casPath, "weekly", false, true,
+      "Pegasus", "25:45", {"Mon"}).isEmpty());
+  REQUIRE(scheduleInstallerArguments("root", casPath, "weekly", false, true,
+      "Pegasus", "03:45", {"Mon", "Mon"}).isEmpty());
+  REQUIRE(scheduleInstallerArguments("root", casPath, "daily", false, true,
+      "Pegasus", "03:45", {"Mon"}).isEmpty());
   REQUIRE(!scheduleInstallerArguments("root", "/mnt/backup", "daily", false, false).contains("--engine"));
   REQUIRE(scheduleInstallerArguments("root", "/mnt/backup", "everyminute", false, true).isEmpty());
   const QStringList verify = verifyArguments("/mnt/backup", "snap-root-123");

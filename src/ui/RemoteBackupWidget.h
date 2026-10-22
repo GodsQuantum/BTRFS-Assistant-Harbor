@@ -9,6 +9,7 @@ class Snapper;
 class QCheckBox;
 class QComboBox;
 class QLineEdit;
+class QTimeEdit;
 class QListWidget;
 class QPushButton;
 class QPlainTextEdit;
@@ -37,6 +38,10 @@ private:
     QLineEdit *m_machineName;
     QLineEdit *m_staging;
     QComboBox *m_frequency;
+    QTimeEdit *m_scheduleAt;
+    QCheckBox *m_weekdays[7]{};
+    QCheckBox *m_catchUp;
+    QCheckBox *m_independentSend;
     QCheckBox *m_allowLocal;
     QListWidget *m_archives;
     QListWidget *m_machineSets;
@@ -46,6 +51,9 @@ private:
     QPushButton *m_cancel;
     bool m_cancelRequested = false;
     QProcess *m_process;
+    QProcess *m_jobPoller;
+    QString m_activeJobId;
+    void pollManualJobs();
     QByteArray m_stdout;
     QByteArray m_stderrBuffer;
     QElapsedTimer m_transferTimer;

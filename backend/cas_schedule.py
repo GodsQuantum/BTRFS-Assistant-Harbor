@@ -60,12 +60,19 @@ def snapshot_uuid(path: Path) -> str:
             return str(parsed)
     raise RuntimeError("Snapshot UUID cannot be established safely")
 
-def build_send(profile, snapper_bin="snapper", cas_bin="harbor-transport") -> list[str] | None:
+def build_send(profile, snapper_bin="snapper", cas_bin="harbor-transport",
+               selected_number: int | None = None) -> list[str] | None:
     snapshots = subprocess.run([snapper_bin, "--jsonout", "-c", profile.config,
                                 "list", "--disable-used-space"],
                                capture_output=True, text=True, timeout=35, check=True)
     rows = eligible_snapshots(snapper_rows(json.loads(snapshots.stdout), profile.config))
     available = [(num, path) for num, path in rows if is_readonly_snapshot(path)]
+    if selected_number is not None:
+        if type(selected_number) is not int or selected_number <= 0:
+            raise ValueError("Invalid selected snapshot number")
+        if not any(num == selected_number for num, _ in available):
+            raise RuntimeError("Selected Snapper snapshot is not accessible and readonly")
+        available = [(num, path) for num, path in available if num <= selected_number]
     if not available:
         raise RuntimeError("Snapper has no accessible readonly snapshot for this configuration")
     latest_num, latest_path = available[0]

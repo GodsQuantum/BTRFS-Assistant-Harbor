@@ -28,6 +28,7 @@
 #include <QSysInfo>
 #include <QUuid>
 #include <QTimer>
+#include <QTimeEdit>
 #ifdef Q_OS_UNIX
 #include <signal.h>
 #include <unistd.h>
@@ -39,12 +40,18 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
       m_parentSnapshots(new QComboBox(this)), m_configs(new QComboBox(this)),
       m_snapshots(new QComboBox(this)), m_target(new QLineEdit(this)),
       m_machineName(new QLineEdit(this)),
-      m_staging(new QLineEdit(this)), m_frequency(new QComboBox(this)), m_allowLocal(new QCheckBox(tr("Allow explicitly selected local destination"), this)),
+      m_staging(new QLineEdit(this)), m_frequency(new QComboBox(this)),
+      m_scheduleAt(new QTimeEdit(this)),
+      m_catchUp(new QCheckBox(tr("Catch up missed backups after startup"), this)),
+      m_independentSend(new QCheckBox(tr("Continue backup after closing Harbor (systemd)"), this)),
+      m_allowLocal(new QCheckBox(tr("Allow explicitly selected local destination"), this)),
       m_archives(new QListWidget(this)), m_machineSets(new QListWidget(this)), m_log(new QPlainTextEdit(this)),
       m_state(new QLabel(tr("Ready: no backup in progress"), this)), m_send(new QPushButton(tr("Send selected snapshot"), this)),
       m_cancel(new QPushButton(tr("Cancel current operation"), this)),
-      m_process(new QProcess(this))
+      m_process(new QProcess(this)), m_jobPoller(new QProcess(this))
 {
+    m_process->setObjectName(QStringLiteral("harborCommandProcess"));
+    m_jobPoller->setObjectName(QStringLiteral("harborStatusPoller"));
     auto *layout = new QVBoxLayout(this);
     auto *title = new QLabel(tr("Remote backups — Snapper snapshots"), this);
     QFont font = title->font();
@@ -112,6 +119,60 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     m_frequency->addItem(tr("Daily"), QStringLiteral("daily"));
     m_frequency->addItem(tr("Weekly"), QStringLiteral("weekly"));
     form->addRow(tr("Scheduled transfer"), m_frequency);
+    m_scheduleAt->setDisplayFormat(QStringLiteral("HH:mm"));
+    m_scheduleAt->setTime(QTime::fromString(harborSettings.value(
+        QStringLiteral("remote/calendarAt"), QStringLiteral("03:00")).toString(),
+        QStringLiteral("HH:mm")));
+    form->addRow(tr("Scheduled time"), m_scheduleAt);
+    auto *daysRow = new QWidget(settings);
+    auto *daysLayout = new QHBoxLayout(daysRow);
+    daysLayout->setContentsMargins(0, 0, 0, 0);
+    const QStringList days{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+    const QStringList dayLabels{tr("Mon"), tr("Tue"), tr("Wed"), tr("Thu"),
+                                tr("Fri"), tr("Sat"), tr("Sun")};
+    const QStringList chosen = harborSettings.value(
+        QStringLiteral("remote/calendarDays"), QStringLiteral("Mon")).toString().split(
+            QLatin1Char(','), Qt::SkipEmptyParts);
+    for (int i = 0; i < 7; ++i) {
+        m_weekdays[i] = new QCheckBox(dayLabels.at(i), daysRow);
+        m_weekdays[i]->setChecked(chosen.contains(days.at(i)));
+        daysLayout->addWidget(m_weekdays[i]);
+        connect(m_weekdays[i], &QCheckBox::toggled, this, [this, days] {
+            QStringList names;
+            for (int j = 0; j < 7; ++j) if (m_weekdays[j]->isChecked()) names << days.at(j);
+            QSettings p(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+            p.setValue(QStringLiteral("remote/calendarDays"), names.join(QLatin1Char(',')));
+        });
+    }
+    form->addRow(tr("Weekly days"), daysRow);
+    m_catchUp->setChecked(harborSettings.value(QStringLiteral("remote/catchUp"), true).toBool());
+    form->addRow(QString(), m_catchUp);
+    m_independentSend->setChecked(harborSettings.value(
+        QStringLiteral("remote/independentSend"), true).toBool());
+    form->addRow(QString(), m_independentSend);
+    const int savedIndex = m_frequency->findData(harborSettings.value(
+        QStringLiteral("remote/frequency"), QStringLiteral("daily")));
+    m_frequency->setCurrentIndex(savedIndex >= 0 ? savedIndex : 1);
+    const auto syncDays = [this] {
+        const bool weekly = m_frequency->currentData().toString() == QLatin1String("weekly");
+        for (auto *day : m_weekdays) day->setEnabled(weekly);
+        QSettings p(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+        p.setValue(QStringLiteral("remote/frequency"), m_frequency->currentData());
+    };
+    connect(m_frequency, &QComboBox::currentIndexChanged, this, syncDays);
+    syncDays();
+    connect(m_scheduleAt, &QTimeEdit::timeChanged, this, [this] {
+        QSettings p(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+        p.setValue(QStringLiteral("remote/calendarAt"), m_scheduleAt->time().toString(QStringLiteral("HH:mm")));
+    });
+    connect(m_catchUp, &QCheckBox::toggled, this, [](bool on) {
+        QSettings p(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+        p.setValue(QStringLiteral("remote/catchUp"), on);
+    });
+    connect(m_independentSend, &QCheckBox::toggled, this, [](bool on) {
+        QSettings p(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+        p.setValue(QStringLiteral("remote/independentSend"), on);
+    });
     layout->addWidget(settings);
 
     auto *actions = new QGridLayout();
@@ -121,6 +182,7 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     auto *schedule = new QPushButton(tr("Enable schedule"), this);
     auto *unschedule = new QPushButton(tr("Disable schedule"), this);
     auto *schedules = new QPushButton(tr("Scheduled backups"), this);
+    auto *jobJournal = new QPushButton(tr("Backup journal"), this);
     auto *initCas = new QPushButton(tr("Initialize CAS destination"), this);
     auto *verify = new QPushButton(tr("Verify selected archive"), this);
     auto *prune = new QPushButton(tr("Delete selected CAS backup"), this);
@@ -140,6 +202,7 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     actions->addWidget(prune, 2, 2);
     actions->addWidget(sweepOrphans, 2, 3);
     actions->addWidget(m_cancel, 3, 0, 1, 2);
+    actions->addWidget(jobJournal, 3, 2, 1, 2);
     m_cancel->setEnabled(false);
     layout->addLayout(actions);
     layout->addWidget(new QLabel(tr("Select a completed archive to verify/recover, or an interrupted transfer to resume"), this));
@@ -185,7 +248,10 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
         initCas->setEnabled(cas);
         prune->setEnabled(cas);
         sweepOrphans->setEnabled(cas);
-        m_parentSnapshots->setEnabled(cas);
+        m_parentSnapshots->setEnabled(cas && !m_independentSend->isChecked());
+    });
+    connect(m_independentSend, &QCheckBox::toggled, this, [this] {
+        m_parentSnapshots->setEnabled(isCasMode() && !m_independentSend->isChecked());
     });
     // Initialize the UI immediately; do not leave disabled controls active.
     schedule->setEnabled(true);
@@ -227,6 +293,26 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
             if (!machinePattern.match(m_machineName->text()).hasMatch()) {
                 QMessageBox::warning(this, tr("Invalid machine identity"),
                     tr("Enter a machine name using letters, digits, dots, underscores or hyphens (maximum 64 characters)."));
+                return;
+            }
+            if (m_independentSend->isChecked()) {
+                if (num == 0) {
+                    QMessageBox::warning(this, tr("Invalid Btrfs source"),
+                        tr("Select a readonly snapshot to back up."));
+                    return;
+                }
+                if (QMessageBox::question(this, tr("Start background backup"),
+                    tr("Harbor will select a verified CAS parent automatically. The systemd backup "
+                       "continues if the window closes and can be resumed after a restart. Start now?"))
+                       == QMessageBox::Yes) {
+                    const QStringList params{
+                        QStringLiteral("start"), QStringLiteral("--repo"), m_target->text(),
+                        QStringLiteral("--machine"), m_machineName->text(),
+                        QStringLiteral("--snapper-config"), m_configs->currentText(),
+                        QStringLiteral("--snapper-number"), QString::number(num)};
+                    launch(params, QStringLiteral("manual-job-start"),
+                           QStringLiteral("btrfs-assistant-harbor-job"));
+                }
                 return;
             }
             const unsigned parentNum = m_parentSnapshots->currentData().toUInt();
@@ -329,9 +415,19 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
             launch(arguments, QStringLiteral("resume"));
     });
     connect(schedule, &QPushButton::clicked, this, [this] {
+        const QStringList names{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+        QStringList days;
+        if (m_frequency->currentData().toString() == QLatin1String("weekly")) {
+            for (int i = 0; i < 7; ++i) if (m_weekdays[i]->isChecked()) days << names.at(i);
+            if (days.isEmpty()) {
+                QMessageBox::warning(this, tr("Invalid schedule"), tr("Choose at least one weekday."));
+                return;
+            }
+        }
         const QStringList args = HarborRemote::scheduleInstallerArguments(
             m_configs->currentText(), m_target->text(), m_frequency->currentData().toString(),
-            m_allowLocal->isChecked(), isCasMode(), isCasMode() ? m_machineName->text() : QString());
+            m_allowLocal->isChecked(), isCasMode(), isCasMode() ? m_machineName->text() : QString(),
+            m_scheduleAt->time().toString(QStringLiteral("HH:mm")), days, m_catchUp->isChecked());
         if (args.isEmpty()) {
             QMessageBox::warning(this, tr("Invalid schedule"), tr("Choose a valid Snapper config, destination and frequency."));
             return;
@@ -456,7 +552,26 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
         if (::setsid() == -1) _exit(127);
     });
 #endif
+    connect(jobJournal, &QPushButton::clicked, this, [this] {
+        if (m_activeJobId.isEmpty()) {
+            QMessageBox::information(this, tr("Backup journal"), tr("No active background backup."));
+            return;
+        }
+        launch({QStringLiteral("-u"),
+                QStringLiteral("btrfs-assistant-harbor-job@%1.service").arg(m_activeJobId),
+                QStringLiteral("--no-pager"), QStringLiteral("-n"), QStringLiteral("80")},
+               QStringLiteral("manual-job-log"), QStringLiteral("journalctl"));
+    });
     connect(m_cancel, &QPushButton::clicked, this, [this] {
+        if (m_process->state() == QProcess::NotRunning && !m_activeJobId.isEmpty()) {
+            if (QMessageBox::question(this, tr("Cancel background backup"),
+                    tr("Stop the systemd backup service? The completed CAS chunks will be preserved."))
+                    == QMessageBox::Yes) {
+                launch({QStringLiteral("cancel"), QStringLiteral("--id"), m_activeJobId},
+                       QStringLiteral("manual-job-cancel"), QStringLiteral("btrfs-assistant-harbor-job"));
+            }
+            return;
+        }
         if (m_process->state() == QProcess::NotRunning) return;
         m_cancelRequested = true;
         m_cancel->setEnabled(false);
@@ -490,7 +605,51 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
             m_cancel->setEnabled(false);
         }
     });
+    connect(m_jobPoller, &QProcess::finished, this, [this](int exitCode, QProcess::ExitStatus status) {
+        if (exitCode != 0 || status != QProcess::NormalExit) return;
+        const auto json = QJsonDocument::fromJson(m_jobPoller->readAllStandardOutput());
+        if (!json.isArray()) return;
+        m_activeJobId.clear();
+        QJsonObject newest;
+        for (const auto &value : json.array()) {
+            if (!value.isObject()) continue;
+            const auto obj = value.toObject();
+            if (obj.value(QStringLiteral("repository")).toString() != m_target->text() ||
+                obj.value(QStringLiteral("machine")).toString() != m_machineName->text()) continue;
+            if (newest.isEmpty() || obj.value(QStringLiteral("created")).toDouble() >
+                                     newest.value(QStringLiteral("created")).toDouble()) newest = obj;
+            const auto state = obj.value(QStringLiteral("state")).toString();
+            if (state == QLatin1String("running") || state == QLatin1String("queued") ||
+                state == QLatin1String("retrying")) m_activeJobId = obj.value(QStringLiteral("id")).toString();
+        }
+        if (!m_activeJobId.isEmpty()) {
+            m_cancel->setEnabled(m_process->state() == QProcess::NotRunning);
+            m_send->setEnabled(false);
+            m_state->setText(tr("Background backup: %1 — %2 bytes read")
+                .arg(newest.value(QStringLiteral("state")).toString())
+                .arg(QString::number(static_cast<qulonglong>(
+                    newest.value(QStringLiteral("bytes_read")).toDouble()))));
+        } else if (!newest.isEmpty() && m_process->state() == QProcess::NotRunning) {
+            m_send->setEnabled(true);
+            m_cancel->setEnabled(false);
+            m_state->setText(tr("Last background backup: %1")
+                .arg(newest.value(QStringLiteral("state")).toString()));
+        }
+    });
+    auto *jobTimer = new QTimer(this);
+    jobTimer->setInterval(4500);
+    connect(jobTimer, &QTimer::timeout, this, &RemoteBackupWidget::pollManualJobs);
+    jobTimer->start();
+    QTimer::singleShot(0, this, &RemoteBackupWidget::pollManualJobs);
     refreshSnapshots();
+}
+
+void RemoteBackupWidget::pollManualJobs()
+{
+    if (m_jobPoller->state() != QProcess::NotRunning) return;
+    const QString cli = QStandardPaths::findExecutable(QStringLiteral("btrfs-assistant-harbor-job"));
+    if (cli.isEmpty() || !HarborRemote::trustedBackendExecutable(cli)) return;
+    m_jobPoller->start(cli, {QStringLiteral("list")});
 }
 
 bool RemoteBackupWidget::isCasMode() const
