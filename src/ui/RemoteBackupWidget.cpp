@@ -84,6 +84,13 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     form->addRow(tr("Readonly snapshot"), snapshotRow);
     form->addRow(tr("Incremental parent (CAS)"), m_parentSnapshots);
     m_target->setPlaceholderText(tr("Existing NFS/SMB mount or local backup directory"));
+    // Reuse the user's existing repository across sessions. This only remembers
+    // a path; it never creates a directory or bypasses mounted-network checks.
+    m_target->setText(harborSettings.value(QStringLiteral("remote/targetPath"), QString()).toString());
+    connect(m_target, &QLineEdit::textChanged, this, [this] {
+        QSettings settings(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+        settings.setValue(QStringLiteral("remote/targetPath"), m_target->text());
+    });
     auto *targetRow = new QWidget(settings);
     auto *targetLayout = new QHBoxLayout(targetRow);
     targetLayout->setContentsMargins(0, 0, 0, 0);
