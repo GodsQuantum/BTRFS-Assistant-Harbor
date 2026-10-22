@@ -199,10 +199,20 @@ QString profileIdForEngine(const QString &config, const QString &target, bool ca
         .toString(QUuid::WithoutBraces);
 }
 QStringList scheduleInstallerArguments(const QString &config, const QString &target,
-                                       const QString &frequency, bool allowLocal, bool cas, const QString &machine) {
+                                       const QString &frequency, bool allowLocal, bool cas, const QString &machine,
+                                        const QString &at, const QStringList &weekdays, bool catchUp) {
     if (profileIdForEngine(config,target,cas,machine).isEmpty() ||
         (frequency != QLatin1String("hourly") && frequency != QLatin1String("daily") &&
          frequency != QLatin1String("weekly"))) return {};
+    static const QRegularExpression clock(QStringLiteral("^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"));
+    const QStringList validDays{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+    if (!at.isEmpty() && !clock.match(at).hasMatch()) return {};
+    if (!weekdays.isEmpty() && (frequency != QLatin1String("weekly") || at.isEmpty())) return {};
+    QStringList checkedDays;
+    for (const auto &day : weekdays) {
+        if (!validDays.contains(day) || checkedDays.contains(day)) return {};
+        checkedDays << day;
+    }
     QStringList args{QStringLiteral("install"),
                      QStringLiteral("--snapper-config"), config,
                      QStringLiteral("--target"), target,
@@ -211,6 +221,9 @@ QStringList scheduleInstallerArguments(const QString &config, const QString &tar
     if (cas) { args << QStringLiteral("--engine") << QStringLiteral("cas");
         if (!machine.isEmpty()) args << QStringLiteral("--machine") << machine;
     }
+    if (!at.isEmpty()) args << QStringLiteral("--at") << at;
+    if (!checkedDays.isEmpty()) args << QStringLiteral("--weekdays") << checkedDays.join(QLatin1Char(','));
+    if (!catchUp) args << QStringLiteral("--no-catch-up");
     if (allowLocal) args << QStringLiteral("--allow-local");
     return args;
 }

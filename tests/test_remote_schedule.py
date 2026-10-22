@@ -24,6 +24,35 @@ class ScheduleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             sched.timer_unit(self.profile, "every 5 seconds")
 
+    def test_custom_calendar_including_persistent_reboot_catchup(self):
+        p = sched.Profile("root", "/mnt/Shared", "weekly", engine="cas", owner_uid=1000,
+                          machine="Pegasus", calendar_at="03:45",
+                          weekdays=("Mon", "Wed", "Fri"), catch_up=True)
+        timer = sched.timer_unit(p, "weekly")
+        self.assertIn("OnCalendar=Mon,Wed,Fri *-*-* 03:45:00", timer)
+        self.assertIn("Persistent=true", timer)
+        self.assertIn("WakeSystem=false", timer)
+        self.assertEqual(sched.Profile.from_dict(p.as_dict()), p)
+        hourly = sched.Profile("root", "/mnt/Shared", "hourly", calendar_at="04:17")
+        self.assertIn("OnCalendar=*-*-* *:17:00", sched.timer_unit(hourly, "hourly"))
+        daily = sched.Profile("root", "/mnt/Shared", "daily", calendar_at="20:31", catch_up=False)
+        self.assertIn("OnCalendar=*-*-* 20:31:00", sched.timer_unit(daily, "daily"))
+        self.assertIn("Persistent=false", sched.timer_unit(daily, "daily"))
+        with self.assertRaises(ValueError):
+            sched.timer_unit(daily, "weekly")
+
+    def test_schedule_injection_and_untrusted_days_refused(self):
+        for at in ("24:00", "02:60", "2:07", "02:30\\nExecStart=/bin/sh",
+                   "01:01;rm -rf /", "", "99:59"):
+            with self.subTest(at=at), self.assertRaises(ValueError):
+                sched.Profile("root", "/mnt/Backup", "daily", calendar_at=at)
+        for weekdays in (("Mon", "Mon"), ("Mon", "Evil"), ("Fri\\n[Service]",), ("*",)):
+            with self.subTest(days=weekdays), self.assertRaises(ValueError):
+                sched.Profile("root", "/mnt/Backup", "weekly", calendar_at="03:30",
+                              weekdays=weekdays)
+        with self.assertRaises(ValueError):
+            sched.Profile("root", "/mnt/Backup", "daily", calendar_at="03:30", weekdays=("Mon",))
+
     def test_validation_rejects_unsafe_inputs(self):
         for target in ("/", "", "relative", "/tmp/../etc", "/tmp/a\nExecStart=/bin/sh"):
             with self.subTest(target=target), self.assertRaises(ValueError):

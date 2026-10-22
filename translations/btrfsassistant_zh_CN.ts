@@ -1486,7 +1486,31 @@
             <source>Btrfs Assistant Harbor</source>
             <translation>Btrfs Assistant Harbor</translation>
         </message>
-    </context>
+            <message>
+            <source>Show Harbor</source>
+            <translation>显示 Harbor</translation>
+        </message>
+        <message>
+            <source>Quit Harbor and stop manual backups</source>
+            <translation>退出 Harbor 并停止手动备份</translation>
+        </message>
+        <message>
+            <source>Quit Harbor</source>
+            <translation>退出 Harbor</translation>
+        </message>
+        <message>
+            <source>Quit Harbor and stop any running manual backup? Existing completed CAS objects will be retained.</source>
+            <translation>退出 Harbor 并停止正在运行的手动备份？已完成的 CAS 对象将被保留。</translation>
+        </message>
+        <message>
+            <source>Backup still running</source>
+            <translation>备份仍在运行</translation>
+        </message>
+        <message>
+            <source>Harbor could not stop the background job. The application stays open.</source>
+            <translation>Harbor 无法停止后台任务，应用程序将保持打开。</translation>
+        </message>
+</context>
     <context>
         <name>RemoteBackupWidget</name>
         <message>
@@ -2047,7 +2071,91 @@ This cannot be undone. The plan will be checked again under repository lock.</so
             <source>Backup or recovery destination changed; refusing stale restore preview.</source>
             <translation>备份或恢复目标已更改；拒绝使用过期的恢复预览。</translation>
         </message>
-    </context>
+            <message>
+            <source>Catch up missed backups after startup</source>
+            <translation>启动后补做错过的备份</translation>
+        </message>
+        <message>
+            <source>Continue backup after closing Harbor (systemd)</source>
+            <translation>关闭 Harbor 后继续备份（systemd）</translation>
+        </message>
+        <message>
+            <source>Scheduled time</source>
+            <translation>计划执行时间</translation>
+        </message>
+        <message>
+            <source>Weekly days</source>
+            <translation>每周执行日</translation>
+        </message>
+        <message>
+            <source>Mon</source>
+            <translation>周一</translation>
+        </message>
+        <message>
+            <source>Tue</source>
+            <translation>周二</translation>
+        </message>
+        <message>
+            <source>Wed</source>
+            <translation>周三</translation>
+        </message>
+        <message>
+            <source>Thu</source>
+            <translation>周四</translation>
+        </message>
+        <message>
+            <source>Fri</source>
+            <translation>周五</translation>
+        </message>
+        <message>
+            <source>Sat</source>
+            <translation>周六</translation>
+        </message>
+        <message>
+            <source>Sun</source>
+            <translation>周日</translation>
+        </message>
+        <message>
+            <source>Backup journal</source>
+            <translation>备份日志</translation>
+        </message>
+        <message>
+            <source>Choose at least one weekday.</source>
+            <translation>请至少选择一个星期几。</translation>
+        </message>
+        <message>
+            <source>Select a readonly snapshot to back up.</source>
+            <translation>请选择要备份的只读快照。</translation>
+        </message>
+        <message>
+            <source>Start background backup</source>
+            <translation>启动后台备份</translation>
+        </message>
+        <message>
+            <source>Harbor will select a verified CAS parent automatically. The systemd backup continues if the window closes and can be resumed after a restart. Start now?</source>
+            <translation>Harbor 将自动选择已验证的 CAS 父归档。关闭窗口后 systemd 备份仍会继续，并可在重启后恢复。现在开始吗？</translation>
+        </message>
+        <message>
+            <source>No active background backup.</source>
+            <translation>没有正在运行的后台备份。</translation>
+        </message>
+        <message>
+            <source>Cancel background backup</source>
+            <translation>取消后台备份</translation>
+        </message>
+        <message>
+            <source>Stop the systemd backup service? The completed CAS chunks will be preserved.</source>
+            <translation>停止 systemd 备份服务？已完成的 CAS 数据块将被保留。</translation>
+        </message>
+        <message>
+            <source>Background backup: %1 — %2 bytes read</source>
+            <translation>后台备份：%1 — 已读取 %2 字节</translation>
+        </message>
+        <message>
+            <source>Last background backup: %1</source>
+            <translation>最近一次后台备份：%1</translation>
+        </message>
+</context>
     <context>
         <name>HarborLanguage</name>
         <message>
