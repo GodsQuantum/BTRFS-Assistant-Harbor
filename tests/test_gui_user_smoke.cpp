@@ -11,6 +11,7 @@
 #include <QThread>
 #include <QComboBox>
 #include <QLineEdit>
+#include <QSettings>
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QProcess>
@@ -262,6 +263,39 @@ private slots:
         QApplication::processEvents();
         QVERIFY(engine->hasFocus());
     }
+    void existingNetworkBackupDestinationPersistsAcrossSessions() {
+        QSettings saved(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+        const bool previouslySet = saved.contains(QStringLiteral("remote/targetPath"));
+        const QVariant previous = saved.value(QStringLiteral("remote/targetPath"));
+        const QString oldRoot = QStringLiteral("/mnt/qa-existing/Workstations");
+        const QString newRoot = QStringLiteral("/mnt/qa-existing/Workstations-v2");
+        saved.setValue(QStringLiteral("remote/targetPath"), oldRoot);
+        auto findTarget = [](RemoteBackupWidget &widget) -> QLineEdit * {
+            for (auto *edit : widget.findChildren<QLineEdit*>()) {
+                if (edit->placeholderText().contains(QStringLiteral("NFS/SMB")))
+                    return edit;
+            }
+            return nullptr;
+        };
+        {
+            RemoteBackupWidget first(nullptr);
+            auto *target = findTarget(first);
+            QVERIFY(target != nullptr);
+            QCOMPARE(target->text(), oldRoot);
+            target->setText(newRoot);
+            QSettings updated(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+            QCOMPARE(updated.value(QStringLiteral("remote/targetPath")).toString(), newRoot);
+        }
+        {
+            RemoteBackupWidget second(nullptr);
+            auto *target = findTarget(second);
+            QVERIFY(target != nullptr);
+            QCOMPARE(target->text(), newRoot);
+        }
+        if (previouslySet) saved.setValue(QStringLiteral("remote/targetPath"), previous);
+        else saved.remove(QStringLiteral("remote/targetPath"));
+    }
+
     void switchingMachineRepoOrBackendClearsStaleCatalogSelections() {
         RemoteBackupWidget widget(nullptr);
         auto *engine = backend(widget);
