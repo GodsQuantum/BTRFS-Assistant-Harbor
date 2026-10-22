@@ -189,7 +189,9 @@ jobs:
           persist-credentials: false
       - name: Native Fedora 44 KWin6 Qt compositor + test toolchain
         run: |
-          dnf install -y --setopt=install_weak_deps=False \
+          # KWin does not require Cisco's external H.264 RPM. The Cisco
+          # mirror timed out and failed the otherwise-complete QA install.
+          dnf --disablerepo=fedora-cisco-openh264 install -y --setopt=install_weak_deps=False \
             cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qttools-devel \
             libzstd-devel btrfs-progs-devel python3 btrfs-progs snapper \
             rust cargo pkgconf-pkg-config \

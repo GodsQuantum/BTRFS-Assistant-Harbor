@@ -72,6 +72,11 @@ sudo install -m 0755 "$REPO_ROOT/build/qa-btrfs/harbor-transport" /usr/bin/harbo
 sudo systemctl daemon-reload
 sudo -u "$(id -un)" /usr/bin/harbor-transport init --repo "$WORK/nfs"
 test -f "$WORK/nfs/.harbor-repo-id"
+echo "HARBOR_QA_DESKTOP_LIST_BEFORE_CLICK"
+sudo -u "$(id -un)" /usr/bin/harbor-transport list --repo "$WORK/nfs"
+echo "HARBOR_QA_POLKIT_ROOT_SQUASH_LIST_BEFORE_CLICK"
+sudo env PKEXEC_UID="$RUN_UID" /usr/bin/harbor-transport list --repo "$WORK/nfs"
+echo "PASS CAS_INVENTORY_WITH_ORIGINAL_FSUID"
 
 truncate -s 1300M "$WORK/source.btrfs"
 sudo mkfs.btrfs -f "$WORK/source.btrfs" >/dev/null

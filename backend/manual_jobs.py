@@ -179,7 +179,14 @@ def register(config: str, repo: str, machine: str, number: int,
                               machine=machine, owner_uid=owner_uid)
     # Immutable snap UUID matching, archived-parent verification, and first
     # empty-repository FULL handling live in the existing scheduler helper.
-    argv = command_builder(profile, selected_number=number)
+    try:
+        argv = command_builder(profile, selected_number=number)
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        detail = str(stderr or exc).strip()[:800]
+        raise RuntimeError(f"CAS planning failed: {detail}") from exc
     if argv is None:
         return {"state": "already-backed-up"}
     if argv[:2] != ["harbor-transport", "send"] or "--machine" not in argv:
