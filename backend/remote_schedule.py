@@ -19,6 +19,8 @@ import uuid
 
 NAMESPACE = uuid.UUID("18e0b70e-dced-4a95-9179-8b45efbd3f51")
 FREQUENCIES = {"hourly", "daily", "weekly"}
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+CALENDAR_TIME_RE = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]\Z")
 CONFIG_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\Z")
 SCRIPT_RE = re.compile(r"/[A-Za-z0-9_./-]+\Z")
 CONFIG_DIR = Path("/etc/btrfs-assistant-harbor/profiles")
@@ -34,6 +36,9 @@ class Profile:
     engine: str = "checkpoint-v2"
     owner_uid: int | None = None
     machine: str | None = None
+    calendar_at: str | None = None
+    weekdays: tuple[str, ...] = ()
+    catch_up: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.config, str) or CONFIG_RE.fullmatch(self.config) is None:
@@ -46,6 +51,16 @@ class Profile:
             raise ValueError("Backup target has unsafe traversal or trailing separators")
         if self.frequency not in FREQUENCIES:
             raise ValueError("Unsupported systemd schedule")
+        if self.calendar_at is not None and not CALENDAR_TIME_RE.fullmatch(self.calendar_at):
+            raise ValueError("Invalid calendar time (HH:MM)")
+        if not isinstance(self.weekdays, (tuple, list)) or any(
+            type(day) is not str or day not in WEEKDAYS for day in self.weekdays
+        ) or len(self.weekdays) != len(set(self.weekdays)):
+            raise ValueError("Invalid or duplicated weekdays")
+        if self.weekdays and (self.frequency != "weekly" or self.calendar_at is None):
+            raise ValueError("Weekdays need a weekly schedule with a specific time")
+        if type(self.catch_up) is not bool:
+            raise ValueError("catch_up must be a boolean")
         if type(self.allow_local) is not bool:
             raise ValueError("allow_local must be boolean")
         if self.engine not in ("checkpoint-v2", "cas"):
@@ -83,18 +98,28 @@ class Profile:
             payload.update(engine="cas", owner_uid=self.owner_uid)
             if self.machine:
                 payload["machine"] = self.machine
+        if self.calendar_at is not None:
+            payload["calendar_at"] = self.calendar_at
+        if self.weekdays:
+            payload["weekdays"] = list(self.weekdays)
+        if not self.catch_up:
+            payload["catch_up"] = False
         return payload
 
     @classmethod
     def from_dict(cls, data: dict) -> "Profile":
         if not isinstance(data, dict) or data.get("version") not in (1, 2, 3):
             raise ValueError("Unsupported or damaged profile")
+        calendar = dict(calendar_at=data.get("calendar_at"),
+                        weekdays=tuple(data.get("weekdays", [])),
+                        catch_up=data.get("catch_up", True))
         if data["version"] == 1:
-            profile = cls(data["config"], data["target"], data["frequency"], data["allow_local"])
+            profile = cls(data["config"], data["target"], data["frequency"],
+                          data["allow_local"], **calendar)
         else:
             profile = cls(data["config"], data["target"], data["frequency"],
                           data["allow_local"], data.get("engine"), data.get("owner_uid"),
-                          data.get("machine") if data["version"] == 3 else None)
+                          data.get("machine") if data["version"] == 3 else None, **calendar)
         if data.get("profile_id") != profile.profile_id:
             raise ValueError("Profile identity does not match stored values")
         return profile
@@ -131,17 +156,31 @@ TimeoutStartSec=infinity
 """
 
 
+def calendar_expression(profile: Profile) -> str:
+    if profile.calendar_at is None:
+        return profile.frequency
+    hour, minute = profile.calendar_at.split(":")
+    if profile.frequency == "hourly":
+        return f"*-*-* *:{minute}:00"
+    days = ",".join(day for day in WEEKDAYS if day in profile.weekdays)
+    return f"{days + ' ' if days else ''}*-*-* {hour}:{minute}:00"
+
+
 def timer_unit(profile: Profile, frequency: str) -> str:
-    if frequency not in FREQUENCIES:
-        raise ValueError("Unsupported schedule")
+    if frequency not in FREQUENCIES or (
+        profile.calendar_at is not None and frequency != profile.frequency
+    ):
+        raise ValueError("Unsupported or inconsistent schedule")
+    calendar = frequency if profile.calendar_at is None else calendar_expression(profile)
     return f"""[Unit]
 Description=Btrfs Assistant Harbor scheduled send {profile.profile_id}
 
 [Timer]
-OnCalendar={frequency}
-Persistent=true
-RandomizedDelaySec=60s
+OnCalendar={calendar}
+Persistent={'true' if profile.catch_up else 'false'}
+RandomizedDelaySec=0
 AccuracySec=1min
+WakeSystem=false
 Unit=btrfs-assistant-harbor-{profile.profile_id}.service
 
 [Install]
@@ -237,6 +276,9 @@ def main(argv: list[str] | None = None) -> int:
     install.add_argument("--snapper-config", required=True)
     install.add_argument("--target", required=True)
     install.add_argument("--frequency", choices=sorted(FREQUENCIES), required=True)
+    install.add_argument("--at", help="24-hour wall clock HH:MM")
+    install.add_argument("--weekdays", default="", help="Comma-separated Mon,Tue,...,Sun")
+    install.add_argument("--no-catch-up", action="store_true")
     install.add_argument("--allow-local", action="store_true")
     install.add_argument("--engine", choices=["checkpoint-v2", "cas"], default="checkpoint-v2")
     install.add_argument("--enable", action="store_true")
@@ -263,8 +305,10 @@ def main(argv: list[str] | None = None) -> int:
             if uid_value is None or not uid_value.isdecimal():
                 raise ValueError("CAS timer requires PKEXEC_UID from Polkit")
             owner_uid = int(uid_value)
+        days = tuple(part.strip() for part in args.weekdays.split(",") if part.strip())
         profile = Profile(args.snapper_config, args.target, args.frequency,
-                          args.allow_local, args.engine, owner_uid, args.machine)
+                          args.allow_local, args.engine, owner_uid, args.machine,
+                          args.at, days, not args.no_catch_up)
         installed = install_profile(profile, CONFIG_DIR, UNIT_DIR, str(Path(__file__).resolve()))
         print(json.dumps({"profile": profile.profile_id, "files": [str(p) for p in installed]}))
         if args.enable:

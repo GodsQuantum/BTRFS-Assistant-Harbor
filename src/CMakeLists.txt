@@ -88,6 +88,14 @@ install(FILES ${PROJECT_SOURCE_DIR}/vendor/harbor-legacy/LICENSE-MIT
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/btrfs-assistant-harbor)
 
 
+# Systemd template is NEVER enabled during package installation.
+# Only an explicit user click creates/enables a job instance.
+install(PROGRAMS ${PROJECT_SOURCE_DIR}/backend/manual_jobs.py
+        DESTINATION ${CMAKE_INSTALL_BINDIR}
+        RENAME btrfs-assistant-harbor-job)
+install(FILES ${PROJECT_SOURCE_DIR}/packaging/systemd/btrfs-assistant-harbor-job@.service
+        DESTINATION lib/systemd/system)
+
 # CAS scheduler shared by the root-owned systemd profile runner.
 install(FILES ${PROJECT_SOURCE_DIR}/backend/cas_schedule.py
         DESTINATION ${CMAKE_INSTALL_BINDIR})

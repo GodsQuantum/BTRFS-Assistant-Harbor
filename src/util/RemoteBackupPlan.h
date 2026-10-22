@@ -9,7 +9,9 @@ bool selectionContextMatches(const QString &repo, const QString &machine, bool c
 QString profileId(const QString &config, const QString &target);
 QString profileIdForEngine(const QString &config, const QString &target, bool cas, const QString &machine = QString());
 QStringList scheduleInstallerArguments(const QString &config, const QString &target,
-                                       const QString &frequency, bool allowLocal, bool cas, const QString &machine = QString());
+                                       const QString &frequency, bool allowLocal, bool cas, const QString &machine = QString(),
+                                        const QString &at = QString(), const QStringList &weekdays = {},
+                                        bool catchUp = true);
 QString archiveName(const QString &config, unsigned number);
 QStringList sendArguments(const QString &config, unsigned number, const QString &target, bool allowLocal);
 QStringList scheduleArguments(const QString &config, const QString &target, bool allowLocal);
