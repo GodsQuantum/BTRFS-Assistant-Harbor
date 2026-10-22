@@ -2159,6 +2159,130 @@ This cannot be undone. The plan will be checked again under repository lock.</so
             <source>Last background backup: %1</source>
             <translation>最近一次后台备份：%1</translation>
         </message>
+        <message>
+            <source>Back up the entire computer</source>
+            <translation>备份整台计算机</translation>
+        </message>
+        <message>
+            <source>Restore a computer</source>
+            <translation>恢复一台计算机</translation>
+        </message>
+        <message>
+            <source>Invalid machine backup destination</source>
+            <translation>计算机备份目标无效</translation>
+        </message>
+        <message>
+            <source>Choose a mounted remote backup directory before starting a whole-computer backup.</source>
+            <translation>开始整机备份前，请选择已挂载的远程备份目录。</translation>
+        </message>
+        <message>
+            <source>Back up this entire computer</source>
+            <translation>备份整台计算机</translation>
+        </message>
+        <message>
+            <source>Capture ALL persistent Btrfs subvolumes, the EFI files and a dated machine set. Harbor will run the job independently of this window using systemd. No local snapshot or existing backup is deleted. Continue?</source>
+            <translation>捕获所有持久性 Btrfs 子卷、EFI 文件及带日期的整机备份集。Harbor 将通过 systemd 独立执行，即使关闭窗口也会继续。不会删除任何本地快照或现有备份。继续吗？</translation>
+        </message>
+        <message>
+            <source>Choose backup destination</source>
+            <translation>选择备份位置</translation>
+        </message>
+        <message>
+            <source>Select the mounted Cloud9 backup directory first.</source>
+            <translation>请先选择已挂载的 Cloud9 备份目录。</translation>
+        </message>
+        <message>
+            <source>Backup catalog unavailable</source>
+            <translation>无法访问备份目录</translation>
+        </message>
+        <message>
+            <source>Could not load verified computer backups.</source>
+            <translation>无法加载已验证的计算机备份。</translation>
+        </message>
+        <message>
+            <source>Choose a complete dated machine backup. The first step receives all volumes into an empty Btrfs staging area. Boot restoration is separate and must be verified.</source>
+            <translation>请选择完整且带日期的整机备份。第一步会将全部子卷恢复到空的 Btrfs 暂存目录中。引导恢复是单独步骤，必须经过验证。</translation>
+        </message>
+        <message>
+            <source>Keep original machine name</source>
+            <translation>保留原计算机名称</translation>
+        </message>
+        <message>
+            <source>Keep current installation name</source>
+            <translation>保留当前新系统名称</translation>
+        </message>
+        <message>
+            <source>Use a different name</source>
+            <translation>使用其他名称</translation>
+        </message>
+        <message>
+            <source>Computer</source>
+            <translation>计算机</translation>
+        </message>
+        <message>
+            <source>Backup date</source>
+            <translation>备份日期</translation>
+        </message>
+        <message>
+            <source>Name after restoration</source>
+            <translation>恢复后的计算机名称</translation>
+        </message>
+        <message>
+            <source>Custom name</source>
+            <translation>自定义名称</translation>
+        </message>
+        <message>
+            <source>Empty Btrfs staging directory</source>
+            <translation>空的 Btrfs 恢复暂存目录</translation>
+        </message>
+        <message>
+            <source>Verify backup and prepare recovery</source>
+            <translation>验证备份并准备恢复</translation>
+        </message>
+        <message>
+            <source>No complete machine backup is available here yet. A single Snapper root snapshot is not a whole-computer backup.</source>
+            <translation>此处尚无完整的整机备份。单个 Snapper 根快照并不等于整机备份。</translation>
+        </message>
+        <message>
+            <source>Invalid computer name</source>
+            <translation>计算机名称无效</translation>
+        </message>
+        <message>
+            <source>Use 1–63 ASCII letters, digits or hyphens.</source>
+            <translation>请使用 1 至 63 个 ASCII 字母、数字或连字符。</translation>
+        </message>
+        <message>
+            <source>Invalid recovery selection</source>
+            <translation>恢复选择无效</translation>
+        </message>
+        <message>
+            <source>Choose a completed computer backup and a safe absolute staging directory.</source>
+            <translation>请选择已完成的整机备份以及安全的绝对路径暂存目录。</translation>
+        </message>
+        <message>
+            <source>Computer recovery refused</source>
+            <translation>计算机恢复被拒绝</translation>
+        </message>
+        <message>
+            <source>Backup verification failed: %1</source>
+            <translation>备份验证失败：%1</translation>
+        </message>
+        <message>
+            <source>Receive a complete computer backup</source>
+            <translation>接收完整的整机备份</translation>
+        </message>
+        <message>
+            <source>Verified: %1 Btrfs volumes and %2 EFI archives. Recover these volumes to the EMPTY staging directory? The running CachyOS installation will NOT be overwritten. Selected future machine name: %3.</source>
+            <translation>已验证：%1 个 Btrfs 子卷和 %2 个 EFI 归档。要将其恢复到空的暂存目录吗？当前运行的 CachyOS 系统不会被覆盖。计划使用的计算机名称：%3。</translation>
+        </message>
+        <message>
+            <source>Files safely recovered</source>
+            <translation>文件已安全恢复</translation>
+        </message>
+        <message>
+            <source>All backup volumes have been received into the staging directory. The bootable machine activation phase still requires an offline recovery environment and is not yet certified for LUKS/Limine.</source>
+            <translation>全部备份卷已恢复到暂存目录。启用可启动系统仍需离线恢复环境；LUKS/Limine 的恢复尚未通过认证。</translation>
+        </message>
 </context>
     <context>
         <name>HarborLanguage</name>

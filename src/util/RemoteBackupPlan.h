@@ -20,7 +20,12 @@ QStringList previewRestoreArguments(const QString &target, const QString &archiv
 QStringList listArguments(const QString &target);
 bool trustedBackendExecutable(const QString &path);
 // Legacy checkpoint-v2 machine sets: read-only catalog and staged-restore preview.
-QStringList machineInventoryArguments();  // native readonly Btrfs/EFI coverage audit
+QStringList machineInventoryArguments();
+// Full-machine checkpoint-v2 snapshots, external EFI, background systemd unit.
+// This is NOT the root-only CAS snapshot button or a new stream engine.
+QStringList wholeMachineStartArguments(const QString &target, const QString &profileId,
+                                       const QString &unitId);
+  // native readonly Btrfs/EFI coverage audit
 QStringList machineSetListArguments(const QString &target);
 QStringList machineSetPreviewArguments(const QString &target, const QString &setId, const QString &staging);
 QStringList casInitArguments(const QString &repo, bool allowLocal);

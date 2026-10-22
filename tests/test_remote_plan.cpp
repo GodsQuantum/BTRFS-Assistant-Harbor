@@ -57,6 +57,16 @@ int main() {
   REQUIRE(casInitArguments("/", false).isEmpty());
   REQUIRE(casListArguments(casPath).contains("list"));
   const QString machineSetId("a5d970db-9664-4be8-a0fb-bb1e93c60ec3");
+  const auto whole = wholeMachineStartArguments(
+      "/mnt/backup-local/Workstations", id, machineSetId);
+  REQUIRE(whole.contains("set-start"));
+  REQUIRE(whole.contains("snapper-fresh"));
+  REQUIRE(whole.contains("--collect"));
+  REQUIRE(whole.contains("--property=RequiresMountsFor=/mnt/backup-local/Workstations"));
+  REQUIRE(!whole.contains("--source")); // enumerate ALL Btrfs sources and /boot automatically
+  REQUIRE(wholeMachineStartArguments("/", id, machineSetId).isEmpty());
+  REQUIRE(wholeMachineStartArguments("/mnt/backup", "invalid", machineSetId).isEmpty());
+  REQUIRE(wholeMachineStartArguments("/mnt/backup", id, "../bad").isEmpty());
   REQUIRE(machineInventoryArguments().size() == 3);
   REQUIRE(machineInventoryArguments().last() == "machine-inventory");
   REQUIRE(machineSetListArguments("/mnt/legacy").contains("set-list"));
