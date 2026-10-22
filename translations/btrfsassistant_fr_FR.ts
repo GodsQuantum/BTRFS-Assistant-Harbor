@@ -561,7 +561,91 @@ Restauration amorçable sur machine nue : NON CERTIFIÉE.
             <source>Backup or recovery destination changed; refusing stale restore preview.</source>
             <translation>La destination de sauvegarde ou de récupération a changé ; refus de l’aperçu de restauration obsolète.</translation>
         </message>
-    </context>
+            <message>
+            <source>Catch up missed backups after startup</source>
+            <translation>Rattraper les sauvegardes manquées au démarrage</translation>
+        </message>
+        <message>
+            <source>Continue backup after closing Harbor (systemd)</source>
+            <translation>Continuer la sauvegarde après fermeture de Harbor (systemd)</translation>
+        </message>
+        <message>
+            <source>Scheduled time</source>
+            <translation>Heure programmée</translation>
+        </message>
+        <message>
+            <source>Weekly days</source>
+            <translation>Jours de la semaine</translation>
+        </message>
+        <message>
+            <source>Mon</source>
+            <translation>Lun.</translation>
+        </message>
+        <message>
+            <source>Tue</source>
+            <translation>Mar.</translation>
+        </message>
+        <message>
+            <source>Wed</source>
+            <translation>Mer.</translation>
+        </message>
+        <message>
+            <source>Thu</source>
+            <translation>Jeu.</translation>
+        </message>
+        <message>
+            <source>Fri</source>
+            <translation>Ven.</translation>
+        </message>
+        <message>
+            <source>Sat</source>
+            <translation>Sam.</translation>
+        </message>
+        <message>
+            <source>Sun</source>
+            <translation>Dim.</translation>
+        </message>
+        <message>
+            <source>Backup journal</source>
+            <translation>Journal de sauvegarde</translation>
+        </message>
+        <message>
+            <source>Choose at least one weekday.</source>
+            <translation>Sélectionnez au moins un jour de la semaine.</translation>
+        </message>
+        <message>
+            <source>Select a readonly snapshot to back up.</source>
+            <translation>Sélectionnez un instantané en lecture seule à sauvegarder.</translation>
+        </message>
+        <message>
+            <source>Start background backup</source>
+            <translation>Démarrer une sauvegarde en arrière-plan</translation>
+        </message>
+        <message>
+            <source>Harbor will select a verified CAS parent automatically. The systemd backup continues if the window closes and can be resumed after a restart. Start now?</source>
+            <translation>Harbor choisira automatiquement une archive parente CAS vérifiée. La sauvegarde systemd continue si vous fermez la fenêtre et peut reprendre après redémarrage. Démarrer maintenant ?</translation>
+        </message>
+        <message>
+            <source>No active background backup.</source>
+            <translation>Aucune sauvegarde en arrière-plan active.</translation>
+        </message>
+        <message>
+            <source>Cancel background backup</source>
+            <translation>Annuler la sauvegarde en arrière-plan</translation>
+        </message>
+        <message>
+            <source>Stop the systemd backup service? The completed CAS chunks will be preserved.</source>
+            <translation>Arrêter le service de sauvegarde systemd ? Les blocs CAS déjà terminés seront conservés.</translation>
+        </message>
+        <message>
+            <source>Background backup: %1 — %2 bytes read</source>
+            <translation>Sauvegarde en arrière-plan : %1 — %2 octets lus</translation>
+        </message>
+        <message>
+            <source>Last background backup: %1</source>
+            <translation>Dernière sauvegarde en arrière-plan : %1</translation>
+        </message>
+</context>
     <context>
         <name>Btrfs</name>
         <message>
@@ -1712,7 +1796,31 @@ Restauration amorçable sur machine nue : NON CERTIFIÉE.
             <source>Btrfs Assistant Harbor</source>
             <translation>Btrfs Assistant Harbor</translation>
         </message>
-    </context>
+            <message>
+            <source>Show Harbor</source>
+            <translation>Afficher Harbor</translation>
+        </message>
+        <message>
+            <source>Quit Harbor and stop manual backups</source>
+            <translation>Quitter Harbor et arrêter les sauvegardes manuelles</translation>
+        </message>
+        <message>
+            <source>Quit Harbor</source>
+            <translation>Quitter Harbor</translation>
+        </message>
+        <message>
+            <source>Quit Harbor and stop any running manual backup? Existing completed CAS objects will be retained.</source>
+            <translation>Quitter Harbor et arrêter les sauvegardes manuelles en cours ? Les objets CAS déjà terminés seront conservés.</translation>
+        </message>
+        <message>
+            <source>Backup still running</source>
+            <translation>Sauvegarde toujours en cours</translation>
+        </message>
+        <message>
+            <source>Harbor could not stop the background job. The application stays open.</source>
+            <translation>Harbor n'a pas pu arrêter la tâche en arrière-plan. L'application reste ouverte.</translation>
+        </message>
+</context>
     <context>
         <name>HarborLanguage</name>
         <message>

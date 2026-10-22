@@ -531,8 +531,12 @@ private slots:
         QVERIFY(cancel);
         QVERIFY(!cancel->isEnabled());
         const auto children = w.findChildren<QProcess*>();
-        QCOMPARE(children.size(), 1);
-        auto *process = children[0];
+        QCOMPARE(children.size(), 2);
+        auto *process = w.findChild<QProcess*>(QStringLiteral("harborCommandProcess"));
+        QVERIFY(process != nullptr);
+        auto *poller = w.findChild<QProcess*>(QStringLiteral("harborStatusPoller"));
+        QVERIFY(poller != nullptr);
+        QCOMPARE(poller->state(), QProcess::NotRunning);
         process->start(QStringLiteral("/bin/sh"),
                        {QStringLiteral("-c"), QStringLiteral("sleep 45 & wait")});
         QVERIFY(process->waitForStarted(5000));
@@ -680,8 +684,9 @@ private slots:
         w.show();
         QApplication::processEvents();
         const auto children = w.findChildren<QProcess*>();
-        QCOMPARE(children.size(), 1);
-        QCOMPARE(children[0]->state(), QProcess::NotRunning);
+        QCOMPARE(children.size(), 2);
+        for (auto *process : children)
+            QCOMPARE(process->state(), QProcess::NotRunning);
         QVERIFY(w.findChildren<QPlainTextEdit*>()[0]->isReadOnly());
     }
 };

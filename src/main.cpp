@@ -10,6 +10,13 @@
 #include <QDebug>
 #include <QFile>
 #include <QTranslator>
+#include <QSystemTrayIcon>
+#include <QMenu>
+#include <QProcess>
+#include <QMessageBox>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include <optional>
 
@@ -107,6 +114,57 @@ int main(int argc, char *argv[])
         }
 
         MainWindow mainWindow(&btrfs.value(), btrfsMaintenance.get(), snapper);
+        // The tray is only a controller. Persistent manual transfers live in
+        // systemd, so a GUI crash still cannot kill a Btrfs send.
+        std::unique_ptr<QSystemTrayIcon> tray;
+        std::unique_ptr<QMenu> trayMenu;
+        if (QSystemTrayIcon::isSystemTrayAvailable()) {
+            app.setQuitOnLastWindowClosed(false);
+            tray = std::make_unique<QSystemTrayIcon>(app.windowIcon(), &app);
+            trayMenu = std::make_unique<QMenu>(&mainWindow);
+            const auto *showAction = trayMenu->addAction(
+                QCoreApplication::translate("main", "Show Harbor"));
+            const auto *quitAction = trayMenu->addAction(
+                QCoreApplication::translate("main", "Quit Harbor and stop manual backups"));
+            QObject::connect(showAction, &QAction::triggered, &mainWindow, [&mainWindow] {
+                mainWindow.showNormal();
+                mainWindow.raise();
+                mainWindow.activateWindow();
+            });
+            QObject::connect(tray.get(), &QSystemTrayIcon::activated, &mainWindow,
+                [&mainWindow](QSystemTrayIcon::ActivationReason reason) {
+                    if (reason == QSystemTrayIcon::DoubleClick ||
+                        reason == QSystemTrayIcon::Trigger) {
+                        mainWindow.showNormal();
+                        mainWindow.raise();
+                        mainWindow.activateWindow();
+                    }
+                });
+            QObject::connect(quitAction, &QAction::triggered, &app, [&app, &mainWindow] {
+                const auto answer = QMessageBox::question(&mainWindow,
+                    QCoreApplication::translate("main", "Quit Harbor"),
+                    QCoreApplication::translate("main",
+                        "Quit Harbor and stop any running manual backup? "
+                        "Existing completed CAS objects will be retained."));
+                if (answer != QMessageBox::Yes) return;
+                QProcess controller;
+                controller.start(QStringLiteral("/usr/bin/btrfs-assistant-harbor-job"),
+                                 {QStringLiteral("cancel-all")});
+                if (!controller.waitForFinished(45000) || controller.exitStatus() != QProcess::NormalExit ||
+                    controller.exitCode() != 0) {
+                    QMessageBox::warning(&mainWindow,
+                        QCoreApplication::translate("main", "Backup still running"),
+                        QCoreApplication::translate("main",
+                            "Harbor could not stop the background job. The application stays open."));
+                    mainWindow.showNormal();
+                    return;
+                }
+                app.quit();
+            });
+            tray->setContextMenu(trayMenu.get());
+            tray->setToolTip(QCoreApplication::translate("main", "Btrfs Assistant Harbor"));
+            tray->show();
+        }
         mainWindow.show();
         return app.exec();
     } else {
