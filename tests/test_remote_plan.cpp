@@ -58,15 +58,17 @@ int main() {
   REQUIRE(casListArguments(casPath).contains("list"));
   const QString machineSetId("a5d970db-9664-4be8-a0fb-bb1e93c60ec3");
   const auto whole = wholeMachineStartArguments(
-      "/mnt/backup-local/Workstations", id, machineSetId);
-  REQUIRE(whole.contains("set-start"));
+      "/mnt/backup-local/Workstations", id, machineSetId, 1000);
+  REQUIRE(whole.contains("set-backup"));
   REQUIRE(whole.contains("snapper-fresh"));
   REQUIRE(whole.contains("--collect"));
+  REQUIRE(whole.contains("--setenv=HARBOR_OWNER_UID=1000"));
+  REQUIRE(wholeMachineStartArguments("/mnt/backup", id, machineSetId, 0).isEmpty());
   REQUIRE(whole.contains("--property=RequiresMountsFor=/mnt/backup-local/Workstations"));
   REQUIRE(!whole.contains("--source")); // enumerate ALL Btrfs sources and /boot automatically
-  REQUIRE(wholeMachineStartArguments("/", id, machineSetId).isEmpty());
-  REQUIRE(wholeMachineStartArguments("/mnt/backup", "invalid", machineSetId).isEmpty());
-  REQUIRE(wholeMachineStartArguments("/mnt/backup", id, "../bad").isEmpty());
+  REQUIRE(wholeMachineStartArguments("/", id, machineSetId, 1000).isEmpty());
+  REQUIRE(wholeMachineStartArguments("/mnt/backup", "invalid", machineSetId, 1000).isEmpty());
+  REQUIRE(wholeMachineStartArguments("/mnt/backup", id, "../bad", 1000).isEmpty());
   REQUIRE(machineInventoryArguments().size() == 3);
   REQUIRE(machineInventoryArguments().last() == "machine-inventory");
   REQUIRE(machineSetListArguments("/mnt/legacy").contains("set-list"));

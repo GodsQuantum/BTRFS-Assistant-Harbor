@@ -73,17 +73,30 @@ int main(int argc, char **argv) {
     auto *quit = menu.addAction(label("Quit tray and stop backups",
         "Quitter Harbor et arrêter les sauvegardes", "退出托盘并停止备份"));
     auto update = [&] {
-        const auto status = activeBackup()
+        const auto machine = HarborProgress::machine();
+        const bool casRunning = activeBackup();
+        const auto status = casRunning || !machine.isEmpty()
             ? label("Backup in progress (systemd)", "Sauvegarde en cours (systemd)",
                     "备份进行中 (systemd)")
-            : label("No active manual backup", "Aucune sauvegarde manuelle active",
-                    "没有正在运行的手动备份");
+            : label("No active backup", "Aucune sauvegarde active",
+                    "没有正在运行的备份");
+        quit->setText(!machine.isEmpty() && !casRunning
+            ? label("Close tray (backup continues)",
+                    "Fermer l’icône (la sauvegarde continue)",
+                    "关闭托盘（备份继续运行）")
+            : label("Quit tray and stop backups",
+                    "Quitter Harbor et arrêter les sauvegardes",
+                    "退出托盘并停止备份"));
         const QJsonObject stats = HarborProgress::active();
         if (!stats.isEmpty()) {
             state->setText(status + QStringLiteral(" — ") +
                            HarborProgress::size(stats.value(QStringLiteral("bytes_read")).toDouble()));
             tray.setToolTip(QStringLiteral("Btrfs Assistant Harbor\n") +
                             HarborProgress::overview(stats, true));
+        } else if (!machine.isEmpty()) {
+            state->setText(status);
+            tray.setToolTip(QStringLiteral("Btrfs Assistant Harbor\n") +
+                            HarborProgress::machineOverview(machine, true));
         } else {
             state->setText(status);
             tray.setToolTip(QStringLiteral("Btrfs Assistant Harbor — ") + status);

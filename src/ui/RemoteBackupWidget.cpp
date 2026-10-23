@@ -3,6 +3,7 @@
 #include "util/MachineSetProtocol.h"
 #include "util/Snapper.h"
 #include "util/HarborProgress.h"
+#include "util/RecoveryStaging.h"
 #include <QProgressBar>
 
 #include <QCheckBox>
@@ -70,6 +71,26 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     info->setWordWrap(true);
     layout->addWidget(info);
 
+    // The primary experience must not require choosing engines, Snapper
+    // configs, volume IDs, parent snapshots, or CLI flags.
+    auto *simpleActions = new QGroupBox(tr("Computer protection"), this);
+    auto *simpleLayout = new QVBoxLayout(simpleActions);
+    auto *wholeBackup = new QPushButton(tr("Back up the entire computer"), simpleActions);
+    wholeBackup->setObjectName(QStringLiteral("harborBackupWholeComputer"));
+    wholeBackup->setMinimumHeight(48);
+    auto *wholeRestore = new QPushButton(tr("Restore a computer"), simpleActions);
+    wholeRestore->setObjectName(QStringLiteral("harborRestoreWholeComputer"));
+    wholeRestore->setMinimumHeight(48);
+    simpleLayout->addWidget(wholeBackup);
+    simpleLayout->addWidget(wholeRestore);
+    layout->addWidget(simpleActions);
+
+    auto *advancedToggle = new QPushButton(tr("Advanced backup options"), this);
+    advancedToggle->setCheckable(true);
+    advancedToggle->setChecked(false);
+    advancedToggle->setObjectName(QStringLiteral("harborAdvancedOptions"));
+    layout->addWidget(advancedToggle);
+
     auto *settings = new QGroupBox(tr("Source and destination"), this);
     auto *form = new QFormLayout(settings);
     auto *snapshotRow = new QWidget(settings);
@@ -106,7 +127,9 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     // Reuse the user's existing repository across sessions. This only remembers
     // a path; it never creates a directory or bypasses mounted-network checks.
     const QString savedTarget = harborSettings.value(QStringLiteral("remote/targetPath"), QString()).toString();
-    m_target->setText(savedTarget.isEmpty() ? QString() : QDir::cleanPath(savedTarget));
+    const QString existingPegasusRepo = QStringLiteral("/mnt/Cloud9/backup-local/Workstations");
+    m_target->setText(!savedTarget.isEmpty() ? QDir::cleanPath(savedTarget)
+        : QFileInfo::exists(existingPegasusRepo) ? existingPegasusRepo : QString());
     connect(m_target, &QLineEdit::editingFinished, this, [this] {
         const QString path = m_target->text();
         if (path.startsWith(QLatin1Char('/')))
@@ -225,12 +248,6 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     auto *machineBox = new QGroupBox(tr("Whole-computer backup sets — checkpoint-v2 (QA)"), this);
     auto *machineLayout = new QVBoxLayout(machineBox);
     auto *machineActions = new QHBoxLayout();
-    auto *wholeBackup = new QPushButton(tr("Back up the entire computer"), machineBox);
-    wholeBackup->setObjectName(QStringLiteral("harborBackupWholeComputer"));
-    auto *wholeRestore = new QPushButton(tr("Restore a computer"), machineBox);
-    wholeRestore->setObjectName(QStringLiteral("harborRestoreWholeComputer"));
-    machineLayout->addWidget(wholeBackup);
-    machineLayout->addWidget(wholeRestore);
     auto *auditMachine = new QPushButton(tr("Audit backup coverage"), machineBox);
     auto *listMachines = new QPushButton(tr("List machine backup sets"), machineBox);
     auto *previewMachine = new QPushButton(tr("Preview staged machine restore"), machineBox);
@@ -248,6 +265,25 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     machineNote->setWordWrap(true);
     machineLayout->addWidget(machineNote);
     layout->addWidget(machineBox);
+    settings->setVisible(false);
+    machineBox->setVisible(false);
+    connect(advancedToggle, &QPushButton::toggled, this,
+            [settings, machineBox, actions](bool show) {
+                settings->setVisible(show);
+                machineBox->setVisible(show);
+                // Legacy single-snapshot buttons and the separate transfer
+                // catalog should stay out of the ordinary user journey.
+                for (int i = 0; i < actions->count(); ++i) {
+                    if (auto *item = actions->itemAt(i)) {
+                        if (auto *widget = item->widget()) widget->setVisible(show);
+                    }
+                }
+            });
+    for (int i = 0; i < actions->count(); ++i) {
+        if (auto *item = actions->itemAt(i)) {
+            if (auto *widget = item->widget()) widget->setVisible(false);
+        }
+    }
     layout->addWidget(m_state);
     m_progressBar->setObjectName(QStringLiteral("harborBackupEstimatedProgress"));
     m_progressBar->setRange(0, 0);
@@ -388,24 +424,44 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
             launch(args, QStringLiteral("cas-init"), QStringLiteral("harbor-transport"));
     });
     connect(wholeBackup, &QPushButton::clicked, this, [this] {
+        // Do not start a second disk-heavy backup during an existing send.
+        if (!HarborProgress::active().isEmpty() ||
+            !HarborProgress::machine().isEmpty()) {
+            QMessageBox::information(this, tr("Backup already in progress"),
+                tr("A backup is already running. Harbor will not start another one."));
+            return;
+        }
+        if (m_target->text().isEmpty() || !QFileInfo(m_target->text()).isDir()) {
+            const auto chosen = QFileDialog::getExistingDirectory(
+                this, tr("Choose the mounted backup location"), m_target->text());
+            if (chosen.isEmpty()) return;
+            m_target->setText(chosen);
+        }
         const auto profile = HarborRemote::profileId(QStringLiteral("whole-machine"),
                                                      m_target->text());
         const auto unit = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        bool parsed = false;
+        const uint authenticatedUid = qEnvironmentVariable("PKEXEC_UID").toUInt(&parsed);
+        const uint ownerUid = parsed && authenticatedUid > 0
+            ? authenticatedUid : static_cast<uint>(getuid());
         const auto args = HarborRemote::wholeMachineStartArguments(
-            m_target->text(), profile, unit);
+            m_target->text(), profile, unit, ownerUid);
         if (args.isEmpty()) {
             QMessageBox::warning(this, tr("Invalid machine backup destination"),
                 tr("Choose a mounted remote backup directory before starting a whole-computer backup."));
             return;
         }
-        if (QMessageBox::question(this, tr("Back up this entire computer"),
-            tr("Capture ALL persistent Btrfs subvolumes, the EFI files and a dated machine set. "
-               "Harbor will run the job independently of this window using systemd. "
-               "No local snapshot or existing backup is deleted. Continue?"))
-            != QMessageBox::Yes) return;
+        // A backup is non-destructive; one click starts or safely resumes it.
+        // The backend itself refuses an unmounted or changed destination.
         launch(args, QStringLiteral("whole-machine-start"), QStringLiteral("systemd-run"));
     });
     connect(wholeRestore, &QPushButton::clicked, this, [this] {
+        if (m_target->text().isEmpty() || !QFileInfo(m_target->text()).isDir()) {
+            const auto chosen = QFileDialog::getExistingDirectory(
+                this, tr("Choose the mounted backup location"), m_target->text());
+            if (chosen.isEmpty()) return;
+            m_target->setText(chosen);
+        }
         const auto args = HarborRemote::machineSetListArguments(m_target->text());
         if (args.isEmpty()) {
             QMessageBox::warning(this, tr("Choose backup destination"),
@@ -677,9 +733,19 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
         }
         const QJsonObject estimate = m_activeJobId.isEmpty()
             ? QJsonObject{} : HarborProgress::active(m_activeJobId);
-        m_progressDetails->setVisible(!estimate.isEmpty());
-        m_progressBar->setVisible(!estimate.isEmpty());
-        if (!estimate.isEmpty()) {
+        const QJsonObject machine = estimate.isEmpty() ? HarborProgress::machine() : QJsonObject{};
+        m_progressDetails->setVisible(!estimate.isEmpty() || !machine.isEmpty());
+        m_progressBar->setVisible(!estimate.isEmpty() || !machine.isEmpty());
+        if (!machine.isEmpty()) {
+            m_state->setText(tr("Whole-computer backup running in background"));
+            m_progressDetails->setText(HarborProgress::machineOverview(machine));
+            const auto percent = machine.value(QStringLiteral("estimated_percent"));
+            if (percent.isDouble()) {
+                m_progressBar->setRange(0, 1000);
+                m_progressBar->setValue(qBound(0, qRound(percent.toDouble() * 10), 990));
+                m_progressBar->setFormat(tr("Estimated progress: %p%"));
+            } else m_progressBar->setRange(0, 0);
+        } else if (!estimate.isEmpty()) {
             m_progressDetails->setText(HarborProgress::overview(estimate));
             const auto percentage = estimate.value(QStringLiteral("progress_percent_estimate"));
             if (percentage.isDouble()) {
@@ -697,7 +763,8 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
                 .arg(newest.value(QStringLiteral("state")).toString())
                 .arg(QString::number(static_cast<qulonglong>(
                     newest.value(QStringLiteral("bytes_read")).toDouble()))));
-        } else if (!newest.isEmpty() && m_process->state() == QProcess::NotRunning) {
+        } else if (machine.isEmpty() && !newest.isEmpty() &&
+                   m_process->state() == QProcess::NotRunning) {
             m_send->setEnabled(true);
             m_cancel->setEnabled(false);
             m_state->setText(tr("Last background backup: %1")
@@ -840,6 +907,10 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
         return;
     }
     const bool ok = status == QProcess::NormalExit && code == 0;
+    if (ok && m_purpose == QLatin1String("whole-machine-start")) {
+        m_state->setText(tr("Whole-computer backup started in background. You may close Harbor."));
+        return;
+    }
     m_state->setText(ok ? tr("Operation finished: %1").arg(m_purpose)
                         : tr("Operation failed: %1 (exit %2)").arg(m_purpose).arg(code));
     if (!ok) return;
@@ -866,11 +937,9 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
         auto *dates = new QComboBox(&dialog);
         auto *policy = new QComboBox(&dialog);
         auto *newHost = new QLineEdit(&dialog);
-        auto *staging = new QLineEdit(m_staging->text(), &dialog);
         machines->setObjectName(QStringLiteral("harborRestoreComputer"));
         dates->setObjectName(QStringLiteral("harborRestoreComputerDate"));
         policy->setObjectName(QStringLiteral("harborRestoreHostPolicy"));
-        staging->setObjectName(QStringLiteral("harborRestoreComputerStaging"));
         policy->addItem(tr("Keep original machine name"), QStringLiteral("original"));
         policy->addItem(tr("Keep current installation name"), QStringLiteral("installed"));
         policy->addItem(tr("Use a different name"), QStringLiteral("custom"));
@@ -878,7 +947,6 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
         form->addRow(tr("Backup date"), dates);
         form->addRow(tr("Name after restoration"), policy);
         form->addRow(tr("Custom name"), newHost);
-        form->addRow(tr("Empty Btrfs staging directory"), staging);
         layout->addLayout(form);
         QJsonArray complete;
         for (const auto &v : payload.array()) {
@@ -930,8 +998,15 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
             return;
         }
         const auto id = dates->currentData().toString();
+        QString recoveryStaging;
+        QString error;
+        if (!HarborStaging::prepare(id, &recoveryStaging, &error)) {
+            QMessageBox::warning(this, tr("Recovery preparation refused"),
+                                 tr("Could not prepare a safe Btrfs recovery: %1").arg(error));
+            return;
+        }
         const auto args = HarborRemote::machineSetPreviewArguments(
-            m_target->text(), id, staging->text());
+            m_target->text(), id, recoveryStaging);
         if (args.isEmpty()) {
             QMessageBox::warning(this, tr("Invalid recovery selection"),
                                  tr("Choose a completed computer backup and a safe absolute staging directory."));
@@ -940,7 +1015,7 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
         m_computerRecoveryId = id;
         m_computerRecoveryName = name;
         m_computerRecoveryPolicy = choice;
-        m_computerRecoveryStaging = staging->text();
+        m_computerRecoveryStaging = recoveryStaging;
         m_computerRecoveryRepository = m_target->text();
         launch(args, QStringLiteral("whole-machine-restore-preview"));
         return;

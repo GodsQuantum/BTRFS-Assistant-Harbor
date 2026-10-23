@@ -829,6 +829,7 @@ def _execute(args: argparse.Namespace) -> int:
         return execute_scheduled_checkpoint_v2(args)
     if action in (
         "set-start",
+        "set-backup",
         "set-resume",
         "set-status",
         "set-restore",

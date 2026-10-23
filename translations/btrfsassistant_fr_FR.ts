@@ -651,7 +651,7 @@ Restauration amorçable sur machine nue : NON CERTIFIÉE.
         </message>
         <message>
             <source>Back up the entire computer</source>
-            <translation>Sauvegarder tout l’ordinateur</translation>
+            <translation>Sauvegarder cet ordinateur</translation>
         </message>
         <message>
             <source>Restore a computer</source>
@@ -772,6 +772,42 @@ Restauration amorçable sur machine nue : NON CERTIFIÉE.
         <message>
             <source>All backup volumes have been received into the staging directory. The bootable machine activation phase still requires an offline recovery environment and is not yet certified for LUKS/Limine.</source>
             <translation>Tous les volumes de sauvegarde ont été récupérés dans le dossier de préparation. L’activation du système démarrable exige encore un environnement de récupération hors ligne et n’est pas certifiée pour LUKS/Limine.</translation>
+        </message>
+        <message>
+            <source>Computer protection</source>
+            <translation>Protection de l’ordinateur</translation>
+        </message>
+        <message>
+            <source>Advanced backup options</source>
+            <translation>Options avancées de sauvegarde</translation>
+        </message>
+        <message>
+            <source>Backup already in progress</source>
+            <translation>Sauvegarde déjà en cours</translation>
+        </message>
+        <message>
+            <source>A backup is already running. Harbor will not start another one.</source>
+            <translation>Une sauvegarde est déjà en cours. Harbor n’en lancera pas une deuxième.</translation>
+        </message>
+        <message>
+            <source>Choose the mounted backup location</source>
+            <translation>Choisir le dépôt de sauvegarde monté</translation>
+        </message>
+        <message>
+            <source>Whole-computer backup started in background. You may close Harbor.</source>
+            <translation>Sauvegarde complète lancée en arrière-plan. Vous pouvez fermer Harbor.</translation>
+        </message>
+        <message>
+            <source>Whole-computer backup running in background</source>
+            <translation>Sauvegarde complète de l’ordinateur en cours en arrière-plan</translation>
+        </message>
+        <message>
+            <source>Recovery preparation refused</source>
+            <translation>Préparation de restauration refusée</translation>
+        </message>
+        <message>
+            <source>Could not prepare a safe Btrfs recovery: %1</source>
+            <translation>Impossible de préparer une restauration Btrfs sécurisée : %1</translation>
         </message>
 </context>
     <context>

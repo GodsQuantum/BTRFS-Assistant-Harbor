@@ -325,6 +325,25 @@ private slots:
         w.resize(1040, 900);
         w.show();
         QApplication::processEvents();
+        // A nontechnical user gets the two primary actions, not a crowded
+        // matrix of Snapper/engine controls.
+        auto *backup = w.findChild<QPushButton*>(
+            QStringLiteral("harborBackupWholeComputer"));
+        auto *restore = w.findChild<QPushButton*>(
+            QStringLiteral("harborRestoreWholeComputer"));
+        auto *advanced = w.findChild<QPushButton*>(
+            QStringLiteral("harborAdvancedOptions"));
+        QVERIFY(backup && restore && advanced);
+        QVERIFY(backup->isVisible());
+        QVERIFY(restore->isVisible());
+        QVERIFY(!advanced->isChecked());
+        QVERIFY(!button(w, "Send selected snapshot")->isVisible());
+        backup->setFocus(Qt::TabFocusReason);
+        QApplication::processEvents();
+        QVERIFY(backup->hasFocus());
+        advanced->setChecked(true);
+        QApplication::processEvents();
+        QVERIFY(button(w, "Send selected snapshot")->isVisible());
         QAccessibleInterface *window = QAccessible::queryAccessibleInterface(&w);
         QVERIFY(window);
         QVERIFY(window->isValid());
@@ -603,6 +622,14 @@ private slots:
         area.show();
         QApplication::processEvents();
         QVERIFY(area.widget()->isVisible());
+        // The simple view fits a normal laptop. Advanced controls only
+        // become scrollable after explicitly opening them.
+        auto *advanced = area.widget()->findChild<QPushButton*>(
+            QStringLiteral("harborAdvancedOptions"));
+        QVERIFY(advanced);
+        QVERIFY(!advanced->isChecked());
+        advanced->setChecked(true);
+        QApplication::processEvents();
         QVERIFY(area.verticalScrollBar()->maximum() > 0);
         const QString output = qEnvironmentVariable("HARBOR_GUI_QA_SHOTS");
         if (!output.isEmpty()) {

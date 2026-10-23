@@ -11,7 +11,9 @@ class TraySessionContract(unittest.TestCase):
         self.assertIn("geteuid() == 0", tray)
         self.assertIn("QLockFile lock(", tray)
         self.assertIn("Quit tray and stop backups", tray)
-        self.assertIn("No active manual backup", tray)
+        self.assertIn("No active backup", tray)
+        self.assertIn("HarborProgress::machine()", tray)
+        self.assertIn("HarborProgress::machineOverview", tray)
     def test_tray_has_fixed_polkit_stop_only(self):
         policy = (ROOT / "src/org.btrfs-assistant-harbor.pkexec.policy").read_text()
         self.assertIn("/usr/bin/btrfs-assistant-harbor-tray-stop", policy)

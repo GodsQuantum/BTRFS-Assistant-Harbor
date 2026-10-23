@@ -524,6 +524,7 @@ def create_subcommand_parser() -> argparse.ArgumentParser:
     # Opt-in multi-subvolume set shares the v2 streaming/checkpoint engine.
     for set_action in (
         "set-start",
+        "set-backup",
         "set-resume",
         "set-status",
         "set-restore",
@@ -542,7 +543,7 @@ def create_subcommand_parser() -> argparse.ArgumentParser:
         set_parser.add_argument("--allow-local", action="store_true")
         set_parser.add_argument("--state-dir")
         set_parser.add_argument("--experimental", action="store_true")
-        if set_action == "set-start":
+        if set_action in ("set-start", "set-backup"):
             set_parser.add_argument("--max-incremental-depth", type=int, default=7)
             set_parser.add_argument("--profile-id", required=True)
             set_parser.add_argument(
