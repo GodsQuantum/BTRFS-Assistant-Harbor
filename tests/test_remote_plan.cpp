@@ -85,6 +85,13 @@ int main() {
   REQUIRE(machineSetPreviewArguments("/mnt/legacy", "invalid-id", "/mnt/staging").isEmpty());
   REQUIRE(machineSetPreviewArguments("/mnt/legacy", machineSetId, "/").isEmpty());
   REQUIRE(machineSetPreviewArguments("/mnt/legacy", machineSetId, "relative").isEmpty());
+  const auto readiness = machineSetActivationPlanArguments(
+      "/mnt/legacy", machineSetId, "/mnt/recovered");
+  REQUIRE(readiness.contains("set-cachyos-plan"));
+  REQUIRE(!readiness.contains("--confirm"));
+  REQUIRE(machineSetActivationPlanArguments("/", machineSetId, "/mnt/recovered").isEmpty());
+  REQUIRE(machineSetActivationPlanArguments("/mnt/legacy", machineSetId, "../unsafe").isEmpty());
+
 
   REQUIRE(casPrunePreviewArguments(casPath, "snap-root-123").contains("--name"));
   REQUIRE(!casPrunePreviewArguments(casPath).contains("--name"));

@@ -1,9 +1,12 @@
 """One-click retry is idempotent, machine-scoped, and cannot cross exports."""
 from __future__ import annotations
 import unittest
+import contextlib
+import io
+import json
 from datetime import datetime, timedelta, timezone
 from btrfs_backup_ng.cli.machine_set_v2 import (
-    _select_unfinished_machine_backup, _machine_capture_stale,
+    _select_unfinished_machine_backup, _machine_capture_stale, _result,
 )
 
 PROFILE = "118e0b70-dced-4a95-9179-8b45efbd3f51"
@@ -62,6 +65,31 @@ class BackupButtonTest(unittest.TestCase):
     def test_old_legacy_without_capture_marker_is_not_silently_abandoned(self):
         now = datetime.now(timezone.utc)
         self.assertFalse(_machine_capture_stale(self.item(), now))
+
+    def test_success_report_includes_capture_identity_and_timestamp(self):
+        item = {
+            "archive": "machine20261023-dummy-000",
+            "original_mount": "/home",
+            "status": "completed",
+            "snapshot_uuid": OTHER,
+            "snapshot_created_utc": "2026-10-23T06:23:12+00:00",
+        }
+        data = {
+            "set_id": SET_ID, "status": "completed_btrfs_only",
+            "coverage": "btrfs-only", "members": [item], "boot_members": [],
+            "capture_started_utc": "2026-10-23T06:23:10+00:00",
+            "capture_completed_utc": "2026-10-23T06:23:13+00:00",
+        }
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            self.assertEqual(_result(data), 0)
+        result = json.loads(stream.getvalue())
+        self.assertEqual(result["capture_completed_utc"],
+                         data["capture_completed_utc"])
+        self.assertEqual(result["members"][0]["snapshot_uuid"], OTHER)
+        self.assertEqual(result["members"][0]["snapshot_created_utc"],
+                         item["snapshot_created_utc"])
+        self.assertFalse(result["bootable"])
 
     def test_no_pending_when_empty(self):
         self.assertIsNone(

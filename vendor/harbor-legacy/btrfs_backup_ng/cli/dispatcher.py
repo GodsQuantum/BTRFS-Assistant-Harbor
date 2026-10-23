@@ -531,6 +531,7 @@ def create_subcommand_parser() -> argparse.ArgumentParser:
         "set-rear-copy",
         "set-rear-recover",
         "set-rescue-iso",
+        "set-cachyos-plan",
         "set-list",
         "set-retention-plan",
         "set-retention-apply",
@@ -579,8 +580,9 @@ def create_subcommand_parser() -> argparse.ArgumentParser:
             set_parser.add_argument("--confirm", action="store_true")
         if set_action == "set-retention-resume":
             set_parser.add_argument("--confirm", action="store_true")
-        if set_action in ("set-restore", "set-rear-copy"):
+        if set_action in ("set-restore", "set-rear-copy", "set-cachyos-plan"):
             set_parser.add_argument("--staging", required=True)
+        if set_action in ("set-restore", "set-rear-copy"):
             set_parser.add_argument("--confirm", action="store_true")
         if set_action in ("set-rear-recover", "set-rescue-iso"):
             set_parser.add_argument("--confirm", action="store_true")

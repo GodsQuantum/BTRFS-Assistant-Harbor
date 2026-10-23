@@ -277,6 +277,17 @@ QStringList machineSetListArguments(const QString &target) {
     return {QStringLiteral("raw"), QStringLiteral("checkpoint-v2"),
             QStringLiteral("set-list"), QStringLiteral("--target"), target};
 }
+QStringList machineSetActivationPlanArguments(const QString &target,
+                                               const QString &setId,
+                                               const QString &staging) {
+    const QUuid uuid(setId);
+    if (!safePath(target) || !safePath(staging) ||
+        uuid.isNull() || uuid.toString(QUuid::WithoutBraces) != setId) return {};
+    return {QStringLiteral("raw"), QStringLiteral("checkpoint-v2"),
+            QStringLiteral("set-cachyos-plan"), QStringLiteral("--target"), target,
+            QStringLiteral("--set-id"), setId, QStringLiteral("--staging"), staging,
+            QStringLiteral("--experimental")}; // no --confirm in activation preflight
+}
 QStringList machineSetPreviewArguments(const QString &target, const QString &setId, const QString &staging) {
     const QUuid uuid(setId);
     if (!safePath(target) || !safePath(staging) ||

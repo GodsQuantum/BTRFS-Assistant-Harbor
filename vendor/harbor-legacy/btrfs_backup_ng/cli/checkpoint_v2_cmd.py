@@ -836,6 +836,7 @@ def _execute(args: argparse.Namespace) -> int:
         "set-rear-copy",
         "set-rear-recover",
         "set-rescue-iso",
+        "set-cachyos-plan",
         "set-list",
         "set-retention-plan",
         "set-retention-apply",

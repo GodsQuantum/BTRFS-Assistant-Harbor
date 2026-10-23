@@ -1681,6 +1681,7 @@ def _execute_machine_set_unlocked(args: argparse.Namespace) -> int:
         if action in (
             "set-status",
             "set-restore",
+            "set-cachyos-plan",
             "set-rear-recover",
             "set-rear-copy",
         ):
@@ -1751,6 +1752,7 @@ def execute_machine_set(args: argparse.Namespace) -> int:
         "set-status",
         "set-list",
         "set-restore",
+        "set-cachyos-plan",
         "set-rear-copy",
         "set-rear-recover",
         "set-retention-plan",
@@ -1786,6 +1788,11 @@ def _read_only_machine_action(root: Path, data: dict, args: argparse.Namespace) 
         return _result(data)
     if action == "set-restore":
         return _restore(root, data, args)
+    if action == "set-cachyos-plan":
+        from ..core.cachyos_activation_probe import probe_installed_cachyos
+        plan = probe_installed_cachyos(data, Path(args.staging))
+        print(json.dumps(plan, sort_keys=True))
+        return 0
     if action == "set-rear-recover":
         return _rear_recover(root, data, args)
     if action == "set-rear-copy":
@@ -1906,12 +1913,16 @@ def _result(data: dict) -> int:
                 "set_id": data["set_id"],
                 "status": data["status"],
                 "coverage": data["coverage"],
+                "capture_started_utc": data.get("capture_started_utc"),
+                "capture_completed_utc": data.get("capture_completed_utc"),
                 "bootable": False,
                 "members": [
                     {
                         "archive": m["archive"],
                         "mount": m["original_mount"],
                         "status": m["status"],
+                        "snapshot_uuid": m.get("snapshot_uuid"),
+                        "snapshot_created_utc": m.get("snapshot_created_utc"),
                     }
                     for m in data["members"]
                 ],
