@@ -77,6 +77,7 @@ private:
     QString m_machinePreviewId;
     QString m_computerRecoveryId;
     QString m_computerRecoveryName;
+    QString m_computerRecoverySourceMachine;
     QString m_computerRecoveryPolicy;
     QString m_computerRecoveryStaging;
     QString m_computerRecoveryRepository;
