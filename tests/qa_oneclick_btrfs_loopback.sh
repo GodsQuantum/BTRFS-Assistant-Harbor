@@ -18,7 +18,9 @@ mkdir "$work/mount"
 mount -o loop -t btrfs "$work/fixture.img" "$work/mount"
 mounted=1
 btrfs subvolume create "$work/mount/source" >/dev/null
+btrfs subvolume create "$work/mount/home" >/dev/null
 printf 'first-machine-backup\n' > "$work/mount/source/qa.txt"
+printf 'first-home-backup\n' > "$work/mount/home/home.txt"
 mkdir "$work/mount/repository"
 export PYTHONPATH="$PWD/vendor/harbor-legacy"
 repo="$work/mount/repository"
@@ -26,7 +28,8 @@ profile="118e0b70-dced-4a95-9179-8b45efbd3f51"
 backup() {
   python3 -m btrfs_backup_ng raw checkpoint-v2 set-backup \
     --target "$repo" --profile-id "$profile" \
-    --source "$work/mount/source" --snapshot-provider harbor \
+    --source "$work/mount/source" --source "$work/mount/home" \
+    --snapshot-provider harbor \
     --experimental --allow-local
 }
 backup > "$work/first.json"
@@ -35,7 +38,10 @@ import json,sys
 messages=[json.loads(line) for line in open(sys.argv[1]) if line.strip().startswith("{")]
 o=next(row for row in reversed(messages) if row.get("status","").startswith("completed_"))
 assert o["status"] == "completed_btrfs_only", o
-assert len(o["members"]) == 1, o
+assert len(o["members"]) == 2, o
+assert o["capture_completed_utc"],o
+assert all(row.get("snapshot_created_utc") and row.get("snapshot_uuid")
+           for row in o["members"]),o
 PY_ASSERT_FIRST
 python3 -m btrfs_backup_ng raw checkpoint-v2 set-list \
   --target "$repo" > "$work/one.json"
@@ -47,6 +53,7 @@ assert rows[0]["machine_name"]==socket.gethostname(),rows
 assert rows[0]["bootable"] is False,rows
 PY_ASSERT_CATALOG
 printf 'second-machine-backup\n' > "$work/mount/source/qa.txt"
+printf 'second-home-backup\n' > "$work/mount/home/home.txt"
 backup > "$work/second.json"
 python3 -m btrfs_backup_ng raw checkpoint-v2 set-list \
   --target "$repo" > "$work/two.json"
@@ -69,7 +76,7 @@ python3 - "$work/preview.json" <<'PY_ASSERT_PREVIEW'
 import json,sys
 data=json.load(open(sys.argv[1]))
 assert data["dry_run"] is True and data["bootable"] is False,data
-assert len(data["plan"])==1,data
+assert len(data["plan"])==2,data
 PY_ASSERT_PREVIEW
 python3 -m btrfs_backup_ng raw checkpoint-v2 set-restore \
   --target "$repo" --set-id "$setid" \
@@ -81,5 +88,6 @@ obj=json.load(open(sys.argv[1]))
 assert obj["restored"] is True and obj["bootable"] is False,obj
 base=pathlib.Path(sys.argv[2])
 assert any(x.read_bytes()==b"second-machine-backup\n" for x in base.rglob("qa.txt"))
+assert any(x.read_bytes()==b"second-home-backup\n" for x in base.rglob("home.txt"))
 PY_ASSERT_RESTORE
 echo PASS_ONECLICK_REAL_BTRFS_TWO_DATED_SETS_AND_VERIFIED_RESTORE

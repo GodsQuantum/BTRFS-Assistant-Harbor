@@ -1,7 +1,10 @@
 """One-click retry is idempotent, machine-scoped, and cannot cross exports."""
 from __future__ import annotations
 import unittest
-from btrfs_backup_ng.cli.machine_set_v2 import _select_unfinished_machine_backup
+from datetime import datetime, timedelta, timezone
+from btrfs_backup_ng.cli.machine_set_v2 import (
+    _select_unfinished_machine_backup, _machine_capture_stale,
+)
 
 PROFILE = "118e0b70-dced-4a95-9179-8b45efbd3f51"
 SET_ID = "b5d970db-9664-4be8-a0fb-bb1e93c60ec3"
@@ -41,6 +44,24 @@ class BackupButtonTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "multiple unfinished"):
             _select_unfinished_machine_backup(
                 [self.item(), alt], PROFILE, "Pegasus", MOUNT)
+
+    def test_old_partial_capture_must_not_mix_different_dates(self):
+        now = datetime.now(timezone.utc)
+        old = self.item()
+        old["capture_started_utc"] = (now - timedelta(minutes=40)).isoformat()
+        self.assertTrue(_machine_capture_stale(old, now))
+        old["capture_completed_utc"] = (now - timedelta(minutes=39)).isoformat()
+        self.assertFalse(_machine_capture_stale(old, now))
+
+    def test_recent_interrupted_capture_can_resume_coherently(self):
+        now = datetime.now(timezone.utc)
+        row = self.item()
+        row["capture_started_utc"] = (now - timedelta(seconds=35)).isoformat()
+        self.assertFalse(_machine_capture_stale(row, now))
+
+    def test_old_legacy_without_capture_marker_is_not_silently_abandoned(self):
+        now = datetime.now(timezone.utc)
+        self.assertFalse(_machine_capture_stale(self.item(), now))
 
     def test_no_pending_when_empty(self):
         self.assertIsNone(
