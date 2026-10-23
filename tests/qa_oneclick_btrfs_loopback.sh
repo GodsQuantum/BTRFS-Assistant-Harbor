@@ -21,6 +21,13 @@ btrfs subvolume create "$work/mount/source" >/dev/null
 btrfs subvolume create "$work/mount/home" >/dev/null
 printf 'first-machine-backup\n' > "$work/mount/source/qa.txt"
 printf 'first-home-backup\n' > "$work/mount/home/home.txt"
+# Realistic minimal captured /etc, but NO active CI host configuration.
+mkdir -p "$work/mount/source/etc/default"
+printf 'ID=cachyos\n' > "$work/mount/source/etc/os-release"
+printf 'Pegasus\n' > "$work/mount/source/etc/hostname"
+printf 'ffffffffffffffffffffffffffffffff\n' > "$work/mount/source/etc/machine-id"
+printf 'UUID=11111111-1111-4111-8111-111111111111 / btrfs defaults,subvol=/@ 0 0\n' > "$work/mount/source/etc/fstab"
+printf 'ESP_PATH="/boot"\nKERNEL_CMDLINE[default]+="quiet rw rootflags=subvol=/@ rd.luks.uuid=44444444-4444-4444-8444-444444444444 root=/dev/mapper/luks-44444444-4444-4444-8444-444444444444"\n' > "$work/mount/source/etc/default/limine"
 # Store sealed archives on an INDEPENDENT filesystem, as in a real
 # workstation -> NAS configuration. Btrfs synthetic per-subvolume st_dev
 # differs from mountinfo in some kernels for directories inside nested
@@ -130,6 +137,39 @@ assert (Path(out["/home"]) / "home.txt").read_bytes() == b"second-home-backup\n"
 assert (top / "source/qa.txt").read_bytes() == b"second-machine-backup\n"
 assert (top / "home/home.txt").read_bytes() == b"second-home-backup\n"
 assert not (top / "@").exists()
+# Clone identity now belongs to the NEW target installation. Never copy
+# old hostname, encryption identity, or machine-id from Pegasus.
+from btrfs_backup_ng.core.cachyos_inactive_config import configure_inactive_root
+
+new_uuid = "33333333-3333-4333-8333-333333333333"
+fresh_command = (
+    "quiet rw rootflags=subvol=/@harbor-" + set_uuid[:8] + "-root "
+    + "rd.luks.uuid=" + new_uuid
+    + " root=/dev/mapper/luks-" + new_uuid
+)
+config = ActivationPlan(
+    set_id=set_uuid, source_hostname="Pegasus", target_hostname="NewPegasus",
+    fresh_machine_id="0" * 32, mounts=tuple(mounts.items()),
+    fstab=("UUID=22222222-2222-4222-8222-222222222222 / btrfs "
+           "defaults,subvol=/@harbor-" + set_uuid[:8] + "-root 0 0\n"),
+    limine_cmdline=fresh_command, bootloader="limine",
+)
+report = configure_inactive_root(
+    config, Path(out["/"]), fresh_crypttab="",
+    fresh_limine_config=(
+        "ESP_PATH=\"/boot\"\n"
+        "KERNEL_CMDLINE[default]+=\"quiet rw rootflags=subvol=/@ "
+        + "rd.luks.uuid=" + new_uuid + "\"\n"
+    ),
+)
+assert report["bootable_certified"] is False
+assert report["bootloader_invoked"] is False
+assert (Path(out["/"]) / "etc/hostname").read_text() == "NewPegasus\n"
+assert (Path(out["/"]) / "etc/machine-id").read_text() == "0"*32 + "\n"
+assert new_uuid in (Path(out["/"]) / "etc/default/limine").read_text()
+assert (top / "source/etc/hostname").read_text() == "Pegasus\n"
+assert (top / "source/etc/machine-id").read_text() == "f"*32 + "\n"
+print("PASS_REAL_BTRFS_INACTIVE_CONFIG_AND_FRESH_IDENTITY")
 print("PASS_REAL_BTRFS_INACTIVE_ALTERNATE_ROOT_PREPARED")
 PY_INACTIVE
 echo PASS_ONECLICK_REAL_BTRFS_TWO_DATED_SETS_AND_VERIFIED_RESTORE
