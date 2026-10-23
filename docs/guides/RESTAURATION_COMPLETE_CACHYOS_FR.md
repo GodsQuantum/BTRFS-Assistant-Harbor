@@ -168,3 +168,23 @@ de production non modifiees. La preuve attendue est un ensemble de statut
 completed_btrfs_and_boot_files avec archive VFAT complete, verification
 d'integrite et comparaison octet par octet des noyaux/initramfs/limine.conf
 recus dans le staging. Les partitions de Pegasus ne sont pas utilisees.
+
+## Etape de laboratoire de boot UEFI reel — experimentale, NON certifiee
+
+Le test qa_cachyos_uefi_boot_from_iso.sh (GitHub Actions UNIQUEMENT)
+utilise le systeme de fichiers du squashfs CachyOS officiel avec un disque
+GPT virtuel temporaire, ESP 4 Gio FAT32 et racine LUKS2/Btrfs. Il tente de
+construire le noyau/initramfs de cette vraie distribution depuis son arbre
+/usr/lib/modules, d'installer le Limine officiel epingle, de conserver une
+racine Btrfs originelle @ et de booter un clone @harbor-ID-root.
+
+La preuve exigible est la chaine serielle exacte
+HARBOR_CACHYOS_RESTORED_UEFI_LUKS2_BOOT_OK provenant d'un service systemd
+dans la RACINE RESTAUREE apres ouverture LUKS2 et boot sans ISO. Le lancement
+de QEMU, le menu EFI ou la saisie de mot de passe ne suffisent pas.
+Ce workflow est un banc de labo et ne peut etre declare certifie avant PASS.
+Il n'utilise ni les identifiants de chiffrement, ni les disques de Pegasus.
+
+IMPORTANT : meme si ce premier boot fonctionne, il reste a coupler ce test
+avec les vraies archives machine-set Btrfs + EFI et a verifier une nouvelle
+installation via l'installateur CachyOS plutot qu'une copie du rootfs live.
