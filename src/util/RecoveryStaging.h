@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <QStringList>
+#include <QUuid>
 #include <sys/stat.h>
 #include <sys/statfs.h>
 #include <unistd.h>
@@ -64,24 +65,36 @@ inline bool prepare(const QString &setId, QString *staging, QString *error) {
     struct statfs fs {};
     if (fstatfs(fd, &fs) != 0 || fs.f_type != BTRFS_SUPER_MAGIC)
         return fail(QStringLiteral("New CachyOS installation must use Btrfs"));
-    // Refuse overwriting any prior staged recovery. A failed attempt needs
-    // explicit cleanup or an independent new backup set.
+    // A failed receive must not force a normal user to delete root-owned
+    // staging files from a terminal. Create a distinct, empty attempt for
+    // every click, preserving old incomplete attempts for later diagnosis.
+    // Bound retained attempts to avoid silently consuming the entire disk.
     int reader = dup(fd);
-    if (reader < 0) return fail(QStringLiteral("Cannot read staging directory"));
+    if (reader < 0) return fail(QStringLiteral("Cannot inspect staging directory"));
     DIR *dir = fdopendir(reader);
     if (!dir) { close(reader); return fail(QStringLiteral("Cannot inspect staging")); }
-    bool empty = true;
+    int attempts = 0;
     while (auto *entry = readdir(dir)) {
-        if (std::strcmp(entry->d_name, ".") != 0 &&
-            std::strcmp(entry->d_name, "..") != 0) {
-            empty = false;
-            break;
-        }
+        if (std::strncmp(entry->d_name, "attempt-", 8) == 0) ++attempts;
     }
     closedir(dir);
-    if (!empty) return fail(QStringLiteral("Recovery directory is not empty"));
+    if (attempts >= 16) return fail(QStringLiteral(
+        "Too many retained recovery attempts: deliberate cleanup required"));
+    const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const auto name = (QStringLiteral("attempt-") + id).toUtf8();
+    if (mkdirat(fd, name.constData(), 0700) != 0)
+        return fail(QStringLiteral("Cannot allocate unique recovery attempt"));
+    const int attempt = openat(fd, name.constData(),
+                               O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (attempt < 0) return fail(QStringLiteral("Cannot inspect allocated recovery attempt"));
+    struct stat state {};
+    const bool valid = fstat(attempt, &state) == 0 && S_ISDIR(state.st_mode) &&
+                       state.st_uid == 0 && (state.st_mode & 0077) == 0;
+    close(attempt);
+    if (!valid) return fail(QStringLiteral("Recovery attempt has unsafe permissions"));
     close(fd);
-    *staging = QStringLiteral("/var/lib/btrfs-assistant-harbor/recovery/set-") + setId;
+    *staging = QStringLiteral("/var/lib/btrfs-assistant-harbor/recovery/set-")
+               + setId + QLatin1Char('/') + QString::fromUtf8(name);
     return true;
 }
 }
