@@ -7,6 +7,8 @@ on:
     paths:
       - .github/workflows/cachyos-uefi-recovery-lab.yml
       - tests/qa_cachyos_iso_inventory.py
+      - tests/qa_cachyos_uefi_boot_from_iso.sh
+      - tests/qa_cachyos_uefi_guest_expect.py
   workflow_dispatch:
 
 permissions:
@@ -16,7 +18,7 @@ jobs:
   certified-iso-intake:
     name: Verify real CachyOS install media and inspect boot assets
     runs-on: ubuntu-24.04
-    timeout-minutes: 38
+    timeout-minutes: 70
     steps:
       - name: Check out candidate source
         uses: actions/checkout@v4
@@ -59,11 +61,20 @@ jobs:
           cat /tmp/harbor-uefi-lab/iso-inventory.json
           echo PASS_REAL_CACHYOS_INSTALL_MEDIA_AND_UEFI_ASSET_INVENTORY
 
+      - name: Boot restored CachyOS root in real isolated UEFI QEMU / LUKS2 / Limine
+        timeout-minutes: 35
+        run: |
+          sudo apt-get install -y --no-install-recommends gdisk python3-pexpect
+          sudo env GITHUB_ACTIONS=true bash tests/qa_cachyos_uefi_boot_from_iso.sh             /tmp/harbor-uefi-lab/cachyos.iso
+
       - name: Preserve machine-readable ISO inventory as certification artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cachyos-uefi-260809-inventory
-          path: /tmp/harbor-uefi-lab/iso-inventory.json
+          path: |
+            /tmp/harbor-uefi-lab/iso-inventory.json
+            /tmp/harbor-uefi-lab/guest-serial.log
+            /tmp/harbor-uefi-lab/mkinitcpio.log
           if-no-files-found: warn
           retention-days: 3
