@@ -113,6 +113,49 @@ class FreshInstallActivationPlanTest(unittest.TestCase):
         self.assertIn(f"UUID={NEW_FS} /srv btrfs defaults,subvol=/@harbor-55555555-srv 0 0",
                       result.fstab)
 
+    def test_nested_real_subvolumes_need_not_appear_in_source_fstab(self):
+        # Original CachyOS may have nested Btrfs subvolumes with no fstab
+        # record. Their verified machine-set snapshots are still required.
+        self.catalog["members"] += [
+            {"original_mount": "/var/lib/machines", "status": "completed"},
+            {"original_mount": "/var/lib/portables", "status": "completed"},
+        ]
+        result = self.plan()
+        self.assertIn(
+            f"UUID={NEW_FS} /var/lib/machines btrfs defaults,subvol=/@harbor-55555555-var-lib-machines 0 0",
+            result.fstab,
+        )
+        self.assertIn(
+            f"UUID={NEW_FS} /var/lib/portables btrfs defaults,subvol=/@harbor-55555555-var-lib-portables 0 0",
+            result.fstab,
+        )
+
+    def test_real_cachyos_fstab_uses_fresh_luks_mapper(self):
+        fresh_device = f"/dev/mapper/luks-{NEW_LUKS}"
+        self.args["fresh_fstab"] = NEW_FSTAB.replace("UUID=" + NEW_FS, fresh_device)
+        self.catalog["members"].append(
+            {"original_mount": "/var/lib/machines", "status": "completed"}
+        )
+        result = self.plan()
+        self.assertIn(
+            fresh_device + " /var/lib/machines btrfs defaults,subvol=/@harbor-55555555-var-lib-machines 0 0",
+            result.fstab,
+        )
+        self.assertNotIn(OLD_LUKS, result.fstab)
+
+    def test_invalid_fresh_luks_id_fails_closed(self):
+        self.args["fresh_limine_cmdline"] = FRESH_CMDLINE.replace(
+            "rd.luks.uuid=" + NEW_LUKS, "rd.luks.uuid=broken"
+        )
+        with self.assertRaisesRegex(ValueError, "fresh Limine LUKS UUID"):
+            self.plan()
+
+    def test_source_explicit_non_btrfs_mount_is_refused(self):
+        self.catalog["members"].append({"original_mount": "/srv", "status": "completed"})
+        self.args["source_fstab"] += "UUID=eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee /srv ext4 defaults 0 2\n"
+        with self.assertRaisesRegex(ValueError, "contradicts"):
+            self.plan()
+
     def test_non_cachyos_source_refused(self):
         self.args["source_os_release"] = "ID=fedora\n"
         with self.assertRaisesRegex(ValueError, "CachyOS"):

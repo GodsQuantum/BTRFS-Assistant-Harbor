@@ -145,17 +145,40 @@ def plan_cachyos_activation(
     old = _fstab(source_fstab)
     new = _fstab(fresh_fstab)
     for mount in mounts:
-        if mount not in old or old[mount][1] != "btrfs":
-            raise ValueError("source Btrfs subvolume absent from original fstab: " + mount)
+        # Nested Btrfs subvolumes need not have an fstab entry: for example
+        # /var/lib/machines and /var/lib/portables can be discovered as real
+        # subvolume roots inside @ and archived independently. The verified
+        # catalog is authoritative for those nested sources. Reject an
+        # explicit source fstab that contradicts their Btrfs identity.
+        if mount not in old:
+            if mount in ("/", "/home"):
+                raise ValueError("source Btrfs system mount absent from original fstab: " + mount)
+            continue
+        if old[mount][1] != "btrfs":
+            raise ValueError("source Btrfs subvolume contradicts original fstab: " + mount)
     if "/boot" not in old or old["/boot"][1] != "vfat":
         raise ValueError("source has no EFI fstab entry")
     if "/" not in new or new["/"][1] != "btrfs":
         raise ValueError("fresh installation root must be Btrfs")
     if "/boot" not in new or new["/boot"][1] != "vfat":
         raise ValueError("fresh installation must mount its own VFAT EFI at /boot")
-    target_root_uuid = new["/"][0]
-    if not re.fullmatch(r"UUID=[0-9a-f-]{36}", target_root_uuid):
-        raise ValueError("fresh root must use an explicit filesystem UUID")
+    target_root_device = new["/"][0]
+    luks_ids = [
+        field.split("=", 1)[1]
+        for field in fresh_limine_cmdline.split()
+        if field.startswith("rd.luks.uuid=")
+    ]
+    if len(luks_ids) != 1 or not _UUID.fullmatch(luks_ids[0]):
+        raise ValueError("fresh Limine LUKS UUID missing or ambiguous")
+    luks_id = luks_ids[0]
+    # CachyOS supports both a filesystem UUID and a LUKS mapper in fstab.
+    # Retain the freshly installed identity verbatim; never substitute an
+    # old computer's mapper or UUID.
+    if not (
+        re.fullmatch(r"UUID=[0-9a-f-]{36}", target_root_device)
+        or target_root_device == "/dev/mapper/luks-" + luks_id
+    ):
+        raise ValueError("fresh root has no verified new filesystem identity")
     for mount in new:
         if (mount not in mounts and mount != "/boot" and
                 new[mount][1] not in ("swap", "tmpfs", "proc", "sysfs", "devpts") and
@@ -184,7 +207,7 @@ def plan_cachyos_activation(
             preserved.append(raw)
     for mount in sorted(set(mounts) - set(new), key=lambda v: (v.count("/"), v)):
         preserved.append(
-            f"{target_root_uuid} {mount} btrfs defaults,subvol={remap[mount]} 0 0")
+            f"{target_root_device} {mount} btrfs defaults,subvol={remap[mount]} 0 0")
     cmdline = _rewrite_rootflags(fresh_limine_cmdline, remap["/"])
     return ActivationPlan(
         set_id=set_id,
