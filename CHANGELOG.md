@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-5 — 2026-10-23
+
+- Correct misleading ETA status: distinguish archive verification and unavailable ETA; never claim a paused backup without a pause event.
+
 ## 0.1.5-4 — 2026-10-23 (development candidate)
 
 - Validate Btrfs v2 checkpoint frames, full SHA-256 and concatenated zstd in a single read (avoids an expensive double read of large NFS archives).

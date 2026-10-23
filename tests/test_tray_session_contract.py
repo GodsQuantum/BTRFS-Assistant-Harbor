@@ -18,6 +18,10 @@ class TraySessionContract(unittest.TestCase):
         self.assertIn("harbor-machine-backup-*.service", tray)
         self.assertIn("machineRunning && !casRunning", tray)
         self.assertIn("details unavailable", tray)
+        progress=(ROOT/"src/util/HarborProgress.h").read_text()
+        self.assertNotIn("calcul / pause",progress)
+        self.assertIn("Vérification d’intégrité (durée inconnue)",progress)
+        self.assertIn("Temps restant indisponible (travail en cours)",progress)
     def test_tray_has_fixed_polkit_stop_only(self):
         policy = (ROOT / "src/org.btrfs-assistant-harbor.pkexec.policy").read_text()
         self.assertIn("/usr/bin/btrfs-assistant-harbor-tray-stop", policy)
