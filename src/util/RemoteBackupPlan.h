@@ -28,6 +28,10 @@ QStringList wholeMachineStartArguments(const QString &target, const QString &pro
   // native readonly Btrfs/EFI coverage audit
 QStringList machineSetListArguments(const QString &target);
 QStringList machineSetPreviewArguments(const QString &target, const QString &setId, const QString &staging);
+// Read-only validation of new-install LUKS/Limine compatibility.
+QStringList machineSetActivationPlanArguments(
+    const QString &target, const QString &setId, const QString &staging);
+
 QStringList casInitArguments(const QString &repo, bool allowLocal);
 QStringList casListArguments(const QString &repo);
 QStringList casPrunePreviewArguments(const QString &repo, const QString &archive = QString());

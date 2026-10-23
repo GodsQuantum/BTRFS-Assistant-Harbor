@@ -56,3 +56,19 @@ Aucune restauration destructive, réinstallation, modification de disque ou rebo
 - Activation amorçable et application effective du nom: encore BLOQUÉES
   avant certification LUKS2 et Limine en VM UEFI; PR draft non déployée.
 
+
+## Étape native : vérification CachyOS frais (23/10/2026)
+
+Après réception des volumes et de l'EFI, l'interface lance automatiquement
+checkpoint-v2 set-cachyos-plan en LECTURE SEULE. Le contrôleur compare la
+racine reçue avec le CachyOS frais (Btrfs, ESP vfat à /boot, Limine,
+fstab, UUID LUKS2 de la nouvelle installation, machine-id, noms et
+sous-volumes). Il prépare les futurs noms de sous-volumes sans copier
+le UUID LUKS, la phrase de passe ou le machine-id de l'ancienne machine.
+Il rejette une sauvegarde incomplète, un mauvais hôte, une symlink hors
+staging ou une nouvelle installation différente.
+
+bootable_certified reste FALSE, activation_performed reste FALSE : aucun
+changement du disque actif, de la configuration EFI, de la clé LUKS
+ni du démarrage. L'activation hors ligne et le reboot validé en VM
+CachyOS UEFI/LUKS2/Limine restent des critères BLOQUANTS.

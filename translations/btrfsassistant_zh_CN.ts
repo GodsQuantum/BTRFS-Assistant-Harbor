@@ -2319,6 +2319,34 @@ This cannot be undone. The plan will be checked again under repository lock.</so
             <source>Could not prepare a safe Btrfs recovery: %1</source>
             <translation>无法安全准备 Btrfs 恢复：%1</translation>
         </message>
+        <message>
+            <source>Fresh CachyOS recovery not ready</source>
+            <translation>新安装 CachyOS 尚不能恢复</translation>
+        </message>
+        <message>
+            <source>The backup files are safely staged, but this fresh installation does not pass the encrypted Btrfs/Limine recovery checks. No boot files or disk were changed.</source>
+            <translation>备份文件已安全暂存，但此新安装未通过加密 Btrfs/Limine 恢复检查。引导文件和磁盘均未修改。</translation>
+        </message>
+        <message>
+            <source>Invalid activation preflight report; no action permitted.</source>
+            <translation>激活预检报告无效；禁止任何操作。</translation>
+        </message>
+        <message>
+            <source>Verified staged recovery</source>
+            <translation>已验证暂存恢复</translation>
+        </message>
+        <message>
+            <source>Recovery prepared for %1: %2 verified Btrfs volumes, fresh encryption and Limine checked. No disk activation or reboot has occurred. Bootable restoration remains unavailable until offline LUKS2/Limine certification.</source>
+            <translation>已为 %1 准备恢复：验证了 %2 个 Btrfs 子卷，并检查了新安装的加密配置和 Limine。尚未激活磁盘，也未重启。离线 LUKS2/Limine 认证完成前不可进行可启动恢复。</translation>
+        </message>
+        <message>
+            <source>Recovery preparation incomplete</source>
+            <translation>恢复准备未完成</translation>
+        </message>
+        <message>
+            <source>The verified backup was received, but safe activation checks could not start.</source>
+            <translation>已收到验证后的备份，但无法启动安全激活检查。</translation>
+        </message>
 </context>
     <context>
         <name>HarborLanguage</name>

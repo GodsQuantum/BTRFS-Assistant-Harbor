@@ -914,7 +914,33 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
     }
     m_state->setText(ok ? tr("Operation finished: %1").arg(m_purpose)
                         : tr("Operation failed: %1 (exit %2)").arg(m_purpose).arg(code));
+    if (!ok && m_purpose == QLatin1String("fresh-cachyos-preflight")) {
+        QMessageBox::warning(this, tr("Fresh CachyOS recovery not ready"),
+            tr("The backup files are safely staged, but this fresh installation does not pass "
+               "the encrypted Btrfs/Limine recovery checks. No boot files or disk were changed."));
+        return;
+    }
     if (!ok) return;
+    if (m_purpose == QLatin1String("fresh-cachyos-preflight")) {
+        QJsonParseError parse{};
+        const auto doc = QJsonDocument::fromJson(m_stdout, &parse);
+        if (parse.error != QJsonParseError::NoError || !doc.isObject()) return;
+        const auto report = doc.object();
+        if (report.value(QStringLiteral("set_id")).toString() != m_computerRecoveryId ||
+            !report.value(QStringLiteral("dry_run")).toBool(false) ||
+            report.value(QStringLiteral("activation_performed")).toBool(true) ||
+            report.value(QStringLiteral("bootable_certified")).toBool(true)) {
+            appendOutput(tr("Invalid activation preflight report; no action permitted."));
+            return;
+        }
+        QMessageBox::information(this, tr("Verified staged recovery"),
+            tr("Recovery prepared for %1: %2 verified Btrfs volumes, fresh encryption and Limine checked. "
+               "No disk activation or reboot has occurred. Bootable restoration remains unavailable "
+               "until offline LUKS2/Limine certification.")
+               .arg(report.value(QStringLiteral("target_hostname")).toString())
+               .arg(report.value(QStringLiteral("volumes")).toInt()));
+        return;
+    }
     if (m_purpose == QLatin1String("whole-machine-catalog")) {
         if (m_requestRepo != m_target->text() || m_requestRevision != m_contextRevision)
             return;
@@ -1074,10 +1100,14 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
             appendOutput(QStringLiteral("Recovery received, but cannot commit selected identity."));
             return;
         }
-        QMessageBox::information(this, tr("Files safely recovered"),
-            tr("All backup volumes have been received into the staging directory. "
-               "The bootable machine activation phase still requires an offline recovery environment "
-               "and is not yet certified for LUKS/Limine."));
+        const auto next = HarborRemote::machineSetActivationPlanArguments(
+            m_computerRecoveryRepository, m_computerRecoveryId, m_computerRecoveryStaging);
+        if (!next.isEmpty()) {
+            launch(next, QStringLiteral("fresh-cachyos-preflight"));
+            return;
+        }
+        QMessageBox::warning(this, tr("Recovery preparation incomplete"),
+            tr("The verified backup was received, but safe activation checks could not start."));
         return;
     }
     if (m_purpose == QLatin1String("machine-inventory")) {

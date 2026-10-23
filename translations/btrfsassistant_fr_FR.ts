@@ -809,6 +809,34 @@ Restauration amorçable sur machine nue : NON CERTIFIÉE.
             <source>Could not prepare a safe Btrfs recovery: %1</source>
             <translation>Impossible de préparer une restauration Btrfs sécurisée : %1</translation>
         </message>
+        <message>
+            <source>Fresh CachyOS recovery not ready</source>
+            <translation>Restauration sur CachyOS neuf indisponible</translation>
+        </message>
+        <message>
+            <source>The backup files are safely staged, but this fresh installation does not pass the encrypted Btrfs/Limine recovery checks. No boot files or disk were changed.</source>
+            <translation>Les fichiers de sauvegarde sont récupérés en sécurité, mais cette nouvelle installation ne satisfait pas aux vérifications Btrfs chiffré/Limine. Aucun fichier de démarrage ni disque n’a été modifié.</translation>
+        </message>
+        <message>
+            <source>Invalid activation preflight report; no action permitted.</source>
+            <translation>Rapport de vérification invalide ; aucune opération autorisée.</translation>
+        </message>
+        <message>
+            <source>Verified staged recovery</source>
+            <translation>Récupération préparée et vérifiée</translation>
+        </message>
+        <message>
+            <source>Recovery prepared for %1: %2 verified Btrfs volumes, fresh encryption and Limine checked. No disk activation or reboot has occurred. Bootable restoration remains unavailable until offline LUKS2/Limine certification.</source>
+            <translation>Récupération préparée pour %1 : %2 volumes Btrfs vérifiés, chiffrement de la nouvelle installation et Limine contrôlés. Aucun disque n’a été activé et aucun redémarrage n’a eu lieu. La restauration amorçable reste indisponible avant la certification LUKS2/Limine hors ligne.</translation>
+        </message>
+        <message>
+            <source>Recovery preparation incomplete</source>
+            <translation>Préparation de la restauration incomplète</translation>
+        </message>
+        <message>
+            <source>The verified backup was received, but safe activation checks could not start.</source>
+            <translation>La sauvegarde vérifiée a été reçue, mais les contrôles d’activation sécurisés n’ont pas pu démarrer.</translation>
+        </message>
 </context>
     <context>
         <name>Btrfs</name>
