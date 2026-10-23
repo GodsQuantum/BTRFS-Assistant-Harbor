@@ -91,6 +91,20 @@ class InactiveConfigTest(unittest.TestCase):
                 NATIVE+'KERNEL_CMDLINE[linux-cachyos]="root=/dev/mapper/old"\n',
                 CMD)
 
+    def test_actual_exact_mountpoint_is_rejected(self):
+        with patch("btrfs_backup_ng.core.cachyos_inactive_config._exact_mountpoint",
+                   return_value=True):
+            with self.assertRaisesRegex(ValueError, "safe inactive"):
+                self.run_prep()
+        self.assertEqual((self.restored / "etc/hostname").read_text(), "Pegasus\\n".replace("\\n", "\n"))
+
+    def test_synthetic_btrfs_subvol_device_is_not_treated_as_mount(self):
+        # Linux Btrfs subvolumes can make Path.is_mount() return TRUE due
+        # to synthetic st_dev, even when mountinfo lists no mount.
+        with patch.object(Path, "is_mount", side_effect=AssertionError(
+                "Path.is_mount() MUST NOT be used to guard Btrfs subvolume roots")):
+            self.assertFalse(self.run_prep()["bootable_certified"])
+
     def test_untrusted_shell_interpolation_refused(self):
         with self.assertRaisesRegex(ValueError, "unsafe"):
             planned_limine_config(NATIVE, CMD+' $(rm -rf /)')
