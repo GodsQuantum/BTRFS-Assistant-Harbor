@@ -95,9 +95,9 @@ if ! chroot "$work/root" /usr/bin/mkinitcpio -k "$version" \
 fi
 test -s "$work/root/boot/initramfs-linux-cachyos.img"
 curl -fLsS --retry 3 --max-time 160 \
-  https://cdn77.cachyos.org/repo/x86_64/cachyos/limine-12.7.0-1-x86_64.pkg.tar.zst \
+  https://archive.archlinux.org/packages/l/limine/limine-12.8.0-1-x86_64.pkg.tar.zst \
   -o "$work/limine.pkg.tar.zst"
-echo "7868b5f26c4bbb3d71f1fd6ed62fcba209df13536f3adacb3ef253a1cf408452  $work/limine.pkg.tar.zst" |
+echo "337744a1abfc827fc17c02ec3c153eacf17ecc5714643e1767ae8000286105d1  $work/limine.pkg.tar.zst" |
   sha256sum -c -
 mkdir "$work/limine"
 bsdtar -xf "$work/limine.pkg.tar.zst" -C "$work/limine"
