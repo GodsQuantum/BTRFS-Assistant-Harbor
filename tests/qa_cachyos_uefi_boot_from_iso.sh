@@ -143,8 +143,23 @@ cryptsetup close "$mapper"
 mapper=""
 losetup -d "$loop"
 loop=""
-cp /usr/share/OVMF/OVMF_VARS.fd "$work/OVMF_VARS.fd"
+ovmf_code=""
+ovmf_vars=""
+for suffix in _4M ""; do
+  if test -s "/usr/share/OVMF/OVMF_CODE${suffix}.fd" \
+    && test -s "/usr/share/OVMF/OVMF_VARS${suffix}.fd"; then
+    ovmf_code="/usr/share/OVMF/OVMF_CODE${suffix}.fd"
+    ovmf_vars="/usr/share/OVMF/OVMF_VARS${suffix}.fd"
+    break
+  fi
+done
+test -n "$ovmf_code" && test -n "$ovmf_vars" || {
+  echo HARBOR_OVMF_MATCHED_FIRMWARE_PAIR_NOT_FOUND >&2
+  exit 75
+}
+echo "HARBOR_OVMF_PAIR=$ovmf_code $ovmf_vars"
+cp "$ovmf_vars" "$work/OVMF_VARS.fd"
 echo HARBOR_GENUINE_CACHYOS_VM_BOOT_ATTEMPT
 python3 tests/qa_cachyos_uefi_guest_expect.py "$work/disk.raw" \
-  "$work/OVMF_VARS.fd" "$work/serial.log"
+  "$work/OVMF_VARS.fd" "$work/serial.log" "$ovmf_code"
 echo PASS_ACTUAL_CACHYOS_RESTORED_UEFI_LUKS2_LIMINE_BOOT
