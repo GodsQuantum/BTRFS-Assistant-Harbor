@@ -249,6 +249,10 @@ jobs:
         run: |
           sudo env HARBOR_GUI_QA_SNAPPER_TEST="$GITHUB_WORKSPACE/build/snapper-native-qt/src/test-harbor-gui-user-smoke" \
             bash tests/qa_snapper_native_btrfs.sh
+      - name: Certify one-click machine backup and restore on disposable Btrfs
+        run: |
+          sudo apt-get install -y --no-install-recommends python3-rich python3-filelock zstd
+          sudo env GITHUB_ACTIONS=true bash tests/qa_oneclick_btrfs_loopback.sh
 
   cas-endurance:
     name: CAS multiclient 1000-cycle endurance and bounded memory
