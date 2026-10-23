@@ -51,7 +51,8 @@ class LimineBootMenuPreviewTest(unittest.TestCase):
     def test_additive_entries_preserve_current_default_and_luks(self):
         result=preview_recovery_menu(
             CONFIG,self.plan,
-            restored_module_versions={"7.3.0-3-cachyos","6.18.55-2-cachyos-lts"}
+            restored_module_versions={"7.3.0-3-cachyos","6.18.55-2-cachyos-lts"},
+            secure_boot_state="disabled"
         )
         self.assertEqual(result.selected_kernel_ids,
                          ("linux-cachyos","linux-cachyos-lts"))
@@ -63,17 +64,40 @@ class LimineBootMenuPreviewTest(unittest.TestCase):
         self.assertFalse(result.bootable_certified)
         self.assertTrue(result.existing_configuration_untouched)
 
+    def test_wiki_native_kernel_path_and_128_character_secure_boot_hash(self):
+        digest="abcdef0123456789"*8
+        config=CONFIG.replace("  path: boot():/firmware/7.3.0/vmlinuz",
+                              "  kernel_path: boot():/vmlinuz-linux-cachyos#"+digest)
+        result=preview_recovery_menu(
+            config,self.plan,restored_module_versions={"7.3.0-3-cachyos"}, secure_boot_state="disabled"
+        )
+        self.assertIn("kernel_path: boot():/vmlinuz-linux-cachyos#"+digest,
+                      result.menu_addition)
+        self.assertNotIn("path: boot():/firmware/7.3.0/vmlinuz",
+                         result.menu_addition)
+
+    def test_ambiguous_both_kernel_path_keys_refused(self):
+        config=CONFIG.replace(
+            "  path: boot():/firmware/7.3.0/vmlinuz",
+            "  path: boot():/firmware/7.3.0/vmlinuz\n"
+            "  kernel_path: boot():/vmlinuz-linux-cachyos",
+        )
+        with self.assertRaisesRegex(ValueError,"ambiguous"):
+            preview_recovery_menu(
+                config,self.plan,restored_module_versions={"7.3.0-3-cachyos"}, secure_boot_state="disabled"
+            )
+
     def test_missing_matching_modules_fails(self):
         with self.assertRaisesRegex(ValueError,"no native kernel"):
             preview_recovery_menu(
                 CONFIG,self.plan,
-                restored_module_versions={"5.1.0-unsupported"},
+                restored_module_versions={"5.1.0-unsupported"}, secure_boot_state="disabled",
             )
 
     def test_native_snapshot_entry_is_not_selected(self):
         result=preview_recovery_menu(
             CONFIG,self.plan,
-            restored_module_versions={"7.3.0-3-cachyos"},
+            restored_module_versions={"7.3.0-3-cachyos"}, secure_boot_state="disabled",
         )
         self.assertEqual(result.menu_addition.count("cmdline:"),1)
         self.assertIn("/firmware/7.3.0",result.menu_addition)
@@ -87,7 +111,7 @@ class LimineBootMenuPreviewTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"unsafe native Limine"):
             preview_recovery_menu(
                 config,self.plan,
-                restored_module_versions={"7.3.0-3-cachyos"},
+                restored_module_versions={"7.3.0-3-cachyos"}, secure_boot_state="disabled",
             )
 
     def test_old_encrypted_root_is_never_reused(self):
@@ -97,7 +121,7 @@ class LimineBootMenuPreviewTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"untrusted target"):
             preview_recovery_menu(
                 CONFIG,bad,
-                restored_module_versions={"7.3.0-3-cachyos"},
+                restored_module_versions={"7.3.0-3-cachyos"}, secure_boot_state="disabled",
             )
 
     def test_root_mapper_must_match_target_fresh_luks_uuid(self):
@@ -107,18 +131,28 @@ class LimineBootMenuPreviewTest(unittest.TestCase):
         ))
         with self.assertRaisesRegex(ValueError,"untrusted target"):
             preview_recovery_menu(
-                CONFIG,bad,restored_module_versions={"7.3.0-3-cachyos"},
+                CONFIG,bad,restored_module_versions={"7.3.0-3-cachyos"}, secure_boot_state="disabled",
             )
+
+    def test_secure_boot_requires_own_native_enrollment(self):
+        for state in ("enabled", "unknown"):
+            with self.subTest(state=state), self.assertRaisesRegex(
+                ValueError, "Secure Boot"):
+                preview_recovery_menu(
+                    CONFIG,self.plan,
+                    restored_module_versions={"7.3.0-3-cachyos"},
+                    secure_boot_state=state,
+                )
 
     def test_duplicate_generation_refused(self):
         added=preview_recovery_menu(
             CONFIG,self.plan,
-            restored_module_versions={"7.3.0-3-cachyos"}
+            restored_module_versions={"7.3.0-3-cachyos"}, secure_boot_state="disabled"
         ).menu_addition
         with self.assertRaisesRegex(ValueError,"already present"):
             preview_recovery_menu(
                 CONFIG+"\n"+added,self.plan,
-                restored_module_versions={"7.3.0-3-cachyos"},
+                restored_module_versions={"7.3.0-3-cachyos"}, secure_boot_state="disabled",
             )
 
 

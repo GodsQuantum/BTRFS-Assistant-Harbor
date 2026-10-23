@@ -255,7 +255,7 @@ jobs:
           sudo env GITHUB_ACTIONS=true bash tests/qa_oneclick_btrfs_loopback.sh
       - name: Real encrypted LUKS2 Btrfs inactive restore with unchanged header
         run: |
-          sudo apt-get install -y --no-install-recommends cryptsetup
+          sudo apt-get install -y --no-install-recommends cryptsetup dosfstools
           sudo env GITHUB_ACTIONS=true bash tests/qa_cachyos_luks2_loopback.sh
 
   cas-endurance:
