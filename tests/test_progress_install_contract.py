@@ -16,6 +16,15 @@ class ProgressInstallContract(unittest.TestCase):
         self.assertIn("post_install()",hook)
         self.assertIn("post_upgrade()",hook)
         self.assertNotIn("systemctl enable --now harbor-machine-backup",hook)
+    def test_debian_package_runs_readonly_observer_only(self):
+        source=(ROOT/"packaging/debian/build_preview.py").read_text()
+        hook=(ROOT/"packaging/debian/postinst").read_text()
+        remove=(ROOT/"packaging/debian/postrm").read_text()
+        self.assertIn('("postinst", "postrm")',source)
+        self.assertIn("systemctl enable --now btrfs-assistant-harbor-progress.service",hook)
+        self.assertIn("systemctl disable --now btrfs-assistant-harbor-progress.service",remove)
+        self.assertNotIn("systemctl stop harbor-machine-backup",remove)
+        self.assertNotIn("systemctl start harbor-machine-backup",hook)
     def test_fedora_enable_progress(self):
         spec=(ROOT/"packaging/fedora/btrfs-assistant-harbor.spec").read_text()
         self.assertIn("systemctl enable --now btrfs-assistant-harbor-progress.service",spec)
