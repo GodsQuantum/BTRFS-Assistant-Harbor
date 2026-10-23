@@ -12,6 +12,8 @@ import sys
 import time
 
 import pexpect
+from pexpect.popen_spawn import PopenSpawn
+import subprocess
 
 PASSMARK = "HARBOR_CACHYOS_RESTORED_UEFI_LUKS2_BOOT_OK"
 PASS_PHRASE = "harbor-ci-only-test-passphrase"
@@ -44,7 +46,10 @@ def main() -> None:
     ]
     deadline = time.monotonic() + 900
     with log.open("wb") as stream:
-        child = pexpect.spawn(cmd[0], cmd[1:], encoding=None, timeout=90)
+        # GitHub-hosted runners may have zero allocatable pseudo-terminals.
+        # QEMU -serial stdio accepts ordinary pipes; PopenSpawn uses
+        # subprocess PIPEs and keeps the exact same PASSMARK/FAIL semantics.
+        child = PopenSpawn(cmd, encoding=None, timeout=90)
         child.logfile = stream
         try:
             unlocked = 0
@@ -72,7 +77,12 @@ def main() -> None:
             raise AssertionError("QEMU timeout without restored-root proof")
         finally:
             if child.isalive():
-                child.terminate(force=True)
+                child.proc.terminate()
+                try:
+                    child.proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    child.proc.kill()
+                    child.proc.wait(timeout=10)
 
 
 if __name__ == "__main__":
