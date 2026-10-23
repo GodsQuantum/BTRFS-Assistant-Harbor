@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
 import uuid
 
 from .cachyos_activation_plan import ActivationPlan
@@ -74,6 +75,23 @@ def _atomic_replace_existing(etc_fd: int, leaf: str, contents: bytes) -> None:
         raise
 
 
+def _exact_mountpoint(path: Path) -> bool:
+    # pathlib.Path.is_mount() is INCORRECT on some Btrfs subvolume roots:
+    # they carry a synthetic st_dev distinct from their parent, even without
+    # a separate mount operation. findmnt --mountpoint reads mountinfo and
+    # checks the requested exact mount, as required for offline recovery.
+    result = subprocess.run(
+        ["findmnt", "-rn", "-o", "TARGET", "--mountpoint", str(path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        check=False, timeout=10,
+    )
+    if result.returncode == 1 and not result.stdout.strip():
+        return False
+    if result.returncode != 0:
+        raise ValueError("cannot verify the exact restored root mountpoint")
+    return result.stdout.strip() == str(path)
+
+
 def configure_inactive_root(
     plan: ActivationPlan,
     inactive_root: Path,
@@ -92,7 +110,7 @@ def configure_inactive_root(
     if (not inactive_root.is_absolute() or inactive_root.is_symlink()
             or not _ROOT.fullmatch(inactive_root.name)
             or not inactive_root.is_dir() or inactive_root == Path("/")
-            or inactive_root.is_mount()):
+            or _exact_mountpoint(inactive_root)):
         raise ValueError("not a safe inactive restored Btrfs root")
     if inactive_root.name != "@harbor-" + plan.set_id[:8] + "-root":
         raise ValueError("restored root does not match selected backup date")
