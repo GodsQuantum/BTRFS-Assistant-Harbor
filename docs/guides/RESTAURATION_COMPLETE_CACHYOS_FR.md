@@ -96,3 +96,18 @@ incomplets anterieurs sont conserves pour examen et aucun dossier existant
 n'est ecrase. Un garde de 16 tentatives pour le meme point empêche une
 croissance illimitee sans avertissement. Le futur nettoyeur devra obtenir
 une validation explicite avant d'effacer les receptions inachevees.
+
+## Nouvelle porte de certification : LUKS2 réel (GitHub runner jetable)
+
+- Une image bloc provisoire est formatée LUKS2 avec Argon2id et une clef
+  aléatoire propre au test. Un système Btrfs à deux sous-volumes est créé
+  uniquement sur le mapper LUKS2 temporaire.
+- Le moteur natif Harbor sauvegarde ces volumes dans un dépôt distinct,
+  retrouve le catalogue, reçoit les volumes et construit de nouveaux
+  sous-volumes inactifs, puis matérialise hostname, fstab, machine-id et
+  paramètres Limine construits à partir du système nouveau.
+- Le test compare les fichiers de la sauvegarde et des volumes d'origine,
+  vérifie l'UUID LUKS2 et le SHA-256 des 16 premiers Mio (en-tête LUKS)
+  inchangés après toutes les opérations.
+- Ce test N'EST PAS un test de redémarrage EFI. Le dernier critère reste
+  un vrai boot CachyOS UEFI/LUKS2/Limine sans ISO sur les volumes restaurés.
