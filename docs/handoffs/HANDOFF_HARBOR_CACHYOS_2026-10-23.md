@@ -123,3 +123,45 @@ Consulter la configuration CMake du projet pour compiler Qt/Rust et lancer les C
 - NE PAS promouvoir PR #5, taguer une release bare-metal ou annoncer « certifie complet » avant un VRAI boot CachyOS restaure sur disque virtuel, avec login et repli.
 - Ne pas construire une app limitee aux seules integrations/montages de Pegasus : le parcours doit rester generaliste, adaptatif, native first.
 - Rester focalise sur le resultat, travailler et corriger plutot que demander des confirmations de detail.
+
+
+## Reprise SentinelX — 23 octobre, nouveaux tests
+
+Aucun changement sur Pegasus ; ni sauvegarde integrale, ni reboot, ni
+installation de candidat non certifie.
+
+- Pegasus : Harbor installe 0.1.5-1 ; NVMe 954 Gio, /boot VFAT 4 Gio,
+  LUKS2+Btrfs ; 10 sous-volumes persistants, dont /var/lib/machines et
+  /var/lib/portables (sans entrees fstab). /etc/fstab source utilise
+  /dev/mapper/luks-UUID. /swap/swapfile 32 Gio actif : ne pas le desactiver.
+- NFS Pegasus : 192.168.1.200:/backup-local monte sur
+  /mnt/Cloud9/backup-local ; Cloud9 local /srv/backup-local/Workstations,
+  1.4 To libres. GUI targetPath = /mnt/Cloud9/backup-local/Workstations.
+- Inventaire Harbor 0.1.5 sur Pegasus : inventory_complete=true,
+  complete_machine_backup=false (ancien moteur pas integral).
+- Commits pousses sur feat/whole-computer-recovery-20261023 :
+  87903b7 (mount stack + pin Limine archive SHA valide),
+  7dcf35c (trace runner EFI), 3e76414 (masquage mounts EFI),
+  6eb0360 (plan restaure nested subvolumes et fstab fresh LUKS mapper),
+  738f3ee (fstab CI isole), 38a7642 (NFS Ganesha RQUOTA),
+  707a435 (OVMF paire CODE/VARS variante 4M),
+  12570d7 (deux menus Limine : Fresh et Restored),
+  0e1803e (QEMU serie via pipe PopenSpawn et pas PTY runner),
+  test_machine_swapfile_volatile.py (4 tests de surete swap).
+- Local : 149 tests Python green, couverture GUI FR+ZH 488 messages
+  et remote FR+ZH 200 messages par langue, aucun manquant.
+- CI GitHub : relire les runs les plus recents du HEAD via gh run list ;
+  le run UEFI 39943760630 a echoue a ouvrir un PTY runner (pas au boot),
+  corrige dans 0e1803e ; la verification du boot est TOUJOURS non prouvee.
+  Les runs annules par pushes successifs ne sont pas des FAIL.
+
+P0 NON CERTIFIE : le labo QEMU actuel boot un clone Btrfs issu du
+squashfs ISO CachyOS, PAS un vrai end-to-end du catalogue machine-set
+sauvegarde, transfere, restaure et active sur une installation neuve.
+Il manque aussi activation offline sure avec rollback dans le GUI,
+compatibilite kernel+modules+initramfs, nom definitif, reconstruction
+swapfile sans transfert des pages, decouverte repo sur fresh install,
+et validation dedup commune multi-machines. AUCUNE publication main,
+aucune nouvelle installation sur Pegasus et aucune sauvegarde physique
+avant toutes ces validations. PR #5 toujours draft. Toujours preserver
+le backup-local, les anciens manifests et le CAS.
