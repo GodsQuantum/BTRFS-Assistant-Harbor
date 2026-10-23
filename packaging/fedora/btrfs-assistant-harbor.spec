@@ -1,7 +1,7 @@
 # R29 staging: Native Fedora44 source RPM recipe, not a public release.
 Name: btrfs-assistant-harbor
 Version: 0.1.5
-Release: 2%{?dist}
+Release: 3%{?dist}
 Summary: Btrfs Assistant fork with Snapper and guarded CAS backups
 License: GPL-3.0-or-later AND MIT
 URL: https://github.com/GodsQuantum/BTRFS-Assistant-Harbor

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5-4 — 2026-10-23 (development candidate)
+
+- Validate Btrfs v2 checkpoint frames, full SHA-256 and concatenated zstd in a single read (avoids an expensive double read of large NFS archives).
+- Expose checksum failure reasons and a distinct backup-verification phase in the tray.
+- Update Arch/CachyOS and Fedora candidate builds, without changing machine identity or existing backup data.
+
 ## 0.1.1 — 2026-10-22
 
 - ⚓ Canonical Harbor anchor, ink/teal palette and brand identity in Qt, desktop menu, AppStream metadata and README.
