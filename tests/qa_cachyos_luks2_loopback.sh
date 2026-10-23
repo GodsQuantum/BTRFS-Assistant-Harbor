@@ -148,3 +148,11 @@ PY_CERT
 new_sha="$(dd if="$work/disk.img" bs=1M count=16 status=none | sha256sum | cut -d' ' -f1)"
 [[ "$new_sha" == "$header_sha" ]] || { echo LUKS2_HEADER_MODIFIED; exit 65; }
 echo PASS_LUKS2_FRESH_HEADER_UNCHANGED
+# Only inside a new mount namespace, bind the disposable VFAT mount to
+# /boot so the UNMODIFIED production auto-ESP detector can see it.
+# This does not alter the actual GitHub runner's /boot, much less Pegasus.
+unshare --mount --propagation private sh -c '
+  set -eu
+  mount --bind "$1" /boot
+  python3 tests/qa_full_machine_efi_fixture.py "$2" "$3" "$4" "$5"
+' sh "$work/esp" "$work/efi-repo" "$work/top/@" "$work/top/@home" "$work/top/receive-efi"
