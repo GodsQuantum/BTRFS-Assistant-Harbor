@@ -153,6 +153,13 @@ echo PASS_LUKS2_FRESH_HEADER_UNCHANGED
 # This does not alter the actual GitHub runner's /boot, much less Pegasus.
 unshare --mount --propagation private sh -c '
   set -eu
+  # The hosted runner may already have a separate /boot (often ext4).
+  # Remove only mounts from THIS PRIVATE mount namespace. Otherwise
+  # /proc/mounts reports the old and new /boot, and production guard
+  # correctly fails closed with duplicate boot filesystem mount.
+  while mountpoint -q /boot; do umount /boot; done
   mount --bind "$1" /boot
+  test "$(findmnt -rn -o FSTYPE --mountpoint /boot)" = vfat
+  test "$(grep -c " /boot " /proc/mounts)" = 1
   python3 tests/qa_full_machine_efi_fixture.py "$2" "$3" "$4" "$5"
 ' sh "$work/esp" "$work/efi-repo" "$work/top/@" "$work/top/@home" "$work/top/receive-efi"
