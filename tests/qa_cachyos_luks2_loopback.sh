@@ -153,10 +153,12 @@ echo PASS_LUKS2_FRESH_HEADER_UNCHANGED
 # This does not alter the actual GitHub runner's /boot, much less Pegasus.
 unshare --mount --propagation private sh -c '
   set -eu
-  # Bind the disposable FAT32 ESP on /boot ONLY in this private mount
-  # namespace. Do not unmount any inherited CI runner boot partition:
-  # it may be busy and the production guard must remain unchanged.
+  # Mount the disposable VFAT and its fstab in this private namespace,
+  # so unrelated CI runner /boot/efi cannot be mistaken for an
+  # unmounted OS partition. Production fstab/boot guards stay unchanged.
   mount --bind "$1" /boot
   test "$(findmnt -rn -o FSTYPE --mountpoint /boot | tail -n 1)" = vfat
+  printf "/dev/ci-disposable-esp /boot vfat defaults 0 2\n" > "$6"
+  mount --bind "$6" /etc/fstab
   python3 tests/qa_full_machine_efi_fixture.py "$2" "$3" "$4" "$5"
-' sh "$work/esp" "$work/efi-repo" "$work/top/@" "$work/top/@home" "$work/top/receive-efi"
+' sh "$work/esp" "$work/efi-repo" "$work/top/@" "$work/top/@home" "$work/top/receive-efi" "$work/ci-fstab"
