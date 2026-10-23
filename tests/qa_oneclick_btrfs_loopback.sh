@@ -21,9 +21,13 @@ btrfs subvolume create "$work/mount/source" >/dev/null
 btrfs subvolume create "$work/mount/home" >/dev/null
 printf 'first-machine-backup\n' > "$work/mount/source/qa.txt"
 printf 'first-home-backup\n' > "$work/mount/home/home.txt"
-mkdir "$work/mount/repository"
+# Store sealed archives on an INDEPENDENT filesystem, as in a real
+# workstation -> NAS configuration. Btrfs synthetic per-subvolume st_dev
+# differs from mountinfo in some kernels for directories inside nested
+# source volumes; the mount guard correctly rejects such ambiguous roots.
+mkdir "$work/repository"
 export PYTHONPATH="$PWD/vendor/harbor-legacy"
-repo="$work/mount/repository"
+repo="$work/repository"
 profile="118e0b70-dced-4a95-9179-8b45efbd3f51"
 backup() {
   python3 -m btrfs_backup_ng raw checkpoint-v2 set-backup \
