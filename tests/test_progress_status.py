@@ -75,5 +75,42 @@ class ProgressTests(unittest.TestCase):
             self.assertNotIn("command", obj["jobs"][0])
 
 
+    def test_machine_progress_observer_sanitizes_journal(self):
+        from subprocess import CompletedProcess
+        unit = "harbor-machine-backup-a5d970db-9664-4be8-a0fb-bb1e93c60ec3.service"
+        sample = dict(event="machine_progress", completed_members=3,
+                      total_members=9, bytes_written=4 * p.GIB,
+                      estimated_total_bytes=30 * p.GIB, eta_seconds=123,
+                      command="do not expose", secret="should not publish")
+        def fake_run(argv, **kwargs):
+            if argv[:2] == ["systemctl", "list-units"]:
+                return CompletedProcess(argv, 0, unit + " loaded active running\n", "")
+            if argv[:2] == ["systemctl", "show"]:
+                return CompletedProcess(argv, 0, "HARBOR_OWNER_UID=1000", "")
+            if argv[0] == "journalctl":
+                return CompletedProcess(argv, 0, json.dumps(sample) + "\n", "")
+            raise AssertionError(argv)
+        with patch.object(p.subprocess, "run", side_effect=fake_run):
+            result = p.machine_live_status()
+        self.assertIn(1000, result)
+        self.assertEqual(result[1000]["completed_members"], 3)
+        self.assertEqual(result[1000]["eta_seconds"], 123)
+        self.assertNotIn("command", result[1000])
+        self.assertNotIn("secret", result[1000])
+        with tempfile.TemporaryDirectory() as temp:
+            dest = Path(temp) / "status"
+            p.publish(1000, [], dest, machine=result[1000])
+            doc = json.loads((dest / "1000.json").read_text())
+            self.assertEqual(doc["machine_backup"]["eta_seconds"], 123)
+            self.assertNotIn("command", doc["machine_backup"])
+
+    def test_machine_progress_observer_ignores_untrusted_unit(self):
+        from subprocess import CompletedProcess
+        with patch.object(p.subprocess, "run",
+                          return_value=CompletedProcess([], 0,
+                            "harbor-machine-backup-../untrusted.service loaded active running\n", "")):
+            self.assertEqual(p.machine_live_status(), {})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -35,3 +35,24 @@ L'utilisateur ne doit saisir aucune commande Btrfs, Snapper, LUKS ou Limine, ni 
 
 Aucune restauration destructive, réinstallation, modification de disque ou reboot sur Pegasus. La PR reste draft et non installée en production tant que le boot LUKS2 + Limine n'est pas certifié en VM.
 
+
+## Interface candidate à un seul bouton (23 octobre 2026)
+
+- En ouvrant Sauvegardes distantes, deux grandes commandes s'affichent d'abord :
+  Sauvegarder cet ordinateur et Restaurer un ordinateur.
+- Les réglages Snapper, moteurs et commandes avancées restent sous Options avancées de sauvegarde.
+- Si le dépôt habituel est accessible, Sauvegarder cet ordinateur lance
+  une tâche systemd native set-backup sans demander de snapshot ni de partition.
+  Si aucun dépôt n'est monté, une première sélection de dossier est nécessaire.
+- set-backup verrouille le profil et reprend le seul jeu incomplet de cette
+  machine et de ce dépôt, au lieu de repartir à zéro après une coupure.
+  Les volumes avec Snapper utilisent des snapshots readonly frais; les autres
+  des snapshots Harbor; la partition EFI est archivée séparément.
+- L'observateur publie l'avancement machine (volumes, GiB, ETA) issu
+  du journal systemd; il est consultable par l'UI et le systray.
+- Restaurer un ordinateur demande machine, date et nom; Harbor prépare
+  automatiquement un emplacement local Btrfs vide et root-only, sans chemin
+  technique à saisir et sans toucher au système actif.
+- Activation amorçable et application effective du nom: encore BLOQUÉES
+  avant certification LUKS2 et Limine en VM UEFI; PR draft non déployée.
+

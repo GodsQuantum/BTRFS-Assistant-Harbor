@@ -218,6 +218,23 @@ def _read(root: Path, set_id: str) -> dict:
 
 
 @contextmanager
+def _profile_backup_lock(guard: MountGuard, profile_id: str) -> Iterator[None]:
+    validated = _canonical_uuid(profile_id)
+    guard.validate_fd(guard.directory_fd)
+    name = f".harbor-machine-profile-{validated}.lock"
+    fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600,
+                 dir_fd=guard.directory_fd)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("unsafe profile lock")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        guard.validate_fd(guard.directory_fd)
+        yield
+    finally:
+        os.close(fd)
+
+
+@contextmanager
 def _exclusive_set_lock(guard: MountGuard, set_id: str) -> Iterator[None]:
     """Never create a lock beneath a disappeared or replaced NFS mount."""
     directory_fd = guard.directory_fd
@@ -1323,6 +1340,27 @@ def _sources_from_inventory() -> tuple[list[str], dict]:
     return rows, inventory
 
 
+def _select_unfinished_machine_backup(
+    records: list[dict], profile: str, name: str, fingerprint: dict
+) -> str | None:
+    """Fail closed on ambiguous, stale, or changed-export recovery."""
+    target_profile = _canonical_uuid(profile)
+    pending = []
+    for record in records:
+        if record.get("profile_id") != target_profile:
+            continue
+        if record.get("machine_name") != name:
+            continue
+        if record.get("status") not in ("pending", "sending"):
+            continue
+        if record.get("destination_fingerprint") != fingerprint:
+            raise ValueError("unfinished backup points at a changed export")
+        pending.append(_canonical_uuid(record["set_id"]))
+    if len(pending) > 1:
+        raise ValueError("multiple unfinished backups need explicit recovery")
+    return pending[0] if pending else None
+
+
 def _execute_machine_set_unlocked(args: argparse.Namespace) -> int:
     if not getattr(args, "experimental", False) and args.checkpoint_action not in (
         "set-status",
@@ -1387,6 +1425,34 @@ def _execute_machine_set_unlocked(args: argparse.Namespace) -> int:
             guard.validate_fd(guard.directory_fd)
         print(json.dumps(rows, sort_keys=True))
         return 0
+    if action == "set-backup":
+        # A single click is restart-safe: resume the existing incomplete
+        # machine set for THIS host/profile rather than minting a new set
+        # after a network disconnect. New completed backups get a fresh date.
+        profile = _canonical_uuid(args.profile_id)
+        name = socket.gethostname()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,62}", name):
+            raise ValueError("unsafe local computer name")
+        existing_guard, fingerprint = _open_guard(
+            root, allow_local=args.allow_local
+        )
+        with existing_guard:
+            records = []
+            for entry in os.listdir(existing_guard.directory_fd):
+                if not (entry.startswith(".harbor-machine-set-") and entry.endswith(".json")):
+                    continue
+                set_id = entry[len(".harbor-machine-set-"):-len(".json")]
+                records.append(_read(root, _canonical_uuid(set_id)))
+            existing_guard.validate_fd(existing_guard.directory_fd)
+        resume_id = _select_unfinished_machine_backup(
+            records, profile, name, fingerprint
+        )
+        if resume_id:
+            args.set_id = resume_id
+            args.checkpoint_action = "set-resume"
+        else:
+            args.checkpoint_action = "set-start"
+        return _execute_machine_set_unlocked(args)
     if action == "set-start":
         requested = getattr(args, "source", None) or []
         sources, inventory = (
@@ -1633,6 +1699,11 @@ def execute_machine_set(args: argparse.Namespace) -> int:
             exclusive=action in ("set-retention-apply", "set-retention-resume"),
             read_only=read_only,
         ):
+            if action == "set-backup":
+                # Mutating profile lock, nonblocking, under the same destination
+                # mount guard. Multiple GUI clicks cannot start two sends.
+                with _profile_backup_lock(guard, args.profile_id):
+                    return _execute_machine_set_unlocked(args)
             return _execute_machine_set_unlocked(args)
 
 

@@ -27,6 +27,22 @@ inline QJsonArray ownJobs() {
     if (updated <= 0 || QDateTime::currentSecsSinceEpoch() - updated > 30) return {};
     return json.object().value(QStringLiteral("jobs")).toArray();
 }
+inline QJsonObject machine() {
+    bool ok = false;
+    const auto origin = qEnvironmentVariable("PKEXEC_UID").toUInt(&ok);
+    const auto uid = ok && origin > 0 ? origin : static_cast<uint>(getuid());
+    QFile file(QStringLiteral("/run/btrfs-assistant-harbor/%1.json").arg(uid));
+    if (!file.open(QFile::ReadOnly)) return {};
+    const auto bytes = file.read(256 * 1024 + 1);
+    if (bytes.size() > 256 * 1024) return {};
+    const auto obj = QJsonDocument::fromJson(bytes).object();
+    if (obj.value(QStringLiteral("version")).toInt() != 1) return {};
+    if (QDateTime::currentSecsSinceEpoch() -
+            obj.value(QStringLiteral("updated")).toDouble() > 30) return {};
+    const auto report = obj.value(QStringLiteral("machine_backup")).toObject();
+    return report.value(QStringLiteral("state")).toString() == QLatin1String("running")
+        ? report : QJsonObject{};
+}
 inline QJsonObject active(const QString &id = {}) {
     QJsonObject newest;
     for (const auto &entry : ownJobs()) {
@@ -45,6 +61,35 @@ inline QString duration(qint64 seconds) {
     if (seconds >= 86400) return QStringLiteral("%1d %2h").arg(seconds / 86400).arg(seconds % 86400 / 3600);
     if (seconds >= 3600) return QStringLiteral("%1h %2m").arg(seconds / 3600).arg(seconds % 3600 / 60);
     return QStringLiteral("%1 min").arg(qMax<qint64>(1, (seconds + 59) / 60));
+}
+inline QString machineOverview(const QJsonObject &obj, bool tooltip = false) {
+    if (obj.isEmpty()) return {};
+    QStringList lines;
+    const auto done = obj.value(QStringLiteral("completed_members"));
+    const auto total = obj.value(QStringLiteral("total_members"));
+    if (done.isDouble() && total.isDouble())
+        lines << pick("Volumes saved", "Volumes sauvegardés", "已备份子卷")
+                 + QStringLiteral(": %1/%2").arg(done.toInt()).arg(total.toInt());
+    const auto written = obj.value(QStringLiteral("bytes_written"));
+    const auto forecast = obj.value(QStringLiteral("estimated_total_bytes"));
+    if (written.isDouble()) {
+        lines << pick("Data written", "Données écrites", "已写入数据")
+                 + QStringLiteral(": ") + size(written.toDouble())
+                 + (forecast.isDouble()
+                       ? QStringLiteral(" / ~") + size(forecast.toDouble()) : QString());
+        if (forecast.isDouble())
+            lines << pick("Remaining (estimated)", "Reste (estimé)", "预计剩余")
+                     + QStringLiteral(": ~") +
+                        size(qMax(0.0, forecast.toDouble() - written.toDouble()));
+    }
+    const auto eta = obj.value(QStringLiteral("eta_seconds"));
+    if (eta.isDouble() && !obj.value(QStringLiteral("eta_stalled")).toBool())
+        lines << pick("ETA (estimated)", "Temps restant (estimé)", "预计剩余时间")
+                 + QStringLiteral(": ~") + duration(static_cast<qint64>(eta.toDouble()));
+    else
+        lines << pick("ETA: calculating / paused", "Temps restant : calcul / pause",
+                      "预计时间：计算中或已暂停");
+    return lines.join(tooltip ? QStringLiteral("\n") : QStringLiteral("  |  "));
 }
 inline QString overview(const QJsonObject &obj, bool tooltip = false) {
     if (obj.isEmpty()) return {};

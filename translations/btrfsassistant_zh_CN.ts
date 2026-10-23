@@ -2283,6 +2283,42 @@ This cannot be undone. The plan will be checked again under repository lock.</so
             <source>All backup volumes have been received into the staging directory. The bootable machine activation phase still requires an offline recovery environment and is not yet certified for LUKS/Limine.</source>
             <translation>全部备份卷已恢复到暂存目录。启用可启动系统仍需离线恢复环境；LUKS/Limine 的恢复尚未通过认证。</translation>
         </message>
+        <message>
+            <source>Computer protection</source>
+            <translation>整机保护</translation>
+        </message>
+        <message>
+            <source>Advanced backup options</source>
+            <translation>高级备份选项</translation>
+        </message>
+        <message>
+            <source>Backup already in progress</source>
+            <translation>备份正在进行</translation>
+        </message>
+        <message>
+            <source>A backup is already running. Harbor will not start another one.</source>
+            <translation>已有备份正在运行。Harbor 不会同时启动另一个备份。</translation>
+        </message>
+        <message>
+            <source>Choose the mounted backup location</source>
+            <translation>选择已挂载的备份位置</translation>
+        </message>
+        <message>
+            <source>Whole-computer backup started in background. You may close Harbor.</source>
+            <translation>整机备份已在后台启动。现在可以关闭 Harbor。</translation>
+        </message>
+        <message>
+            <source>Whole-computer backup running in background</source>
+            <translation>整机备份正在后台进行</translation>
+        </message>
+        <message>
+            <source>Recovery preparation refused</source>
+            <translation>恢复准备已拒绝</translation>
+        </message>
+        <message>
+            <source>Could not prepare a safe Btrfs recovery: %1</source>
+            <translation>无法安全准备 Btrfs 恢复：%1</translation>
+        </message>
 </context>
     <context>
         <name>HarborLanguage</name>

@@ -34,6 +34,77 @@ UNIT = "btrfs-assistant-harbor-job@{}.service"
 BYTE_ROW = re.compile(r"^\s*(\d+)\s+(\d+)\s+(\d+)\s+\S+")
 MAX_JOBS = 30
 GIB = 1024 ** 3
+MACHINE_UNIT = re.compile(
+    r"^harbor-machine-backup-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+    r"[0-9a-f]{4}-[0-9a-f]{12}\.service$"
+)
+MACHINE_FIELDS = (
+    "completed_members", "total_members", "bytes_written",
+    "estimated_total_bytes", "estimated_percent", "eta_seconds",
+    "bytes_per_second", "eta_stalled",
+)
+
+
+def machine_live_status() -> dict[int, dict]:
+    """Read sanitized in-flight checkpoint-v2 machine metrics via journald.
+
+    The actual backup stays in its existing systemd unit. No extra stream,
+    filesystem traversal or mutable per-job lock is needed for the UI.
+    """
+    try:
+        result = subprocess.run(
+            ["systemctl", "list-units", "--no-legend", "--no-pager",
+             "--plain", "--type=service", "--state=running",
+             "harbor-machine-backup-*.service"],
+            capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if result.returncode:
+        return {}
+    users: dict[int, dict] = {}
+    for line in result.stdout.splitlines()[:8]:
+        unit = line.strip().split(maxsplit=1)[0] if line.strip() else ""
+        if not MACHINE_UNIT.fullmatch(unit):
+            continue
+        try:
+            env = subprocess.run(
+                ["systemctl", "show", unit, "--property=Environment", "--value"],
+                capture_output=True, text=True, timeout=4, check=False)
+            owner = re.search(r"(?:^|\s)HARBOR_OWNER_UID=(\d{1,10})(?:\s|$)",
+                              env.stdout)
+            if env.returncode or not owner:
+                continue
+            uid = int(owner.group(1))
+            if uid < 1 or uid > 4294967294:
+                continue
+            logs = subprocess.run(
+                ["journalctl", "--unit", unit, "--output=cat",
+                 "--no-pager", "-n", "80"],
+                capture_output=True, text=True, timeout=5, check=False)
+            if logs.returncode:
+                continue
+        except (OSError, subprocess.SubprocessError):
+            continue
+        sample = None
+        for raw in logs.stdout.splitlines()[-80:]:
+            if len(raw) > 8192 or not raw.startswith("{"):
+                continue
+            try:
+                candidate = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(candidate, dict) and candidate.get("event") == "machine_progress":
+                sample = candidate
+        status = {"state": "running"}
+        if sample:
+            for key in MACHINE_FIELDS:
+                val = sample.get(key)
+                if key == "eta_stalled" and isinstance(val, bool):
+                    status[key] = val
+                elif type(val) in (int, float) and 0 <= val < 2**62:
+                    status[key] = val
+        users[uid] = status
+    return users
 
 
 def measure_snapshot(snapshot: str, timeout: int = 110) -> int | None:
@@ -141,7 +212,8 @@ def synthesize(job: dict, now: float, last: dict | None, source_size: int | None
                 estimate_is_approximate=True)
 
 
-def publish(uid: int, jobs: list[dict], dest: Path = PUBLIC) -> None:
+def publish(uid: int, jobs: list[dict], dest: Path = PUBLIC,
+            machine: dict | None = None) -> None:
     # /run/btrfs-assistant-harbor is always root-owned, no user-writable dirs.
     if dest.is_symlink():
         raise RuntimeError("Unsafe status directory")
@@ -153,7 +225,10 @@ def publish(uid: int, jobs: list[dict], dest: Path = PUBLIC) -> None:
     try:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
         with os.fdopen(fd, "w") as f:
-            json.dump(dict(version=1, updated=time.time(), jobs=jobs), f)
+            payload = dict(version=1, updated=time.time(), jobs=jobs)
+            if machine:
+                payload["machine_backup"] = machine
+            json.dump(payload, f)
             f.write("\n")
         os.replace(tmp, destfile)
     finally:
@@ -202,8 +277,11 @@ def observe(once=False, *, registry=ROOT, dest=PUBLIC, interval=5,
                                      network_observed=observed, network_rate_ratio=nfs_ratio)
                 history[job_id] = current
                 visible.setdefault(doc["owner_uid"], []).append(current)
+            machines = machine_live_status()
+            for uid in machines:
+                visible.setdefault(uid, [])
             for uid, records in visible.items():
-                publish(uid, records, dest)
+                publish(uid, records, dest, machine=machines.get(uid))
             if once:
                 break
             time.sleep(interval)
