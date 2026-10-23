@@ -86,3 +86,13 @@ CachyOS UEFI/LUKS2/Limine restent des critères BLOQUANTS.
   comparaison des donnees et de la nouvelle identite.
 - Il reste a activer Limine hors ligne et verifier un vrai demarrage CachyOS
   avec GPT/ESP, LUKS2, modules du noyau et retour arriere operationnel.
+
+## Tentatives de restauration sans manipulation technique
+
+En cas de coupure réseau ou de plantage durant la reception, un nouveau clic
+Restaurer peut preparer automatiquement un nouvel emplacement vide :
+/var/lib/btrfs-assistant-harbor/recovery/set-UUID/attempt-UUID. Les fichiers
+incomplets anterieurs sont conserves pour examen et aucun dossier existant
+n'est ecrase. Un garde de 16 tentatives pour le meme point empêche une
+croissance illimitee sans avertissement. Le futur nettoyeur devra obtenir
+une validation explicite avant d'effacer les receptions inachevees.
