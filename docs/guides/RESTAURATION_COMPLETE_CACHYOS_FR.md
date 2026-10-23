@@ -141,3 +141,17 @@ Il ne change aucun champ NVRAM, cle de chiffrement ou en-tete LUKS2.
 
 La validation UEFI avec le systeme restaure demarre en machine virtuelle
 reste bloquante avant toute activation de secours sur un vrai ordinateur.
+
+## Banc de certification officiel CachyOS — admission ISO
+
+Un flux GH Actions distinct commence la certification SPECIFIQUE a CachyOS :
+telechargement de l'ISO desktop officiel 260809 (3 Gio), preuve SHA-256
+959f6577f45e25ee9fd8c220fd221b08e4ea79412c7315c0f922dd6d86d5e33c
+comparee avec l'empreinte publiee, inventaire des noyaux, initramfs,
+squashfs et fichiers de demarrage UEFI. Les fichiers ISO sont exclusivement
+traites dans le runner jetable, jamais sur Pegasus ni sur le depot NFS
+Cloud9, et ne sont pas pousses dans Git.
+Cet inventaire n'est que la premiere porte : il ne certifie pas le boot.
+La vraie certification exige de restaurer sur disque virtuel GPT + ESP +
+LUKS2 + Btrfs, installer une entree Limine sur cette image, et redemarrer
+SANS ISO pour prouver le systeme et les fichiers recuperes.
