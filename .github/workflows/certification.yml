@@ -120,7 +120,7 @@ jobs:
           QT_QPA_PLATFORM=offscreen ctest --test-dir build/debian13 --output-on-failure
           mkdir -p build/debian13/harbor-rust/release
           install -m 0755 prebuilt/harbor-transport build/debian13/harbor-rust/release/harbor-transport
-          python3 packaging/debian/build_preview.py --version '0.1.5-1+deb13' --build build/debian13 --out dist/debian13
+          python3 packaging/debian/build_preview.py --version '0.1.5-2+deb13' --build build/debian13 --out dist/debian13
           dpkg-deb -f dist/debian13/*.deb Package Version Architecture Depends
           (cd dist/debian13 && sha256sum *.deb > SHA256SUMS)
       - name: Debian 13 install, uninstall, reinstall and purge (disposable container)

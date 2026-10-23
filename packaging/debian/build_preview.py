@@ -13,7 +13,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-VERSION = "0.1.5-1"
+VERSION = "0.1.5-2"
 
 def call(*args: str, cwd: Path | None = None, env: dict | None = None) -> str:
     result = subprocess.run(args, cwd=cwd, env=env, check=True,
@@ -73,6 +73,14 @@ def main():
         ", btrfs-progs, snapper, polkitd, pkexec, python3, "
         "python3-filelock, python3-rich, zstd"
     )
+    # Standalone Debian packages are built with dpkg-deb, not debhelper.
+    # Include maintainer scripts explicitly; their only systemd side effect
+    # is enabling the read-only status observer, never a backup job.
+    for script in ("postinst", "postrm"):
+        dest = stage / "DEBIAN" / script
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(project / "packaging" / "debian" / script, dest)
+        dest.chmod(0o755)
     control = stage / "DEBIAN/control"
     control.parent.mkdir()
     # Shared NVMe staging inherits setgid; dpkg-deb requires DEBIAN <=0775.

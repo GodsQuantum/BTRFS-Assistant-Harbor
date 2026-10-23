@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+# Observer only. Do not start any transfer or disturb the machine backup.
+if [ "$1" = configure ] && [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || :
+    systemctl enable --now btrfs-assistant-harbor-progress.service >/dev/null 2>&1 ||
+        echo "Harbor: unable to activate read-only progress observer" >&2
+fi
+exit 0

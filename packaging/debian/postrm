@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+# Only remove read-only observer state; never stop a backup unit.
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+    if [ -d /run/systemd/system ]; then
+        systemctl disable --now btrfs-assistant-harbor-progress.service >/dev/null 2>&1 || :
+        systemctl daemon-reload >/dev/null 2>&1 || :
+    fi
+fi
+exit 0
