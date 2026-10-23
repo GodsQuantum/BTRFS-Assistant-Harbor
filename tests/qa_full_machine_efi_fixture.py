@@ -39,11 +39,23 @@ def main() -> None:
         experimental=True,
         state_dir=None,
     )
-    # Sources are explicit synthetic fixture roots, without relaxing native
-    # live boot mount detection, archive validation or mount identity checks.
+    # The runner's preexisting /boot (often ext4) stays safely mounted
+    # BELOW our disposable FAT32 bind mount within the private namespace.
+    # The test injects the topmost /boot mount row, but the native actual
+    # capture_mount_identity and boot verifier remain UNPATCHED.
+    original_rows = mset._mount_rows
+
+    def fixture_mount_rows(content: str):
+        rows = original_rows(content)
+        boot_rows = [row for row in rows if row["mount_point"] == "/boot"]
+        assert boot_rows and boot_rows[-1]["filesystem"] == "vfat", boot_rows
+        return [row for row in rows if row["mount_point"] != "/boot"] + [boot_rows[-1]]
+
+    # ONLY the fixture source enumeration and the isolated runner's stacked
+    # mount-row representation are patched, not the production boot archivist.
     with patch.object(
         mset, "_sources_from_inventory", return_value=([str(root), str(home)], None)
-    ):
+    ), patch.object(mset, "_mount_rows", side_effect=fixture_mount_rows):
         assert mset.execute_machine_set(args) == 0
     records = list(repo.glob(".harbor-machine-set-*.json"))
     assert len(records) == 1, records
