@@ -30,6 +30,7 @@
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QSettings>
+#include <QSaveFile>
 #include <QSysInfo>
 #include <QUuid>
 #include <QTimer>
@@ -1014,6 +1015,7 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
         }
         m_computerRecoveryId = id;
         m_computerRecoveryName = name;
+        m_computerRecoverySourceMachine = machines->currentText();
         m_computerRecoveryPolicy = choice;
         m_computerRecoveryStaging = recoveryStaging;
         m_computerRecoveryRepository = m_target->text();
@@ -1046,6 +1048,32 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
         return;
     }
     if (m_purpose == QLatin1String("whole-machine-restore-staged")) {
+        const QFileInfo staging(m_computerRecoveryStaging);
+        if (!staging.isDir() || staging.isSymLink() ||
+            staging.canonicalFilePath() != m_computerRecoveryStaging) {
+            appendOutput(QStringLiteral("Recovery staging changed after receiving volumes."));
+            return;
+        }
+        QSaveFile intent(QDir(m_computerRecoveryStaging).filePath(
+            QStringLiteral(".harbor-recovery-intent.json")));
+        if (!intent.open(QIODevice::WriteOnly)) {
+            appendOutput(QStringLiteral("Recovery received, but cannot save selected identity."));
+            return;
+        }
+        const QJsonObject selection{
+            {QStringLiteral("version"), 1},
+            {QStringLiteral("set_id"), m_computerRecoveryId},
+            {QStringLiteral("source_machine"), m_computerRecoverySourceMachine},
+            {QStringLiteral("repository"), m_computerRecoveryRepository},
+            {QStringLiteral("hostname_policy"), m_computerRecoveryPolicy},
+            {QStringLiteral("target_hostname"), m_computerRecoveryName},
+            {QStringLiteral("boot_activation_certified"), false}
+        };
+        const QByteArray bytes = QJsonDocument(selection).toJson(QJsonDocument::Compact);
+        if (intent.write(bytes) != bytes.size() || !intent.commit()) {
+            appendOutput(QStringLiteral("Recovery received, but cannot commit selected identity."));
+            return;
+        }
         QMessageBox::information(this, tr("Files safely recovered"),
             tr("All backup volumes have been received into the staging directory. "
                "The bootable machine activation phase still requires an offline recovery environment "
