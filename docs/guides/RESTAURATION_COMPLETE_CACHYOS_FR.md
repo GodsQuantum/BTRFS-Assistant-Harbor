@@ -72,3 +72,17 @@ bootable_certified reste FALSE, activation_performed reste FALSE : aucun
 changement du disque actif, de la configuration EFI, de la clé LUKS
 ni du démarrage. L'activation hors ligne et le reboot validé en VM
 CachyOS UEFI/LUKS2/Limine restent des critères BLOQUANTS.
+
+## Identité du futur système (23 octobre 2026, candidat non activable)
+
+- Le module autonome ne modifie que la nouvelle racine inactive Btrfs
+  @harbor-ID-root : fstab, hostname, machine-id et crypttab issus du
+  CachyOS neuf, ainsi que son /etc/default/limine adapté au futur rootflags.
+  AUCUN ancien UUID LUKS de Pegasus n'est réutilisé.
+- Pas de commande Limine, de modification EFI, de changement LUKS, de NVRAM,
+  ni de modification ou renommage du systeme existant @ et @home.
+- Test de bout en bout sur disque Btrfs jetable : deux sous-volumes, deux
+  sauvegardes datees, restoration, creation de nouveaux volumes inactifs,
+  comparaison des donnees et de la nouvelle identite.
+- Il reste a activer Limine hors ligne et verifier un vrai demarrage CachyOS
+  avec GPT/ESP, LUKS2, modules du noyau et retour arriere operationnel.
