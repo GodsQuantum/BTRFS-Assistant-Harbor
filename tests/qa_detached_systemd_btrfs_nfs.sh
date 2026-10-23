@@ -44,6 +44,10 @@ cat > "$WORK/ganesha.conf" <<EOF
 NFS_CORE_PARAM {
     Protocols = 4;
     NFS_Port = 20490;
+    # This disposable loopback-only server must not compete with any
+    # preexisting runner RQUOTA service on its standard port (875).
+    Rquota_Port = 30875;
+    Bind_Addr = 127.0.0.1;
 }
 EXPORT {
     Export_Id = 77;
