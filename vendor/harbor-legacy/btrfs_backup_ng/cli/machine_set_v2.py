@@ -1340,6 +1340,68 @@ def _sources_from_inventory() -> tuple[list[str], dict]:
     return rows, inventory
 
 
+def _machine_capture_stale(record: dict, now: datetime | None = None) -> bool:
+    if record.get("capture_completed_utc") or not record.get("capture_started_utc"):
+        return False
+    if record.get("status") not in ("pending", "sending"):
+        return False
+    try:
+        started = datetime.fromisoformat(record["capture_started_utc"])
+        if started.tzinfo is None:
+            return True
+    except (TypeError, ValueError):
+        return True
+    now = now or datetime.now(timezone.utc)
+    # A partial capture from yesterday cannot be called one date. Once
+    # abandoned it is preserved for manual inspection, never auto-deleted.
+    return (now - started).total_seconds() > 600
+
+
+def _complete_machine_capture(root: Path, data: dict, *, allow_local: bool) -> None:
+    if data.get("capture_completed_utc"):
+        return
+    if _machine_capture_stale(data):
+        raise ValueError("incomplete machine capture is older than 10 minutes")
+    # Snapshot all Btrfs members BEFORE starting the first network transfer.
+    for member in data["members"]:
+        if member["snapshot_provider"] != "harbor":
+            continue
+        source = Path(member["original_mount"])
+        snapshot_path = Path(member["snapshot_path"])
+        if member.get("snapshot_uuid"):
+            readonly = inspect_readonly_btrfs_source(snapshot_path)
+            if not readonly.readonly or readonly.uuid != member["snapshot_uuid"]:
+                raise ValueError("machine member identity changed during capture")
+            continue
+        if snapshot_path.exists() or snapshot_path.is_symlink():
+            snap = find_native_snapshot(source, snapshot_path.name)
+        else:
+            snap = create_native_snapshot(source, reserved_name=snapshot_path.name)
+        if snap.path != snapshot_path:
+            raise ValueError("captured machine subvolume moved")
+        member["snapshot_uuid"] = snap.uuid
+        member["snapshot_created_utc"] = snap.date
+        _write(root, data, allow_local=allow_local)
+    # Snapshot the separate EFI partition before uploading the data. This
+    # avoids an EFI update hours into a multi-volume Btrfs transfer.
+    if data["boot_members"]:
+        boot_guard, _ = _open_guard(
+            root, allow_local=allow_local, expected=data["destination_fingerprint"]
+        )
+        with boot_guard:
+            for index, boot in enumerate(data["boot_members"]):
+                if boot["status"] == "completed":
+                    if not verify_boot_member(root, boot):
+                        raise ValueError("EFI archive changed during capture")
+                    continue
+                data["boot_members"][index] = capture_boot_member(
+                    root, boot_guard, boot
+                )
+                _write(root, data, allow_local=allow_local)
+    data["capture_completed_utc"] = datetime.now(timezone.utc).isoformat()
+    _write(root, data, allow_local=allow_local)
+
+
 def _select_unfinished_machine_backup(
     records: list[dict], profile: str, name: str, fingerprint: dict
 ) -> str | None:
@@ -1442,7 +1504,15 @@ def _execute_machine_set_unlocked(args: argparse.Namespace) -> int:
                 if not (entry.startswith(".harbor-machine-set-") and entry.endswith(".json")):
                     continue
                 set_id = entry[len(".harbor-machine-set-"):-len(".json")]
-                records.append(_read(root, _canonical_uuid(set_id)))
+                record = _read(root, _canonical_uuid(set_id))
+                if (
+                    record.get("profile_id") == profile
+                    and record.get("machine_name") == name
+                    and _machine_capture_stale(record)
+                ):
+                    record["status"] = "abandoned_capture"
+                    _write(root, record, allow_local=args.allow_local)
+                records.append(record)
             existing_guard.validate_fd(existing_guard.directory_fd)
         resume_id = _select_unfinished_machine_backup(
             records, profile, name, fingerprint
@@ -1583,6 +1653,7 @@ def _execute_machine_set_unlocked(args: argparse.Namespace) -> int:
             "bootable": False,
             "status": "pending",
             "created_utc": datetime.now(timezone.utc).isoformat(),
+            "capture_started_utc": datetime.now(timezone.utc).isoformat(),
             "inventory": inventory,
             "members": members,
             "boot_members": boot_members,
@@ -1590,6 +1661,7 @@ def _execute_machine_set_unlocked(args: argparse.Namespace) -> int:
         }
         with guard, _exclusive_set_lock(guard, set_id):
             _write(root, data, allow_local=args.allow_local)
+            _complete_machine_capture(root, data, allow_local=args.allow_local)
             with _live_machine_progress(root, data, estimate_sources=True):
                 result = _drive(
                     root,
@@ -1621,6 +1693,7 @@ def _execute_machine_set_unlocked(args: argparse.Namespace) -> int:
             raise ValueError("machine-set destination fingerprint changed")
         with _exclusive_set_lock(guard, set_id):
             if action == "set-resume":
+                _complete_machine_capture(root, data, allow_local=args.allow_local)
                 with _live_machine_progress(root, data, estimate_sources=True):
                     result = _drive(
                         root,
