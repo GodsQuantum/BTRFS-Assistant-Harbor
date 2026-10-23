@@ -86,9 +86,15 @@ inline QString machineOverview(const QJsonObject &obj, bool tooltip = false) {
     if (eta.isDouble() && !obj.value(QStringLiteral("eta_stalled")).toBool())
         lines << pick("ETA (estimated)", "Temps restant (estimé)", "预计剩余时间")
                  + QStringLiteral(": ~") + duration(static_cast<qint64>(eta.toDouble()));
+    else if (obj.value(QStringLiteral("phase")).toString()
+             == QStringLiteral("verifying_archive"))
+        lines << pick("Verifying archive integrity (ETA unavailable)",
+                      "Vérification d’intégrité (durée inconnue)",
+                      "正在校验存档完整性（时间未知）");
     else
-        lines << pick("ETA: calculating / paused", "Temps restant : calcul / pause",
-                      "预计时间：计算中或已暂停");
+        lines << pick("ETA unavailable (still working)",
+                      "Temps restant indisponible (travail en cours)",
+                      "暂无法估算剩余时间（仍在运行）");
     return lines.join(tooltip ? QStringLiteral("\n") : QStringLiteral("  |  "));
 }
 inline QString overview(const QJsonObject &obj, bool tooltip = false) {
