@@ -127,3 +127,17 @@ Le module N'ECRIT PAS dans /boot/limine.conf, ne modifie pas la sélection
 EFI actuelle et ne lance pas de générateur initramfs. Une restauration
 amoçable ne peut pas être certifiée avant le test d'activation sur disque
 virtuel chiffré et le démarrage UEFI réussi sans ISO.
+
+## Repetition sur vraie ESP FAT32 jetable
+
+Le banc d'essai LUKS2 comprend maintenant une seconde image bloc formatee
+FAT32 et montee comme ESP temporaire, completement differente du /boot
+du runner et de Pegasus. Le plan Limine lit les chemins noyau/initramfs
+fournis par CachyOS, verifie fichiers et hachages BLAKE2B quand presents,
+puis ajoute une entree Harbor sans toucher a default_entry. Il conserve
+le limine.conf natif sous un nom original attache a l'identifiant de
+sauvegarde. En cas d'echec il refuse de reecrire la configuration.
+Il ne change aucun champ NVRAM, cle de chiffrement ou en-tete LUKS2.
+
+La validation UEFI avec le systeme restaure demarre en machine virtuelle
+reste bloquante avant toute activation de secours sur un vrai ordinateur.

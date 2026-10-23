@@ -30,7 +30,13 @@ class LimineBootPreview:
 def preview_recovery_menu(
     existing: str, plan: ActivationPlan, *,
     restored_module_versions: set[str],
+    secure_boot_state: str = "unknown",
 ) -> LimineBootPreview:
+    # With Limine secure boot, the EFI binary's config checksum must be
+    # enrolled. An additive entry is NOT bootable without native sbctl and
+    # checksum enrollment. Unknown state is therefore not safe to publish.
+    if secure_boot_state != "disabled":
+        raise ValueError("Secure Boot status/enrollment not certified")
     if plan.bootable_certified or not plan.requires_offline_activation:
         raise ValueError("unexpected completed boot certificate")
     if plan.bootloader != "limine" or not _HOST.fullmatch(plan.target_hostname):
@@ -77,7 +83,7 @@ def preview_recovery_menu(
         fields={}
         for line in block["lines"]:
             m=_FIELD.fullmatch(line)
-            if m and m.group(1) in ("path","module_path","cmdline","protocol"):
+            if m and m.group(1) in ("path","kernel_path","module_path","cmdline","protocol"):
                 if m.group(1) in fields:
                     raise ValueError("duplicate native Limine boot field")
                 fields[m.group(1)]=m.group(2).strip()
@@ -89,7 +95,10 @@ def preview_recovery_menu(
         if (fields.get("protocol")!="linux" or not _VERSION.fullmatch(version)
             or version not in restored_module_versions):
             continue
-        for key in ("path","module_path"):
+        if "path" in fields and "kernel_path" in fields:
+            raise ValueError("ambiguous native Limine kernel image path")
+        kernel_field = "path" if "path" in fields else "kernel_path"
+        for key in (kernel_field,"module_path"):
             path=fields.get(key,"")
             if not _PATH.fullmatch(path) or ".." in path.split("/"):
                 raise ValueError("unsafe native Limine image path")
@@ -100,7 +109,7 @@ def preview_recovery_menu(
             "  //"+plan.target_hostname+"-"+plan.set_id[:8]+"-"+kernel+"\n"
             "  comment: Recovery target "+plan.target_hostname+"\n"
             "  protocol: linux\n"
-            "  path: "+fields["path"]+"\n"
+            "  "+kernel_field+": "+fields[kernel_field]+"\n"
             "  module_path: "+fields["module_path"]+"\n"
             "  cmdline: "+plan.limine_cmdline
         )
