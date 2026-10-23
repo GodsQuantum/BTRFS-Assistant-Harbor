@@ -51,6 +51,17 @@ def main() -> None:
         assert boot_rows and boot_rows[-1]["filesystem"] == "vfat", boot_rows
         return [row for row in rows if row["mount_point"] != "/boot"] + [boot_rows[-1]]
 
+    # Publish precise mount diagnostics for CI without relaxing any production
+    # filesystem guards; runner /boot layouts differ between Ubuntu images.
+    boot_path = Path("/boot")
+    print(
+        "HARBOR_CI_BOOT_DIAGNOSTIC",
+        "is_dir=", boot_path.is_dir(),
+        "is_symlink=", boot_path.is_symlink(),
+        "realpath=", os.path.realpath("/boot"),
+        "file_present=", (boot_path / "vmlinuz-linux-cachyos").is_file(),
+        flush=True,
+    )
     # ONLY the fixture source enumeration and the isolated runner's stacked
     # mount-row representation are patched, not the production boot archivist.
     with patch.object(
