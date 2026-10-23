@@ -32,7 +32,8 @@ backup() {
 backup > "$work/first.json"
 python3 - "$work/first.json" <<'PY_ASSERT_FIRST'
 import json,sys
-o=json.load(open(sys.argv[1]))
+messages=[json.loads(line) for line in open(sys.argv[1]) if line.strip().startswith("{")]
+o=next(row for row in reversed(messages) if row.get("status","").startswith("completed_"))
 assert o["status"] == "completed_btrfs_only", o
 assert len(o["members"]) == 1, o
 PY_ASSERT_FIRST
@@ -56,7 +57,7 @@ assert len(rows)==2,rows
 assert all(x["status"]=="completed_btrfs_only" for x in rows),rows
 ids=[x["set_id"] for x in rows]
 assert len(set(ids))==2,rows
-print(rows[-1]["set_id"])
+print(max(rows, key=lambda x: x["created_utc"])["set_id"])
 PY_FIND_SET
 )"
 mkdir "$work/mount/restore"

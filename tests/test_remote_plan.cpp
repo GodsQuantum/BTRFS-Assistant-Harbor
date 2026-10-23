@@ -1,4 +1,5 @@
 #include "util/RemoteBackupPlan.h"
+#include "util/RecoveryStaging.h"
 #include <QDebug>
 #define REQUIRE(condition) do { if (!(condition)) qFatal("Check failed: %s", #condition); } while (false)
 #include <QStringList>
@@ -57,6 +58,10 @@ int main() {
   REQUIRE(casInitArguments("/", false).isEmpty());
   REQUIRE(casListArguments(casPath).contains("list"));
   const QString machineSetId("a5d970db-9664-4be8-a0fb-bb1e93c60ec3");
+  QString untrustedStage;
+  QString untrustedReason;
+  REQUIRE(!HarborStaging::prepare(QStringLiteral("../unsafe"), &untrustedStage, &untrustedReason));
+  REQUIRE(untrustedStage.isEmpty());
   const auto whole = wholeMachineStartArguments(
       "/mnt/backup-local/Workstations", id, machineSetId, 1000);
   REQUIRE(whole.contains("set-backup"));
