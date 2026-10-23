@@ -76,7 +76,7 @@ def main() -> None:
                     raise AssertionError("restored CachyOS VM shut down without proof")
             raise AssertionError("QEMU timeout without restored-root proof")
         finally:
-            if child.isalive():
+            if child.proc.poll() is None:
                 child.proc.terminate()
                 try:
                     child.proc.wait(timeout=5)
