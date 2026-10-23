@@ -35,7 +35,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             qemu-system-x86 ovmf qemu-utils p7zip-full squashfs-tools \
-            libarchive-tools cryptsetup dosfstools btrfs-progs
+            libarchive-tools cryptsetup dosfstools btrfs-progs \
+            python3-rich python3-filelock zstd
 
       - name: Acquire official CachyOS 260809 ISO and verify published SHA-256
         env:
