@@ -98,23 +98,49 @@ def verify_checkpoint_index(
             "metadata/index structurally valid; full checksum not run",
             count,
         )
-    fd = _regular_file_fd(stream_path)
+    # One bounded sequential read on slow remote HDD/NFS. Feed those SAME
+    # bytes into the native zstd format checker while hashing v2 frames.
+    # The older implementation read the entire archive twice, which could
+    # take hours, delay later volumes, and look like an I/O stall.
     try:
+        fd = _regular_file_fd(stream_path)
+    except (OSError, ValueError) as exc:
+        return VerificationResult("error", f"archive open failed: {exc}", count)
+    decoder = None
+    try:
+        original = os.fstat(fd)
+        try:
+            decoder = subprocess.Popen(
+                ["zstd", "--test", "-q", "-"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            return VerificationResult("error", f"zstd verifier unavailable: {exc}", count)
+        if decoder.stdin is None:
+            return VerificationResult("error", "zstd input pipe unavailable", count)
         whole = hashlib.sha256()
         for cp in manifest.checkpoints:
             os.lseek(fd, cp.compressed_offset, os.SEEK_SET)
-            hash_frame = hashlib.sha256()
+            frame = hashlib.sha256()
             remaining = cp.compressed_length
             while remaining:
                 chunk = os.read(fd, min(1024 * 1024, remaining))
                 if not chunk:
                     return VerificationResult(
-                        "corrupt", "truncated compressed frame", count
+                        "corrupt", f"truncated compressed frame {cp.sequence}", count
                     )
-                hash_frame.update(chunk)
+                frame.update(chunk)
                 whole.update(chunk)
+                try:
+                    decoder.stdin.write(chunk)
+                except BrokenPipeError:
+                    return VerificationResult(
+                        "corrupt", f"zstd rejected frame {cp.sequence}", count
+                    )
                 remaining -= len(chunk)
-            if not hmac.compare_digest(hash_frame.hexdigest(), cp.compressed_sha256):
+            if not hmac.compare_digest(frame.hexdigest(), cp.compressed_sha256):
                 return VerificationResult(
                     "corrupt", f"frame {cp.sequence} SHA-256 mismatch", count
                 )
@@ -127,23 +153,48 @@ def verify_checkpoint_index(
             return VerificationResult(
                 "corrupt", "whole stream checksum mismatch", count
             )
+        decoder.stdin.close()
+        try:
+            code = decoder.wait(timeout=3600)
+        except subprocess.TimeoutExpired:
+            return VerificationResult(
+                "error", "zstd verifier exceeded timeout", count
+            )
+        if code != 0:
+            return VerificationResult(
+                "corrupt", "concatenated zstd stream failed integrity test", count
+            )
+        final = os.fstat(fd)
+        if (
+            original.st_dev, original.st_ino, original.st_size,
+            original.st_mtime_ns, original.st_ctime_ns
+        ) != (
+            final.st_dev, final.st_ino, final.st_size,
+            final.st_mtime_ns, final.st_ctime_ns
+        ):
+            return VerificationResult(
+                "error", "stream changed during verification", count
+            )
+    except OSError as exc:
+        # Especially important for NFS soft errors: a network failure is
+        # NOT proof that the stored backup is corrupt.
+        return VerificationResult("error", f"archive read failed: {exc}", count)
     finally:
         os.close(fd)
-    try:
-        outcome = subprocess.run(
-            ["zstd", "--test", "-q", "--", str(stream_path)],
-            capture_output=True,
-            timeout=3600,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as err:
-        return VerificationResult("error", f"zstd verifier unavailable: {err}", count)
-    if outcome.returncode != 0:
-        return VerificationResult(
-            "corrupt", "concatenated zstd stream failed integrity test", count
-        )
+        if decoder is not None:
+            if decoder.poll() is None:
+                decoder.kill()
+                try:
+                    decoder.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
+            if decoder.stdin is not None and not decoder.stdin.closed:
+                try:
+                    decoder.stdin.close()
+                except BrokenPipeError:
+                    pass
     return VerificationResult(
         "ok",
-        "compressed frames and zstd format verified; Btrfs receive not checked",
+        "compressed frames and zstd format verified in one read; Btrfs receive not checked",
         count,
     )
