@@ -125,8 +125,12 @@ ln -sfn /etc/systemd/system/harbor-boot-proof.service \
 cat > "$work/root/boot/limine.conf" <<LIMINE
 timeout: 1
 default_entry: 2
-/+Harbor restore
-  //CachyOS-Restored
+/CachyOS-Fresh-Fallback
+  protocol: linux
+  path: boot():/vmlinuz-linux-cachyos
+  module_path: boot():/initramfs-linux-cachyos.img
+  cmdline: rw console=ttyS0,115200n8 rootflags=subvol=/@ rd.luks.uuid=$luks root=/dev/mapper/luks-$luks
+/CachyOS-Restored-Harbor
   protocol: linux
   path: boot():/vmlinuz-linux-cachyos
   module_path: boot():/initramfs-linux-cachyos.img
