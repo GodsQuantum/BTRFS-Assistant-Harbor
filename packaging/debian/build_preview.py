@@ -82,7 +82,8 @@ def main():
         shutil.copy2(project / "packaging" / "debian" / script, dest)
         dest.chmod(0o755)
     control = stage / "DEBIAN/control"
-    control.parent.mkdir()
+    # postinst/postrm created the DEBIAN directory above.
+    control.parent.mkdir(exist_ok=True)
     # Shared NVMe staging inherits setgid; dpkg-deb requires DEBIAN <=0775.
     control.parent.chmod(0o755)
     control.write_text(
