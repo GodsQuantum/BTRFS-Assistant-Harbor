@@ -94,4 +94,42 @@ base=pathlib.Path(sys.argv[2])
 assert any(x.read_bytes()==b"second-machine-backup\n" for x in base.rglob("qa.txt"))
 assert any(x.read_bytes()==b"second-home-backup\n" for x in base.rglob("home.txt"))
 PY_ASSERT_RESTORE
+# Verify that the future restore can create NEW, inactive writable Btrfs
+# subvolumes from the two received readonly archives, leaving the fresh
+# source and the active root untouched. This is NOT a bootability certificate.
+python3 - "$repo" "$setid" "$work/mount" "$work/mount/restore" <<'PY_INACTIVE'
+import json
+from pathlib import Path
+import sys
+
+from btrfs_backup_ng.core.cachyos_activation_plan import ActivationPlan
+from btrfs_backup_ng.core.cachyos_inactive_subvolumes import prepare_inactive_subvolumes
+from btrfs_backup_ng.core.rear_bridge_v2 import find_received_subvolume
+
+repo, set_id, top, staging = map(Path, sys.argv[1:5])
+set_uuid = str(set_id)
+data = json.loads((repo / (".harbor-machine-set-" + set_uuid + ".json")).read_text())
+assert len(data["members"]) == 2, data
+mounts = {
+    "/": "/@harbor-" + set_uuid[:8] + "-root",
+    "/home": "/@harbor-" + set_uuid[:8] + "-home"
+}
+sources = {}
+for i, member in enumerate(data["members"]):
+    key = "/" if Path(member["original_mount"]).name == "source" else "/home"
+    sources[key] = find_received_subvolume(
+        staging / f"volume-{i:03d}", member["snapshot_uuid"])
+plan = ActivationPlan(
+    set_id=set_uuid, source_hostname="Pegasus", target_hostname="NewPegasus",
+    fresh_machine_id="0" * 32, mounts=tuple(mounts.items()),
+    fstab="", limine_cmdline="", bootloader="limine")
+out = prepare_inactive_subvolumes(
+    plan, sources, staging=staging, top_level=top)
+assert (Path(out["/"]) / "qa.txt").read_bytes() == b"second-machine-backup\n"
+assert (Path(out["/home"]) / "home.txt").read_bytes() == b"second-home-backup\n"
+assert (top / "source/qa.txt").read_bytes() == b"second-machine-backup\n"
+assert (top / "home/home.txt").read_bytes() == b"second-home-backup\n"
+assert not (top / "@").exists()
+print("PASS_REAL_BTRFS_INACTIVE_ALTERNATE_ROOT_PREPARED")
+PY_INACTIVE
 echo PASS_ONECLICK_REAL_BTRFS_TWO_DATED_SETS_AND_VERIFIED_RESTORE
