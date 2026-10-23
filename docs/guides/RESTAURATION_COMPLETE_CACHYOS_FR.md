@@ -111,3 +111,19 @@ une validation explicite avant d'effacer les receptions inachevees.
   inchangés après toutes les opérations.
 - Ce test N'EST PAS un test de redémarrage EFI. Le dernier critère reste
   un vrai boot CachyOS UEFI/LUKS2/Limine sans ISO sur les volumes restaurés.
+
+## Plan natif de menu de secours Limine (candidat)
+
+Un nouveau controle, encore non destructeur, extrait les entrées de noyau
+courantes directement depuis le limine.conf du CachyOS NEUF. Il vérifie les
+chemins de noyau/initramfs, la version du noyau et surtout la présence de
+ses modules dans la racine reçue. Il calcule une ENTREE DE SECOURS ADDITIVE
+utilisant le nouveau UUID LUKS et le nouveau rootflags du sous-volume
+@harbor-ID-root. Il rejette les entrées historiques Snapper, les mauvaises
+versions de noyau, les UUID/mapper incohérents, les chemins malicieux et
+un menu déjà généré.
+
+Le module N'ECRIT PAS dans /boot/limine.conf, ne modifie pas la sélection
+EFI actuelle et ne lance pas de générateur initramfs. Une restauration
+amoçable ne peut pas être certifiée avant le test d'activation sur disque
+virtuel chiffré et le démarrage UEFI réussi sans ISO.
