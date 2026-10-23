@@ -53,7 +53,7 @@ from ..core.rear_iso_v2 import build_rescue_iso, _check_catalog
 from ..core.native_send_v2 import inspect_readonly_btrfs_source
 from ..snapper.scanner import SnapperScanner
 from ..snapper.source_policy import select_source
-from ..core.verify_v2 import verify_checkpoint_index
+from ..core.verify_v2 import VerificationResult, verify_checkpoint_index
 from ..endpoint.mount_guard_v2 import MountGuard
 from .checkpoint_v2_cmd import (
     _list_v2,
@@ -296,12 +296,17 @@ def _write(root: Path, data: dict, *, allow_local: bool) -> None:
                 pass
 
 
-def _archive_valid(root: Path, archive: str) -> bool:
+def _archive_verdict(root: Path, archive: str) -> VerificationResult:
+    """Keep the exact, actionable checksum failure, not only a bool."""
     stream = root / f"{archive}.btrfs.zst"
     meta = root / f"{archive}.btrfs.zst.meta"
     if not stream.exists() or not meta.exists():
-        return False
-    return verify_checkpoint_index(meta, stream, full=True).status == "ok"
+        return VerificationResult("incomplete", "missing stream or sidecar")
+    return verify_checkpoint_index(meta, stream, full=True)
+
+
+def _archive_valid(root: Path, archive: str) -> bool:
+    return _archive_verdict(root, archive).status == "ok"
 
 
 def _machine_progress_measure(
@@ -372,6 +377,12 @@ def _machine_progress_measure(
     )
     return {
         "event": "machine_progress",
+        "phase": (
+            "verifying_archive"
+            if current and current.get("status") == "sending"
+            and current["archive"] in finals
+            else "transferring"
+        ),
         "completed_members": completed,
         "total_members": total,
         "current_mount": current["original_mount"] if current else None,
@@ -505,6 +516,17 @@ def _live_machine_progress(
                         payload["eta_if_resumed_max_seconds"] = round(
                             max(0, upper - current) / last_good_bps
                         )
+            if payload.get("phase") == "verifying_archive":
+                # No stream bytes are added during the end-to-end checksum
+                # audit. A flat write counter is NOT a stalled backup.
+                payload.update(
+                    bytes_per_second=0, eta_seconds=None,
+                    eta_min_seconds=None, eta_max_seconds=None,
+                    eta_stalled=False, estimated_percent=None,
+                    eta_if_resumed_seconds=None,
+                    eta_if_resumed_min_seconds=None,
+                    eta_if_resumed_max_seconds=None,
+                )
             payload["elapsed_seconds"] = round(now - started)
             # Serialize stop-check and print so a stalled stat cannot emit
             # after the final record. No locks held during filesystem I/O.
@@ -696,8 +718,12 @@ def _drive(root: Path, data: dict, *, allow_local: bool, state_dir: str | None) 
                     _write(root, data, allow_local=allow_local)
                     continue
                 if entry["state"] == "completed":
-                    if not _archive_valid(root, archive):
-                        raise ValueError("completed member failed checksum")
+                    verdict = _archive_verdict(root, archive)
+                    if verdict.status != "ok":
+                        raise ValueError(
+                            "completed member failed checksum: "
+                            f"{verdict.status}: {verdict.detail}"
+                        )
                     member["status"] = "completed"
                     member["transfer_id"] = entry["transfer_id"]
                     _write(root, data, allow_local=allow_local)

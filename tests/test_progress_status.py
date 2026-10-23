@@ -79,6 +79,7 @@ class ProgressTests(unittest.TestCase):
         from subprocess import CompletedProcess
         unit = "harbor-machine-backup-a5d970db-9664-4be8-a0fb-bb1e93c60ec3.service"
         sample = dict(event="machine_progress", completed_members=3,
+                      phase="verifying_archive",
                       total_members=9, bytes_written=4 * p.GIB,
                       estimated_total_bytes=30 * p.GIB, eta_seconds=123,
                       command="do not expose", secret="should not publish")
@@ -94,6 +95,7 @@ class ProgressTests(unittest.TestCase):
             result = p.machine_live_status()
         self.assertIn(1000, result)
         self.assertEqual(result[1000]["completed_members"], 3)
+        self.assertEqual(result[1000]["phase"], "verifying_archive")
         self.assertEqual(result[1000]["eta_seconds"], 123)
         self.assertNotIn("command", result[1000])
         self.assertNotIn("secret", result[1000])

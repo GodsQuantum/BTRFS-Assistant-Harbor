@@ -114,8 +114,16 @@ int main(int argc, char **argv) {
             tray.setToolTip(QStringLiteral("Btrfs Assistant Harbor\n") +
                             HarborProgress::overview(stats, true));
         } else if (!machine.isEmpty()) {
-            state->setText(status);
-            tray.setToolTip(QStringLiteral("Btrfs Assistant Harbor\n") +
+            const bool verifying = machine.value(QStringLiteral("phase")).toString()
+                                   == QStringLiteral("verifying_archive");
+            const auto phase = verifying
+                ? label("Verifying backup integrity (no upload)",
+                        "Vérification d’intégrité (aucun transfert)",
+                        "正在校验备份完整性（无上传）")
+                : status;
+            state->setText(phase);
+            tray.setToolTip(QStringLiteral("Btrfs Assistant Harbor\n") + phase +
+                            QStringLiteral("\n") +
                             HarborProgress::machineOverview(machine, true));
         } else {
             state->setText(status + (machineRunning

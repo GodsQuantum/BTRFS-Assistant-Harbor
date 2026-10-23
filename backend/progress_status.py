@@ -41,7 +41,7 @@ MACHINE_UNIT = re.compile(
 MACHINE_FIELDS = (
     "completed_members", "total_members", "bytes_written",
     "estimated_total_bytes", "estimated_percent", "eta_seconds",
-    "bytes_per_second", "eta_stalled",
+    "bytes_per_second", "eta_stalled", "phase",
 )
 
 
@@ -100,6 +100,8 @@ def machine_live_status() -> dict[int, dict]:
             for key in MACHINE_FIELDS:
                 val = sample.get(key)
                 if key == "eta_stalled" and isinstance(val, bool):
+                    status[key] = val
+                elif key == "phase" and val in ("verifying_archive", "transferring"):
                     status[key] = val
                 elif type(val) in (int, float) and 0 <= val < 2**62:
                     status[key] = val
