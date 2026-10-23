@@ -117,7 +117,11 @@ def _find_mount(path: Path, entries: list[MountIdentity]) -> MountIdentity:
     ]
     if not choices:
         raise RuntimeError(f"no mount found for destination {path}")
-    return max(choices, key=lambda item: len(item.mount_point))
+    # Overmounts may share an identical mount_point (e.g. disposable VFAT
+    # mounted over an inherited /boot).  /proc/self/mountinfo lists the
+    # covering mount last, so select the final row at equal path depth.
+    # Choosing the hidden mount fails the FD-to-mount major:minor check.
+    return max(enumerate(choices), key=lambda pair: (len(pair[1].mount_point), pair[0]))[1]
 
 
 def capture_mount_identity(
