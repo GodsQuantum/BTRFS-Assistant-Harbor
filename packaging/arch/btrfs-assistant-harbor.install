@@ -1,0 +1,15 @@
+# Only read-only progress observer enabled. No transfer is started.
+harbor_enable_progress() {
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload >/dev/null 2>&1 || :
+        systemctl enable --now btrfs-assistant-harbor-progress.service >/dev/null 2>&1 ||
+            printf '%s\n' 'Harbor: could not start progress observer; inspect systemctl status' >&2
+    fi
+}
+post_install() { harbor_enable_progress; }
+post_upgrade() { harbor_enable_progress; }
+post_remove() {
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload >/dev/null 2>&1 || :
+    fi
+}

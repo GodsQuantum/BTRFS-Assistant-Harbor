@@ -75,7 +75,7 @@ int main(int argc, char *argv[])
         qDebug() << "DISPLAY / WAYLAND_DISPLAY variable is set, launching in GUI mode";
         QApplication app(argc, argv);
 
-        app.setWindowIcon(QIcon(":/icons/btrfs-assistant-harbor.svg"));
+        app.setWindowIcon(QIcon(":/icons/harbor-icon-256.png"));
 
         QTranslator translator;
         const QString language = HarborLanguage::selected();

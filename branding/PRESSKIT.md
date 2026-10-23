@@ -10,7 +10,15 @@
 
 **Supported:** Linux x86-64, Btrfs + Snapper. Tested native packages: Debian 13, Fedora 44 and Arch/CachyOS. Network destructive GC, macOS/APFS and encrypted/multi-root ReaR are excluded.
 
-**Brand assets:** `logo.svg` (horizontal lockup), `logo-mark.svg` (mark), `social-preview.svg` (1200×630), `workflow.svg` (data flow). Use original proportions and do not present legacy Tauri screenshots as if they depict this Qt fork.
+**New original Harbor visuals:**
+- harbor-app-icon.png — master circular anchor/harbor/storage emblem.
+- harbor-wordmark.png — full horizontal logo.
+- harbor-banner.png — GitHub/README 3:1 banner.
+- harbor-social.png — square social preview.
+- icons/hicolor/harbor-icon-{16,24,32,48,64,128,256,512}.png — app/tray icons.
+- Earlier SVGs retained for compatibility.
+
+**Legacy brand assets:** `logo.svg` (horizontal lockup), `logo-mark.svg` (mark), `social-preview.svg` (1200×630), `workflow.svg` (data flow). Use original proportions and do not present legacy Tauri screenshots as if they depict this Qt fork.
 
 **Credits:** Independent fork of Btrfs Assistant (GPL-3.0-or-later); no endorsement by upstream. Original anchor mark ported from the superseded GodsQuantum/BTRFS-Harbor.
 

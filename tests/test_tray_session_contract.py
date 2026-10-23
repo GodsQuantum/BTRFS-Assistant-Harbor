@@ -14,6 +14,10 @@ class TraySessionContract(unittest.TestCase):
         self.assertIn("No active backup", tray)
         self.assertIn("HarborProgress::machine()", tray)
         self.assertIn("HarborProgress::machineOverview", tray)
+        self.assertIn("activeMachineBackup()", tray)
+        self.assertIn("harbor-machine-backup-*.service", tray)
+        self.assertIn("machineRunning && !casRunning", tray)
+        self.assertIn("details unavailable", tray)
     def test_tray_has_fixed_polkit_stop_only(self):
         policy = (ROOT / "src/org.btrfs-assistant-harbor.pkexec.policy").read_text()
         self.assertIn("/usr/bin/btrfs-assistant-harbor-tray-stop", policy)

@@ -12,5 +12,6 @@
         <file>save.svg</file>
         <file>btrfs-assistant.svg</file>
         <file>btrfs-assistant-harbor.svg</file>
+        <file alias="harbor-icon-256.png">hicolor/harbor-icon-256.png</file>
     </qresource>
 </RCC>

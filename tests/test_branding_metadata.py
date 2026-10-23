@@ -12,7 +12,7 @@ class BrandingTest(unittest.TestCase):
         for name in ('README.md','README.fr.md','README.zh-CN.md'):
             text=(ROOT/name).read_text()
             with self.subTest(name=name):
-                self.assertTrue('branding/logo.svg' in text or 'branding/logo-mark.svg' in text)
+                self.assertTrue('branding/harbor-banner.png' in text or 'branding/logo.svg' in text or 'branding/logo-mark.svg' in text)
                 self.assertIn('branding/workflow.svg',text)
                 self.assertLess(len(text),4500)
                 self.assertIn('docs/WORKSTATION_BACKUPS',text)
@@ -36,7 +36,7 @@ class BrandingTest(unittest.TestCase):
         qrc=(ROOT/'icons/icons.qrc').read_text()
         main=(ROOT/'src/main.cpp').read_text()
         self.assertIn('<file>btrfs-assistant-harbor.svg</file>',qrc)
-        self.assertIn('QIcon(":/icons/btrfs-assistant-harbor.svg")',main)
+        self.assertIn('QIcon(":/icons/harbor-icon-256.png")',main)
         version = self.release_version()
         self.assertIn(f'setApplicationVersion("{version}")', main)
         self.assertEqual((ROOT/'icons/btrfs-assistant-harbor.svg').read_bytes(),
