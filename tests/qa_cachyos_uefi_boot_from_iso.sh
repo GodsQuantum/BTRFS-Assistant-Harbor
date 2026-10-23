@@ -61,11 +61,16 @@ mount -t vfat "$loop"p1 "$work/root/boot"
   arch/boot/x86_64/vmlinuz-linux-cachyos >/dev/null
 cp "$work/official-kernel/vmlinuz-linux-cachyos" \
   "$work/root/boot/vmlinuz-linux-cachyos"
+# The ISO contains a live-only /etc/mkinitcpio.conf.d/archiso.conf
+# drop-in, which overrides ordinary installed-CachyOS hooks even when
+# mkinitcpio -c is supplied. Remove the live drop-in ONLY from the
+# disposable extracted root, never from the source ISO or any host.
+rm -f -- "$work/root/etc/mkinitcpio.conf.d/archiso.conf"
 cat > "$work/root/etc/mkinitcpio.conf" <<'MK'
 MODULES=(btrfs dm_mod dm_crypt virtio_pci virtio_blk)
 BINARIES=()
 FILES=()
-HOOKS=(base systemd modconf keyboard sd-vconsole block sd-encrypt filesystems fsck)
+HOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole block sd-encrypt filesystems fsck)
 COMPRESSION="zstd"
 MK
 btrfsid="$(blkid -s UUID -o value "/dev/mapper/$mapper")"
@@ -88,12 +93,22 @@ mount --rbind /dev "$work/root/dev"
 mount -t proc proc "$work/root/proc"
 mount --rbind /sys "$work/root/sys"
 mount --bind /run "$work/root/run"
-if ! chroot "$work/root" /usr/bin/mkinitcpio -k "$version" \
+if ! chroot "$work/root" /usr/bin/mkinitcpio -c /etc/mkinitcpio.conf -k "$version" \
   -g /boot/initramfs-linux-cachyos.img > "$work/mkinitcpio.log" 2>&1; then
   tail -n 65 "$work/mkinitcpio.log"
   exit 73
 fi
 test -s "$work/root/boot/initramfs-linux-cachyos.img"
+if grep -E '(Using drop-in configuration.*archiso|Running build hook: \[archiso)' "$work/mkinitcpio.log"; then
+  echo HARBOR_LIVE_ARCHISO_INITRAMFS_FORBIDDEN >&2
+  exit 76
+fi
+grep -Fq "Running build hook: [sd-encrypt]" "$work/mkinitcpio.log" || {
+  echo HARBOR_INSTALLED_LUKS2_INITRAMFS_REQUIRED >&2
+  tail -60 "$work/mkinitcpio.log"
+  exit 77
+}
+echo HARBOR_INSTALLED_CACHYOS_LUKS2_INITRAMFS_READY
 curl -fLsS --retry 3 --max-time 160 \
   https://archive.archlinux.org/packages/l/limine/limine-12.8.0-1-x86_64.pkg.tar.zst \
   -o "$work/limine.pkg.tar.zst"
