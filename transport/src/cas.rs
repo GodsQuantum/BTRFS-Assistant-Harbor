@@ -780,12 +780,44 @@ impl Repository {
             .flat_map(|m| m.objects.iter().map(|e| e.hash.clone()))
             .collect();
         let objects = self.all_objects()?;
-        for (hash, (path, _)) in objects {
-            if !referenced.contains(&hash) {
+        // Filesystem directory fsync after EVERY unlink is prohibitively slow
+        // on rotational XFS, even for a few thousand CAS chunks. Keep
+        // directory FDs pinned while holding the same exclusive repository
+        // lock, and sync once per changed hash-prefix directory. The archive
+        // manifests have already been unlinked and fsynced above, so a
+        // crash before this sweep completes can only leave ORPHANS, never
+        // deprive a retained archive of referenced data.
+        let mut changed_dirs: BTreeMap<PathBuf, File> = BTreeMap::new();
+        let sweep = (|| -> Result<()> {
+            for (hash, (path, _)) in objects {
+                if referenced.contains(&hash) {
+                    continue;
+                }
                 self.guard()?;
-                unlink_regular(&path)?;
+                let parent = path.parent().context("orphan object has no parent")?;
+                if !changed_dirs.contains_key(parent) {
+                    changed_dirs.insert(parent.to_path_buf(), checked_dir_open(parent)?);
+                }
+                let fd = changed_dirs
+                    .get(parent)
+                    .context("pinned orphan object directory missing")?;
+                let leaf = basename_cstr(&path)?;
+                let rc = unsafe { libc::unlinkat(fd.as_raw_fd(), leaf.as_ptr(), 0) };
+                if rc < 0 {
+                    return Err(io::Error::last_os_error())
+                        .context("unlink pinned CAS orphan object");
+                }
             }
-        }
+            Ok(())
+        })();
+        // Sync even if a later unlink fails: a retry after partial cleanup
+        // can reclaim any survivors via the ordinary empty-selection plan.
+        let flush = changed_dirs.values().try_for_each(|dir| {
+            dir.sync_all()
+                .context("sync CAS orphan prefix after batch purge")
+        });
+        sweep?;
+        flush?;
         Ok(plan)
     }
 
