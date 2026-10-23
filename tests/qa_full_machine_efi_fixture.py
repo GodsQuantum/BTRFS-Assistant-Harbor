@@ -49,7 +49,14 @@ def main() -> None:
         rows = original_rows(content)
         boot_rows = [row for row in rows if row["mount_point"] == "/boot"]
         assert boot_rows and boot_rows[-1]["filesystem"] == "vfat", boot_rows
-        return [row for row in rows if row["mount_point"] != "/boot"] + [boot_rows[-1]]
+        # A disposable FAT32 mount over /boot hides any inherited runner
+        # /boot/efi or /boot/firmware entries.  Do not enumerate those
+        # obscured mounts in this single-ESP fixture.  The production
+        # discover_boot_mounts and mount identity guards remain unpatched.
+        hidden_or_unrelated = {"/boot", "/boot/efi", "/boot/firmware", "/efi"}
+        return [
+            row for row in rows if row["mount_point"] not in hidden_or_unrelated
+        ] + [boot_rows[-1]]
 
     # Publish precise mount diagnostics for CI without relaxing any production
     # filesystem guards; runner /boot layouts differ between Ubuntu images.
