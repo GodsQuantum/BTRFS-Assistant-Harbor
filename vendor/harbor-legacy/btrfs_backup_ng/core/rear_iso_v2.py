@@ -81,7 +81,7 @@ def _check_catalog(catalog: dict[str, Any]) -> None:
         raise ValueError("machine root Btrfs is not fully backed up")
     if not isinstance(boot, list) or not any(
         b.get("filesystem") == "vfat"
-        and b.get("mount_point") in ("/efi", "/boot/efi", "/boot/firmware")
+        and b.get("mount_point") in ("/boot", "/efi", "/boot/efi", "/boot/firmware")
         and b.get("status") == "completed"
         for b in boot
     ):
