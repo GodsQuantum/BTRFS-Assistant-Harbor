@@ -2,9 +2,10 @@
 # Development snapshot, independently buildable on Arch/CachyOS.
 pkgname=btrfs-assistant-harbor
 pkgver=0.1.5
-pkgrel=2
+pkgrel=3
 pkgdesc='Btrfs Assistant fork with Snapper remote backup, Harbor checkpoint-v2 and Rust FastCDC CAS'
 arch=('x86_64')
+install='btrfs-assistant-harbor.install'
 url='https://github.com/GodsQuantum/BTRFS-Assistant-Harbor'
 license=('GPL-3.0-or-later' 'MIT')
 depends=('qt6-base' 'btrfs-progs' 'snapper' 'polkit' 'python' 'python-filelock' 'python-rich' 'zstd')

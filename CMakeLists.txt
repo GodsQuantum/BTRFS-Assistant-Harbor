@@ -77,3 +77,8 @@ add_test(NAME harbor-release-version
 set_tests_properties(harbor-release-version PROPERTIES
                      PASS_REGULAR_EXPRESSION "Btrfs Assistant Harbor 0[.]1[.]5"
                      FAIL_REGULAR_EXPRESSION "alpha")
+
+# Black-box tray status detects transient backups without observer.
+add_test(NAME tray-live-unit-fallback
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_tray_live_unit_fallback.py"
+            "$<TARGET_FILE:btrfs-assistant-harbor-tray>")

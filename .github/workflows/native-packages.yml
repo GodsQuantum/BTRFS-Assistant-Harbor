@@ -124,6 +124,7 @@ jobs:
             -C "$RUNNER_TEMP/arch-build" btrfs-assistant-harbor
           SOURCE_SHA="$(sha256sum "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-0.1.5.tar.gz" | cut -d' ' -f1)"
           sed "s/@SHA256@/$SOURCE_SHA/g" packaging/arch/PKGBUILD.in > "$RUNNER_TEMP/arch-build/PKGBUILD"
+          cp packaging/arch/btrfs-assistant-harbor.install "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor.install"
           useradd -m -s /bin/bash harbor-builder
           chown -R harbor-builder:harbor-builder "$RUNNER_TEMP/arch-build"
           runuser -u harbor-builder -- bash -lc "cd '$RUNNER_TEMP/arch-build' && makepkg --noconfirm --cleanbuild"

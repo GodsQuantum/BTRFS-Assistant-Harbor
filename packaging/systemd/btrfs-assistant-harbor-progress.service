@@ -1,7 +1,7 @@
 [Unit]
 Description=Read-only Harbor transfer progress and ETA observer
 After=local-fs.target
-ConditionPathExists=/var/lib/btrfs-assistant-harbor/manual-jobs
+# Whole-machine backup observation does not require legacy CAS manual-jobs.
 
 [Service]
 Type=simple

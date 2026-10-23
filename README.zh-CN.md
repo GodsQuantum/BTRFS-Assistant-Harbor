@@ -1,4 +1,4 @@
-<p align="center"><img src="branding/logo.svg" width="780" alt="Btrfs Assistant Harbor 快照锚形标志"></p>
+<p align="center"><img src="branding/harbor-banner.png" width="100%" alt="Btrfs Assistant Harbor 快照锚形标志"></p>
 
 <h1 align="center">⚓ Btrfs Assistant Harbor</h1>
 <p align="center"><strong>Snapshots in. Systems back.</strong><br>

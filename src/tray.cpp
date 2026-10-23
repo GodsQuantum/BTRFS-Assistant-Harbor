@@ -21,6 +21,23 @@ QString label(const char *en, const char *fr, const char *zh) {
     return QString::fromUtf8(language == QLocale::French ? fr :
                              language == QLocale::Chinese ? zh : en);
 }
+bool activeMachineBackup() {
+    // Keep detecting transient whole-computer units even when the observer
+    // has been disabled or crashed, without requesting privileges.
+    QProcess p;
+    p.start(QStringLiteral("systemctl"), {
+        QStringLiteral("list-units"), QStringLiteral("--no-legend"),
+        QStringLiteral("--no-pager"), QStringLiteral("--plain"),
+        QStringLiteral("--type=service"), QStringLiteral("--state=running"),
+        QStringLiteral("harbor-machine-backup-*.service")});
+    if (!p.waitForStarted(2000) || !p.waitForFinished(4000) ||
+        p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0)
+        return false;
+    for (const auto &line : QString::fromUtf8(p.readAllStandardOutput()).split(QLatin1Char('\n')))
+        if (line.trimmed().startsWith(QStringLiteral("harbor-machine-backup-")) &&
+            line.contains(QStringLiteral(".service"))) return true;
+    return false;
+}
 bool activeBackup() {
     QProcess p;
     p.start(QStringLiteral("systemctl"), {
@@ -42,15 +59,17 @@ int main(int argc, char **argv) {
     app.setApplicationName(QStringLiteral("Btrfs Assistant Harbor Tray"));
     app.setQuitOnLastWindowClosed(false);
     const auto iconPath = QStringLiteral(
-        "/usr/share/icons/hicolor/scalable/apps/btrfs-assistant-harbor.svg");
-    auto icon = QIcon::fromTheme(QStringLiteral("btrfs-assistant-harbor"));
-    if (icon.isNull()) icon = QIcon(iconPath);
+        "/usr/share/icons/hicolor/256x256/apps/btrfs-assistant-harbor.png");
+    // The Harbor circle is part of our branded UX. Never resolve an older
+    // third-party SVG theme icon before the packaged Harbor PNG.
+    auto icon = QIcon(iconPath);
+    if (icon.isNull()) icon = QIcon::fromTheme(QStringLiteral("btrfs-assistant-harbor"));
     if (app.arguments().contains(QStringLiteral("--self-test"))) {
         QTextStream(stdout) << "PASS_HARBOR_TRAY_QT_UNPRIVILEGED\n";
         return 0;
     }
     if (app.arguments().contains(QStringLiteral("--status"))) {
-        QTextStream(stdout) << (activeBackup() ? "running\n" : "idle\n");
+        QTextStream(stdout) << ((activeBackup() || activeMachineBackup() || !HarborProgress::machine().isEmpty()) ? "running\n" : "idle\n");
         return 0;
     }
     if (app.arguments().size() != 1) return 2;
@@ -75,12 +94,13 @@ int main(int argc, char **argv) {
     auto update = [&] {
         const auto machine = HarborProgress::machine();
         const bool casRunning = activeBackup();
-        const auto status = casRunning || !machine.isEmpty()
+        const bool machineRunning = activeMachineBackup() || !machine.isEmpty();
+        const auto status = casRunning || machineRunning
             ? label("Backup in progress (systemd)", "Sauvegarde en cours (systemd)",
                     "备份进行中 (systemd)")
             : label("No active backup", "Aucune sauvegarde active",
                     "没有正在运行的备份");
-        quit->setText(!machine.isEmpty() && !casRunning
+        quit->setText(machineRunning && !casRunning
             ? label("Close tray (backup continues)",
                     "Fermer l’icône (la sauvegarde continue)",
                     "关闭托盘（备份继续运行）")
@@ -98,7 +118,9 @@ int main(int argc, char **argv) {
             tray.setToolTip(QStringLiteral("Btrfs Assistant Harbor\n") +
                             HarborProgress::machineOverview(machine, true));
         } else {
-            state->setText(status);
+            state->setText(status + (machineRunning
+                ? label(" (details unavailable)", " (détails indisponibles)",
+                        "（详情暂不可用）") : QString()));
             tray.setToolTip(QStringLiteral("Btrfs Assistant Harbor — ") + status);
         }
     };
