@@ -155,3 +155,16 @@ Cet inventaire n'est que la premiere porte : il ne certifie pas le boot.
 La vraie certification exige de restaurer sur disque virtuel GPT + ESP +
 LUKS2 + Btrfs, installer une entree Limine sur cette image, et redemarrer
 SANS ISO pour prouver le systeme et les fichiers recuperes.
+
+## Couverture native EFI d'une sauvegarde machine COMPLETE
+
+Un nouveau scenario executé uniquement sur un runner GitHub jetable
+installe une partition FAT32 provisoire dans un espace de montages Linux
+PRIVE a /boot. Pour eviter toute lecture de la racine du runner, seules les
+sources Btrfs de test sont injectees dans le processus. L'inventaire
+reel EFI, les gardes de montage, l'archivage tar avec SHA-256, les controles
+des volumes Btrfs et le moteur de restauration sont TOUTES les implementations
+de production non modifiees. La preuve attendue est un ensemble de statut
+completed_btrfs_and_boot_files avec archive VFAT complete, verification
+d'integrite et comparaison octet par octet des noyaux/initramfs/limine.conf
+recus dans le staging. Les partitions de Pegasus ne sont pas utilisees.
