@@ -120,23 +120,10 @@ efi="$(find "$work/limine" -iname 'BOOTX64.EFI' | head -n 1)"
 test -f "$efi" || { echo LIMINE_EFI_NOT_FOUND; exit 74; }
 mkdir -p "$work/root/boot/EFI/BOOT"
 cp "$efi" "$work/root/boot/EFI/BOOT/BOOTX64.EFI"
-# New inactive restored root leaves original @ intact.
-btrfs subvolume snapshot "$work/top/@" "$work/top/@harbor-88888888-root" >/dev/null
-printf 'CachyRestored\n' > "$work/top/@harbor-88888888-root/etc/hostname"
-sed -i 's|subvol=/@ |subvol=/@harbor-88888888-root |' \
-  "$work/top/@harbor-88888888-root/etc/fstab"
-cat > "$work/top/@harbor-88888888-root/etc/systemd/system/harbor-boot-proof.service" <<'PROOF'
-[Unit]
-Description=Harbor restored system boot proof
-After=local-fs.target
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/sh -c 'echo HARBOR_CACHYOS_RESTORED_UEFI_LUKS2_BOOT_OK > /dev/ttyS0'
-[Install]
-WantedBy=multi-user.target
-PROOF
-ln -sfn /etc/systemd/system/harbor-boot-proof.service \
-  "$work/top/@harbor-88888888-root/etc/systemd/system/multi-user.target.wants/harbor-boot-proof.service"
+# Make root and home distinguishable from the untouched fallback. A valid
+# boot must load actual received Harbor archives, not a direct Btrfs clone.
+printf 'HARBOR_BACKUP_ROOT_WITNESS\n' > "$work/root/etc/harbor-source-witness"
+printf 'HARBOR_BACKUP_HOME_WITNESS\n' > "$work/top/@home/harbor-home-witness"
 cat > "$work/root/boot/limine.conf" <<LIMINE
 timeout: 1
 default_entry: 2
@@ -151,6 +138,75 @@ default_entry: 2
   module_path: boot():/initramfs-linux-cachyos.img
   cmdline: rw console=ttyS0,115200n8 rootflags=subvol=/@harbor-88888888-root rd.luks.uuid=$luks root=/dev/mapper/luks-$luks
 LIMINE
+
+# The real production machine-set captures two native Btrfs snapshots and
+# archives the FAT32 ESP with its SHA256 guard, then receives both streams
+# into previously empty target Btrfs subvolumes. The test fixture swaps ONLY
+# source discovery because CI's host is not the test CachyOS guest.
+for dir in run sys proc dev/pts dev; do
+  mountpoint -q "$work/root/$dir" && umount -l "$work/root/$dir"
+done
+echo HARBOR_NATIVE_MACHINE_SET_BACKUP_AND_RESTORE_BEGIN
+mkdir -p "$work/efi-repo" "$work/top/receive-efi"
+printf '/dev/ci-disposable-esp /boot vfat defaults 0 2\n' > "$work/ci-fstab"
+unshare --mount --propagation private sh -c '
+  set -eu
+  mount --bind "$1" /boot
+  test "$(findmnt -rn -o FSTYPE --mountpoint /boot | tail -n 1)" = vfat
+  mount --bind "$6" /etc/fstab
+  PYTHONPATH="$7" python3 tests/qa_full_machine_efi_fixture.py "$2" "$3" "$4" "$5"
+' sh "$work/root/boot" "$work/efi-repo" "$work/root" "$work/top/@home" \
+  "$work/top/receive-efi" "$work/ci-fstab" "$PWD/vendor/harbor-legacy"
+readarray -t received_sources < <(
+  PYTHONPATH=vendor/harbor-legacy python3 - \
+    "$work/efi-repo" "$work/top/receive-efi" <<'RECEIVED'
+import json
+from pathlib import Path
+import sys
+from btrfs_backup_ng.core.rear_bridge_v2 import find_received_subvolume
+repo, stage = (Path(x) for x in sys.argv[1:3])
+records=list(repo.glob(".harbor-machine-set-*.json"))
+assert len(records)==1, records
+catalog=json.loads(records[0].read_text())
+assert catalog["status"]=="completed_btrfs_and_boot_files"
+sources={}
+for i, member in enumerate(catalog["members"]):
+    source=find_received_subvolume(stage / f"volume-{i:03d}",member["snapshot_uuid"])
+    assert source.is_dir() and source.is_relative_to(stage)
+    sources[member["original_mount"]]=str(source)
+assert len(sources)==2 and any(s.endswith("/@home") for s in sources), sources
+root_name = next(x for x in sources if not x.endswith("/@home"))
+print(sources[root_name])
+print(sources[next(x for x in sources if x.endswith("/@home"))])
+RECEIVED
+)
+test "${#received_sources[@]}" -eq 2
+btrfs subvolume snapshot "${received_sources[0]}" \
+  "$work/top/@harbor-88888888-root" >/dev/null
+btrfs subvolume snapshot "${received_sources[1]}" \
+  "$work/top/@harbor-88888888-home" >/dev/null
+# Remove original witnesses to prove the guest ran from the restored copies.
+rm -f -- "$work/root/etc/harbor-source-witness" "$work/top/@home/harbor-home-witness"
+test -s "$work/top/@harbor-88888888-root/etc/harbor-source-witness"
+test -s "$work/top/@harbor-88888888-home/harbor-home-witness"
+printf 'CachyRestored\n' > "$work/top/@harbor-88888888-root/etc/hostname"
+sed -i -e 's|subvol=/@ |subvol=/@harbor-88888888-root |' \
+       -e 's|subvol=/@home |subvol=/@harbor-88888888-home |' \
+  "$work/top/@harbor-88888888-root/etc/fstab"
+echo PASS_HARBOR_NATIVE_MACHINE_SET_BTRFS_AND_EFI_RECEIVED
+
+cat > "$work/top/@harbor-88888888-root/etc/systemd/system/harbor-boot-proof.service" <<'PROOF'
+[Unit]
+Description=Harbor restored system boot proof
+After=local-fs.target
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sh -c 'test -f /etc/harbor-source-witness && test -f /home/harbor-home-witness && echo HARBOR_CACHYOS_RESTORED_UEFI_LUKS2_BOOT_OK > /dev/ttyS0'
+[Install]
+WantedBy=multi-user.target
+PROOF
+ln -sfn /etc/systemd/system/harbor-boot-proof.service \
+  "$work/top/@harbor-88888888-root/etc/systemd/system/multi-user.target.wants/harbor-boot-proof.service"
 sync
 for dir in run sys proc dev/pts dev; do
   mountpoint -q "$work/root/$dir" && umount -l "$work/root/$dir"
