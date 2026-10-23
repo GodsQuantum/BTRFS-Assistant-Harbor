@@ -20,14 +20,13 @@ PASS_PHRASE = "harbor-ci-only-test-passphrase"
 def main() -> None:
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise RuntimeError("QEMU boot proof is restricted to disposable CI")
-    if len(sys.argv) != 4:
-        raise SystemExit("usage: qa_cachyos_uefi_guest_expect.py RAW_DISK OVMF_VARS LOG")
-    disk, vars_image, log = (Path(x) for x in sys.argv[1:4])
-    if not disk.is_file() or not vars_image.is_file():
-        raise ValueError("missing freshly installed VM disk or firmware variables")
-    code = Path("/usr/share/OVMF/OVMF_CODE.fd")
-    if not code.is_file():
-        raise ValueError("OVMF_CODE.fd not installed")
+    if len(sys.argv) != 5:
+        raise SystemExit("usage: qa_cachyos_uefi_guest_expect.py RAW_DISK OVMF_VARS LOG OVMF_CODE")
+    disk, vars_image, log, code = (Path(x) for x in sys.argv[1:5])
+    if not disk.is_file() or not vars_image.is_file() or not code.is_file():
+        raise ValueError("missing disposable VM disk or matched OVMF firmware pair")
+    if not (disk.stat().st_size and vars_image.stat().st_size and code.stat().st_size):
+        raise ValueError("empty OVMF firmware or VM disk")
     cmd = [
         "qemu-system-x86_64",
         "-machine", "q35,accel=tcg",
