@@ -16,7 +16,7 @@ L'application publique Harbor doit fonctionner sur une diversité de machines et
 GitHub : https://github.com/GodsQuantum/BTRFS-Assistant-Harbor
 PR CANDIDATE #5 (draft) : https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/pull/5
 Branche de travail : feat/whole-computer-recovery-20261023
-Dernier commit de CODE verifie avant creation de CE handoff : d733a5bbc6590c23fbd4471f597fc7651acf0073
+Dernier commit de CODE inclus dans la branche au moment du premier enregistrement du handoff : ccd2a29d5c6593815cd9e0a9cf14f0ddf47b400b (un commit de tests etait arrive entre le diagnostic d733a5b et le commit documentaire).
 NE PAS SE FIER A UN SHA IMPRIME DANS UN ANCIEN CHAT : verifier git rev-parse HEAD et git status -sb.
 Dev actif : Cloud9 LXC700 /home/arezki/Dev/BTRFS-Assistant-Harbor
 Espace projet NVMe /home/arezki/Projets/HomeLab/BTRFS Harbor/
@@ -70,6 +70,16 @@ Fichiers essentiels :
 - tests/qa_oneclick_btrfs_loopback.sh, tests/qa_cachyos_luks2_loopback.sh
 - tests/test_cachyos_*.py
 - .github/workflows/cachyos-uefi-recovery-lab.yml
+
+## Addendum indispensable — ajout de tests recu pendant le handoff
+
+Commit de code ccd2a29d5c6593815cd9e0a9cf14f0ddf47b400b :
+- test(machine): exercise production EFI and Btrfs full-machine archive in isolated mount namespace.
+- Fichier nouveau : tests/qa_full_machine_efi_fixture.py.
+- Fichiers modifies : tests/qa_cachyos_luks2_loopback.sh et docs/guides/RESTAURATION_COMPLETE_CACHYOS_FR.md.
+- Attention : validation d'archives EFI+Btrfs sur runner isole =/= restauration demarrable CachyOS.
+- A la reprise, ouvrir et executer ce nouveau test; verifier qu'il est bien inclus dans la CI et ne supprime aucune garde sur /boot ou mount namespace.
+- CI en mouvement : apres push documentaire, workflow general courant le 23/10 vers 12:22 CEST = run 39938499291 (en cours a cette heure). Les anciens 39937489558 et 39938109317 ont ete annules par de nouveaux commits, ne pas les decrire comme des echecs de tests. Toujours consulter run plus recent pour HEAD.
 
 ## POINT PRECIS OU REPRENDRE — TOP PRIORITES
 
