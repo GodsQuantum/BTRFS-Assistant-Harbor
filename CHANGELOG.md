@@ -1,3 +1,16 @@
+## 1.0.0 — 2026-10-24
+
+Stable release for the documented Linux x86-64 backup scope:
+- Qt 6 fork based on upstream Btrfs Assistant 2.3.2.
+- Snapper backups, guarded and resumable Btrfs send, Rust CAS, native systemd schedules.
+- Contextual KDE tray, EN/FR/zh-CN translations and optional success-only shutdown.
+- Machine-set archive/EFI catalog, staged restoration in disposable VMs.
+- Profile-scoped shutdown authorization and stricter archive/symlink validation.
+
+Limits: Secure Boot, LUKS/LVM/RAID, multi-root, systemd-boot, destructive
+network CAS GC and universal single-click bare-metal recovery remain
+unsupported/unverified. Practice restoration on spare hardware or a VM.
+
 # Changelog
 
 ## 0.1.5-5 — 2026-10-23

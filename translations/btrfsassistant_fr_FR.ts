@@ -28,8 +28,12 @@
             <translation>Installer et activer un transfert automatique %1 pour %2 ? Le moteur sélectionné sera utilisé. Aucun instantané Snapper ne sera créé ni supprimé.%3</translation>
         </message>
         <message>
-            <source>\n\nThe computer will shut down only after a successful scheduled backup.</source>
-            <translation>\n\nL’ordinateur s’éteindra uniquement après une sauvegarde planifiée réussie.</translation>
+            <source>
+
+The computer will shut down only after a successful scheduled backup.</source>
+            <translation>
+
+L’ordinateur s’éteindra uniquement après une sauvegarde planifiée réussie.</translation>
         </message>
         <message>
             <source>Remote backups — Snapper snapshots</source>

@@ -1,7 +1,7 @@
 name: Native packages (Fedora and Arch)
 on:
   push:
-    branches: [main, 'cert/**', 'feat/detached-cas-calendar-20261022']
+    branches: [main, 'cert/**', 'feat/**']
   workflow_dispatch:
 permissions:
   contents: read
@@ -37,7 +37,7 @@ jobs:
           test -f "$GITHUB_WORKSPACE/CMakeLists.txt"
           tar -C "$GITHUB_WORKSPACE" --exclude=.git --exclude=build \
             --transform='s|^\./|btrfs-assistant-harbor/|' \
-            -czf "$RUNNER_TEMP/rpmbuild/SOURCES/btrfs-assistant-harbor-0.1.5.tar.gz" .
+            -czf "$RUNNER_TEMP/rpmbuild/SOURCES/btrfs-assistant-harbor-1.0.0.tar.gz" .
           cp packaging/fedora/btrfs-assistant-harbor.spec "$RUNNER_TEMP/rpmbuild/SPECS/"
           rpmbuild --define "_topdir $RUNNER_TEMP/rpmbuild" \
             -ba "$RUNNER_TEMP/rpmbuild/SPECS/btrfs-assistant-harbor.spec"
@@ -120,9 +120,9 @@ jobs:
           test -f "$GITHUB_WORKSPACE/CMakeLists.txt"
           tar -C "$GITHUB_WORKSPACE" --exclude=.git --exclude=build -cf - . \
             | tar -xf - -C "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor"
-          tar -czf "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-0.1.5.tar.gz" \
+          tar -czf "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-1.0.0.tar.gz" \
             -C "$RUNNER_TEMP/arch-build" btrfs-assistant-harbor
-          SOURCE_SHA="$(sha256sum "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-0.1.5.tar.gz" | cut -d' ' -f1)"
+          SOURCE_SHA="$(sha256sum "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor-1.0.0.tar.gz" | cut -d' ' -f1)"
           sed "s/@SHA256@/$SOURCE_SHA/g" packaging/arch/PKGBUILD.in > "$RUNNER_TEMP/arch-build/PKGBUILD"
           cp packaging/arch/btrfs-assistant-harbor.install "$RUNNER_TEMP/arch-build/btrfs-assistant-harbor.install"
           useradd -m -s /bin/bash harbor-builder

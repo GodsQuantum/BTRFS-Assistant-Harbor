@@ -287,15 +287,38 @@ def completed_archive_fingerprint(profile: Profile) -> frozenset[tuple[str, int,
         machine = profile.machine or socket.gethostname()
         files = (repo / "machines" / machine / "manifests").glob("*.json")
     else:
-        files = repo.glob("*.btrfs.zst.meta")
+        # Scheduled checkpoint-v2 uses shared NAS storage. Only the native
+        # completion journal for OUR profile proves a new backup: sidecars
+        # from another profile must never authorize powering off this host.
+        files = repo.glob(".harbor-resume-*.json")
     output = set()
     for file in files:
         try:
             if file.is_symlink() or not file.is_file():
                 continue
+            if profile.engine != "cas":
+                journal = json.loads(file.read_text())
+                identity = journal.get("identity") or {}
+                archive = identity.get("archive_name")
+                if (journal.get("state") != "completed"
+                        or identity.get("profile_id") != profile.profile_id
+                        or not isinstance(archive, str)
+                        or re.fullmatch(r"[A-Za-z0-9_.-]{1,200}", archive) is None):
+                    continue
+                stream = repo / (archive + ".btrfs.zst")
+                meta = repo / (archive + ".btrfs.zst.meta")
+                if (not stream.is_file() or stream.is_symlink() or not meta.is_file()
+                        or meta.is_symlink()):
+                    continue
+                doc = json.loads(meta.read_text())
+                digest = doc.get("checksum") or {}
+                if (doc.get("size") != stream.stat().st_size or not stream.stat().st_size
+                        or digest.get("algorithm") != "sha256"
+                        or re.fullmatch("[a-f0-9]{64}", str(digest.get("value", ""))) is None):
+                    continue
             stat = file.stat()
             output.add((str(file.relative_to(repo)), stat.st_size, stat.st_mtime_ns))
-        except OSError:
+        except (OSError, ValueError, TypeError):
             continue
     return frozenset(output)
 

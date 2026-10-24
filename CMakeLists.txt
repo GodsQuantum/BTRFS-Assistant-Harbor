@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(btrfs-assistant-harbor VERSION 0.1.5 LANGUAGES CXX)
+project(btrfs-assistant-harbor VERSION 1.0.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
@@ -75,7 +75,7 @@ add_test(NAME machine-set-protocol COMMAND test-machine-set-protocol)
 add_test(NAME harbor-release-version
          COMMAND $<TARGET_FILE:btrfs-assistant-harbor-bin> --version)
 set_tests_properties(harbor-release-version PROPERTIES
-                     PASS_REGULAR_EXPRESSION "Btrfs Assistant Harbor 0[.]1[.]5"
+                     PASS_REGULAR_EXPRESSION "Btrfs Assistant Harbor 1[.]0[.]0"
                      FAIL_REGULAR_EXPRESSION "alpha")
 
 # Black-box tray status detects transient backups without observer.
