@@ -27,7 +27,7 @@ class PoweroffValidationTests(unittest.TestCase):
             root=Path(tmp)
             members=[]
             for i,mount in enumerate(EXPECTED):
-                name="machine20261023T121604-"+SET_ID+f"-{i:03d}"
+                name="machine20261023T121604-"+SET_ID[:8]+f"-{i:03d}"
                 data=f"Btrfs stream {i}".encode()
                 (root/(name+".btrfs.zst")).write_bytes(data)
                 (root/(name+".btrfs.zst.meta")).write_text(json.dumps({

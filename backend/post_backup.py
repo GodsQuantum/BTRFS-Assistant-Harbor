@@ -27,7 +27,7 @@ def validate_machine_set(repo: Path, set_id: str, *, verify_boot: bool = False) 
             if member.get("status")!="completed" or not member.get("transfer_id"):
                 return False,"incomplete member"
             name=member["archive"]
-            if not re.fullmatch("machine[0-9TZ-]+"+re.escape(set_id)+"-[0-9]{3}",name):
+            if not re.fullmatch("machine[0-9TZ-]+"+re.escape(set_id[:8])+"-[0-9]{3}",name):
                 return False,"invalid archive name"
             archive=repo/(name+".btrfs.zst")
             meta=repo/(name+".btrfs.zst.meta")
@@ -38,7 +38,7 @@ def validate_machine_set(repo: Path, set_id: str, *, verify_boot: bool = False) 
             if doc.get("size")!=archive.stat().st_size or archive.stat().st_size==0 or (
                 sha.get("algorithm")!="sha256" or not re.fullmatch("[a-f0-9]{64}",str(sha.get("value","")))):
                 return False,"archive metadata mismatch"
-        if list(repo.glob("machine*"+set_id+"*.part")):
+        if list(repo.glob("machine*"+set_id[:8]+"*.part")):
             return False,"incomplete archive still present"
         boot=data.get("boot_members",[])
         if len(boot)!=1 or boot[0].get("status")!="completed" or boot[0].get("mount_point")!="/boot":
