@@ -70,3 +70,7 @@ Dans **Sauvegardes distantes → Protection de l’ordinateur**, coche **Éteind
 Pour les **sauvegardes planifiées**, ouvre les options avancées et coche **Éteindre après chaque sauvegarde planifiée réussie**, puis installe le planning. Harbor conserve ce choix dans le profil systemd. Le planificateur vérifie qu’une nouvelle archive a été effectivement enregistrée après le transfert réussi, puis demande l’arrêt via systemctl ; un planning sans changement ne provoque aucun arrêt.
 
 Les deux réglages sont **désactivés par défaut**. Un arrêt reste une opération système : ne coche pas l’option si d’autres activités sur la machine doivent rester actives. Le contrôle de cohérence du catalogue machine et des archives Btrfs/EFI reste indépendant du simple pourcentage affiché dans le tray.
+
+## Icône système contextuelle (KDE)
+
+L’icône Harbor reste **masquée au repos** et **lorsque sa fenêtre est ouverte**. Elle devient visible automatiquement lorsque **la fenêtre Harbor est fermée alors qu’une sauvegarde s’exécute toujours en arrière-plan**, puis disparaît après le transfert. Le démon tray garde sa petite boucle de surveillance (2,5 secondes) sans lancer ni interrompre de sauvegarde. L’action « Masquer l’icône (sauvegarde maintenue) » ne supprime aucun transfert.
