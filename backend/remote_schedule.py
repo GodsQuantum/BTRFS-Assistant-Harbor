@@ -159,7 +159,7 @@ Restart=on-failure
 RestartSec=60s
 NoNewPrivileges=true
 TimeoutStartSec=infinity
-{("ExecStartPost=/usr/bin/systemctl poweroff" + chr(10)) if profile.poweroff_after_success else ""}"""
+"""
 
 
 def calendar_expression(profile: Profile) -> str:
@@ -275,6 +275,57 @@ def list_profiles(config_dir: Path = CONFIG_DIR) -> list[dict]:
     return output
 
 
+def completed_archive_fingerprint(profile: Profile) -> frozenset[tuple[str, int, int]]:
+    """Find only committed outputs for this machine. Never trust a progress value.
+
+    Profile runs with a shared repository: archive list is scoped to the
+    current engine/machine and modifications to source snapshots are ignored.
+    """
+    repo = Path(profile.target)
+    if profile.engine == "cas":
+        import socket
+        machine = profile.machine or socket.gethostname()
+        files = (repo / "machines" / machine / "manifests").glob("*.json")
+    else:
+        files = repo.glob("*.btrfs.zst.meta")
+    output = set()
+    for file in files:
+        try:
+            if file.is_symlink() or not file.is_file():
+                continue
+            stat = file.stat()
+            output.add((str(file.relative_to(repo)), stat.st_size, stat.st_mtime_ns))
+        except OSError:
+            continue
+    return frozenset(output)
+
+
+def perform_profile(profile: Profile) -> int:
+    """Power off only when a real, newly committed verified archive exists."""
+    before = completed_archive_fingerprint(profile) if profile.poweroff_after_success else None
+    if profile.engine == "cas":
+        from cas_schedule import run_cas_profile
+        result = run_cas_profile(profile)
+    else:
+        cli = shutil.which("harbor-checkpoint-v2")
+        if not cli:
+            print("Harbor CLI is missing from the service PATH", file=sys.stderr)
+            return 127
+        result = subprocess.run(schedule_argv(profile, cli), check=False).returncode
+    if result == 0 and profile.poweroff_after_success:
+        after = completed_archive_fingerprint(profile)
+        if after - before:
+            # The backend already verified the completed archive. Using
+            # systemctl is native and does not depend on the Qt interface.
+            shutdown = subprocess.run(["/usr/bin/systemctl", "poweroff"], check=False)
+            if shutdown.returncode:
+                print("Backup succeeded, but automatic power-off failed", file=sys.stderr)
+                return shutdown.returncode
+        else:
+            print("Backup skipped or unchanged: keeping computer on", flush=True)
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
@@ -326,14 +377,7 @@ def main(argv: list[str] | None = None) -> int:
                             f"btrfs-assistant-harbor-{profile.profile_id}.timer"], check=True)
         return 0
     profile = load_profile(args.profile_id)
-    if profile.engine == "cas":
-        from cas_schedule import run_cas_profile
-        return run_cas_profile(profile)
-    cli = shutil.which("harbor-checkpoint-v2")
-    if not cli:
-        print("Harbor CLI is missing from the service PATH", file=sys.stderr)
-        return 127
-    return subprocess.run(schedule_argv(profile, cli), check=False).returncode
+    return perform_profile(profile)
 
 
 if __name__ == "__main__":
