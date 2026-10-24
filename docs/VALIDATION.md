@@ -1,3 +1,24 @@
+# Btrfs Assistant Harbor 1.0.0 — supported scope and release gates
+
+The v1.0.0 production release is limited to documented x86-64 Linux
+backup workflows and VM-proven single-root UEFI/GRUB/Btrfs staged recovery.
+The release gate is fully green certification CI, native package install/
+remove tests, translations, source checksums, and disposable-system tests.
+
+Not certified: universal physical bare-metal recovery, Secure Boot,
+LUKS/LVM/RAID, multiple root volumes, systemd-boot, arbitrary OEM firmware
+or destructive CAS garbage collection on shared NFS/SMB. Never run an
+unattended restore onto a production disk.
+
+The real Pegasus backup of 2026-10-23/24 completed all 9 Btrfs archives
+plus EFI in backup-local. A corresponding bare-metal restoration on Pegasus
+has NOT been demonstrated. End-to-end VM restoration tests are separate.
+
+The historical validation checkpoints below refer to their older candidates,
+including their past reasons for delaying a stable release.
+
+---
+
 # Matrice de validation de Btrfs Assistant Harbor 0.1.0-alpha9
 
 ## Certification candidate au 16 octobre 2026 (prioritaire sur le tableau historique ci-dessous)

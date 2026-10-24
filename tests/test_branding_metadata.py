@@ -66,10 +66,10 @@ class BrandingTest(unittest.TestCase):
     def test_packages_share_stable_semver(self):
         version = self.release_version()
         self.assertIn(f'VERSION {version} LANGUAGES', (ROOT/'CMakeLists.txt').read_text())
-        self.assertIn(f'VERSION = "{version}-2"',(ROOT/'packaging/debian/build_preview.py').read_text())
+        self.assertIn(f'VERSION = "{version}-1"',(ROOT/'packaging/debian/build_preview.py').read_text())
         self.assertIn(f'Version: {version}',(ROOT/'packaging/fedora/btrfs-assistant-harbor.spec').read_text())
         self.assertIn(f'pkgver={version}',(ROOT/'packaging/arch/PKGBUILD.in').read_text())
-        self.assertIn(f"{version}-2+deb13",(ROOT/'.github/workflows/certification.yml').read_text())
+        self.assertIn(f"{version}-1+deb13",(ROOT/'.github/workflows/certification.yml').read_text())
         for path in ('CHANGELOG.md','CONTRIBUTING.md','SECURITY.md','branding/BRAND.md','branding/PRESSKIT.md'):
             self.assertTrue((ROOT/path).is_file(),path)
 

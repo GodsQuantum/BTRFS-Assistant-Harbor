@@ -31,7 +31,8 @@ def validate_machine_set(repo: Path, set_id: str, *, verify_boot: bool = False) 
                 return False,"invalid archive name"
             archive=repo/(name+".btrfs.zst")
             meta=repo/(name+".btrfs.zst.meta")
-            if not archive.is_file() or not meta.is_file():
+            if (not archive.is_file() or archive.is_symlink()
+                    or not meta.is_file() or meta.is_symlink()):
                 return False,"archive or verification metadata missing"
             doc=json.loads(meta.read_text())
             sha=doc.get("checksum",{})
@@ -45,7 +46,7 @@ def validate_machine_set(repo: Path, set_id: str, *, verify_boot: bool = False) 
             return False,"boot archive incomplete"
         item=boot[0]
         source=repo/item["archive"]
-        if not source.is_file() or source.stat().st_size!=item["bytes"]:
+        if not source.is_file() or source.is_symlink() or source.stat().st_size!=item["bytes"]:
             return False,"boot file missing or incomplete"
         if verify_boot:
             h=hashlib.sha256()

@@ -1538,8 +1538,12 @@
             <translation>是否为 %2 安装并启用 %1 自动传输？将使用所选引擎，不会创建或删除 Snapper 快照。%3</translation>
         </message>
         <message>
-            <source>\n\nThe computer will shut down only after a successful scheduled backup.</source>
-            <translation>\n\n仅在定时备份成功完成后关机。</translation>
+            <source>
+
+The computer will shut down only after a successful scheduled backup.</source>
+            <translation>
+
+仅在定时备份成功完成后关机。</translation>
         </message>
         <message>
             <source>Allow explicitly selected local destination</source>

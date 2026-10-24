@@ -36,20 +36,56 @@ class ScheduleTests(unittest.TestCase):
                 self.assertEqual(sched.perform_profile(profile), 0)
                 runner.assert_called_once()
 
-    def test_poweroff_request_only_after_a_new_verified_archive(self):
+    def test_poweroff_requires_own_completed_journal_not_foreign_archives(self):
         from unittest.mock import patch
         from types import SimpleNamespace
         with tempfile.TemporaryDirectory() as tmp:
             profile = sched.Profile("root", tmp, "daily", poweroff_after_success=True)
-            def actual_fake_run(argv, **kwargs):
+            other = sched.Profile("home", tmp, "daily", poweroff_after_success=True)
+            filename = "snap-root-123"
+            journal = Path(tmp) / ".harbor-resume-111.json"
+            archive = Path(tmp) / (filename + ".btrfs.zst")
+            meta = Path(tmp) / (filename + ".btrfs.zst.meta")
+            def create_journal(identity, state="completed"):
+                archive.write_bytes(b"mock backup stream")
+                meta.write_text(json.dumps({"size": archive.stat().st_size,
+                    "checksum": {"algorithm": "sha256", "value": "a" * 64}}))
+                journal.write_text(json.dumps({"state": state, "identity": {
+                    "profile_id": identity, "archive_name": filename}}))
+            def fake_run(argv, **kwargs):
                 if argv[0] == "/usr/bin/harbor-checkpoint-v2":
-                    (Path(tmp) / "snap-root-123.btrfs.zst.meta").write_text('{"checksum":"verified"}')
+                    create_journal(other.profile_id)
                 return SimpleNamespace(returncode=0)
             with patch.object(sched.shutil, "which", return_value="/usr/bin/harbor-checkpoint-v2"), \
-                    patch.object(sched.subprocess, "run", side_effect=actual_fake_run) as runner:
+                    patch.object(sched.subprocess, "run", side_effect=fake_run) as runner:
+                self.assertEqual(sched.perform_profile(profile), 0)
+                runner.assert_called_once()  # foreign profile must not power off
+            journal.unlink()
+            def own_run(argv, **kwargs):
+                if argv[0] == "/usr/bin/harbor-checkpoint-v2":
+                    create_journal(profile.profile_id)
+                return SimpleNamespace(returncode=0)
+            with patch.object(sched.shutil, "which", return_value="/usr/bin/harbor-checkpoint-v2"), \
+                    patch.object(sched.subprocess, "run", side_effect=own_run) as runner:
                 self.assertEqual(sched.perform_profile(profile), 0)
                 self.assertEqual(runner.call_count, 2)
                 self.assertEqual(runner.call_args.args[0], ["/usr/bin/systemctl", "poweroff"])
+
+    def test_poweroff_denied_for_incomplete_or_unverified_checkpoint(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = sched.Profile("root", tmp, "daily", poweroff_after_success=True)
+            def fake_run(argv, **kwargs):
+                if argv[0] == "/usr/bin/harbor-checkpoint-v2":
+                    (Path(tmp)/".harbor-resume-001.json").write_text(json.dumps({
+                        "state":"uploading","identity":{"profile_id":profile.profile_id,
+                            "archive_name":"snap-root-123"}}))
+                return SimpleNamespace(returncode=0)
+            with patch.object(sched.shutil, "which", return_value="/usr/bin/harbor-checkpoint-v2"), \
+                    patch.object(sched.subprocess, "run", side_effect=fake_run) as runner:
+                self.assertEqual(sched.perform_profile(profile), 0)
+                runner.assert_called_once()
 
     def test_id_stable_and_valid(self):
         self.assertEqual(self.profile.profile_id, sched.Profile("root", "/mnt/Cloud Backup", "daily", False).profile_id)
