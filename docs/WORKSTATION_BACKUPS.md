@@ -69,3 +69,7 @@ Read [contributing guidelines](../CONTRIBUTING.md), [security policy](../SECURIT
 In **Remote backups → Computer protection**, select **Shut down this computer when this backup completes successfully** before pressing **Back up the entire computer**. The same preference covers manually started snapshot transfers. For automatic timers, expand **Advanced backup options**, choose **Shut down after each successful scheduled backup**, then install the schedule.
 
 The option is off by default. A failed or interrupted transfer must not shut down the computer. Scheduled transfers use systemd's native post-success command; whole-machine transfers are detached from the GUI. No automatic shutdown is triggered merely because a progress estimate displays 100%.
+
+## Contextual KDE system tray
+
+The unprivileged Harbor tray registers an icon **only while a backup is active and the Harbor GUI has been closed**. It stays hidden when idle or while the Harbor GUI is open, and hides again when the job ends. Closing or hiding the tray never cancels a systemd-managed backup.
