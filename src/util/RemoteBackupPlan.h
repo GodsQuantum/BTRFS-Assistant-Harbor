@@ -11,7 +11,7 @@ QString profileIdForEngine(const QString &config, const QString &target, bool ca
 QStringList scheduleInstallerArguments(const QString &config, const QString &target,
                                        const QString &frequency, bool allowLocal, bool cas, const QString &machine = QString(),
                                         const QString &at = QString(), const QStringList &weekdays = {},
-                                        bool catchUp = true);
+                                        bool catchUp = true, bool powerOffAfterSuccess = false);
 QString archiveName(const QString &config, unsigned number);
 QStringList sendArguments(const QString &config, unsigned number, const QString &target, bool allowLocal);
 QStringList scheduleArguments(const QString &config, const QString &target, bool allowLocal);
@@ -24,7 +24,7 @@ QStringList machineInventoryArguments();
 // Full-machine checkpoint-v2 snapshots, external EFI, background systemd unit.
 // This is NOT the root-only CAS snapshot button or a new stream engine.
 QStringList wholeMachineStartArguments(const QString &target, const QString &profileId,
-                                       const QString &unitId, unsigned ownerUid);
+                                       const QString &unitId, unsigned ownerUid, bool powerOffAfterSuccess = false);
   // native readonly Btrfs/EFI coverage audit
 QStringList machineSetListArguments(const QString &target);
 QStringList machineSetPreviewArguments(const QString &target, const QString &setId, const QString &staging);

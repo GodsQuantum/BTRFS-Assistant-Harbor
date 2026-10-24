@@ -50,6 +50,8 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
       m_scheduleAt(new QTimeEdit(this)),
       m_catchUp(new QCheckBox(tr("Catch up missed backups after startup"), this)),
       m_independentSend(new QCheckBox(tr("Continue backup after closing Harbor (systemd)"), this)),
+      m_powerOffManual(new QCheckBox(tr("Shut down this computer when this backup completes successfully"), this)),
+      m_powerOffSchedule(new QCheckBox(tr("Shut down after each successful scheduled backup"), this)),
       m_allowLocal(new QCheckBox(tr("Allow explicitly selected local destination"), this)),
       m_archives(new QListWidget(this)), m_machineSets(new QListWidget(this)), m_log(new QPlainTextEdit(this)),
       m_state(new QLabel(tr("Ready: no backup in progress"), this)),
@@ -83,6 +85,9 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     wholeRestore->setObjectName(QStringLiteral("harborRestoreWholeComputer"));
     wholeRestore->setMinimumHeight(48);
     simpleLayout->addWidget(wholeBackup);
+    m_powerOffManual->setObjectName(QStringLiteral("harborPowerOffAfterManualBackup"));
+    m_powerOffManual->setToolTip(tr("Power off only after the entire backup succeeds. Failed or cancelled backups never shut down the computer."));
+    simpleLayout->addWidget(m_powerOffManual);
     simpleLayout->addWidget(wholeRestore);
     layout->addWidget(simpleActions);
 
@@ -185,6 +190,18 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
     m_independentSend->setChecked(harborSettings.value(
         QStringLiteral("remote/independentSend"), true).toBool());
     form->addRow(QString(), m_independentSend);
+    m_powerOffSchedule->setObjectName(QStringLiteral("harborPowerOffAfterScheduledBackup"));
+    form->addRow(QString(), m_powerOffSchedule);
+    m_powerOffManual->setChecked(harborSettings.value(QStringLiteral("remote/powerOffAfterManual"), false).toBool());
+    m_powerOffSchedule->setChecked(harborSettings.value(QStringLiteral("remote/powerOffAfterScheduled"), false).toBool());
+    connect(m_powerOffManual, &QCheckBox::toggled, this, [](bool enabled) {
+        QSettings p(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+        p.setValue(QStringLiteral("remote/powerOffAfterManual"), enabled);
+    });
+    connect(m_powerOffSchedule, &QCheckBox::toggled, this, [](bool enabled) {
+        QSettings p(QStringLiteral("BtrfsAssistantHarbor"), QStringLiteral("Harbor"));
+        p.setValue(QStringLiteral("remote/powerOffAfterScheduled"), enabled);
+    });
     const int savedIndex = m_frequency->findData(harborSettings.value(
         QStringLiteral("remote/frequency"), QStringLiteral("daily")));
     m_frequency->setCurrentIndex(savedIndex >= 0 ? savedIndex : 1);
@@ -446,7 +463,7 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
         const uint ownerUid = parsed && authenticatedUid > 0
             ? authenticatedUid : static_cast<uint>(getuid());
         const auto args = HarborRemote::wholeMachineStartArguments(
-            m_target->text(), profile, unit, ownerUid);
+            m_target->text(), profile, unit, ownerUid, m_powerOffManual->isChecked());
         if (args.isEmpty()) {
             QMessageBox::warning(this, tr("Invalid machine backup destination"),
                 tr("Choose a mounted remote backup directory before starting a whole-computer backup."));
@@ -537,14 +554,16 @@ RemoteBackupWidget::RemoteBackupWidget(Snapper *snapper, QWidget *parent)
         const QStringList args = HarborRemote::scheduleInstallerArguments(
             m_configs->currentText(), m_target->text(), m_frequency->currentData().toString(),
             m_allowLocal->isChecked(), isCasMode(), isCasMode() ? m_machineName->text() : QString(),
-            m_scheduleAt->time().toString(QStringLiteral("HH:mm")), days, m_catchUp->isChecked());
+            m_scheduleAt->time().toString(QStringLiteral("HH:mm")), days,
+            m_catchUp->isChecked(), m_powerOffSchedule->isChecked());
         if (args.isEmpty()) {
             QMessageBox::warning(this, tr("Invalid schedule"), tr("Choose a valid Snapper config, destination and frequency."));
             return;
         }
         if (QMessageBox::question(this, tr("Install systemd timer"),
-                tr("Install and enable an automatic %1 transfer for %2? It will use the selected engine. Snapper snapshots will not be created or deleted.")
-                    .arg(m_frequency->currentText(), m_configs->currentText())) != QMessageBox::Yes) return;
+                tr("Install and enable an automatic %1 transfer for %2? It will use the selected engine. Snapper snapshots will not be created or deleted.%3")
+                    .arg(m_frequency->currentText(), m_configs->currentText(),
+                         m_powerOffSchedule->isChecked() ? tr("\n\nThe computer will shut down only after a successful scheduled backup.") : QString())) != QMessageBox::Yes) return;
         launch(args, QStringLiteral("schedule"), QStringLiteral("btrfs-assistant-harbor-schedule"));
     });
     connect(schedules, &QPushButton::clicked, this, [this] {
@@ -842,6 +861,12 @@ void RemoteBackupWidget::launch(const QStringList &arguments, const QString &pur
         return;
     }
     m_purpose = purpose;
+    // Capture the choice at launch time: toggling the checkbox later cannot
+    // retroactively authorize a power-off for an already running job.
+    m_powerOffWhenCurrentManualBackupSucceeds = m_powerOffManual->isChecked()
+        && (purpose == QLatin1String("send")
+            || purpose == QLatin1String("cas-send")
+            || purpose == QLatin1String("resume"));
     // Bind every asynchronous result to the exact request context. UI inputs
     // remain editable while a backend runs, so a successful old response must
     // never populate a new machine's catalog or authorize a stale restore.
@@ -921,6 +946,17 @@ void RemoteBackupWidget::actionFinished(int code, QProcess::ExitStatus status)
         return;
     }
     if (!ok) return;
+    if (m_powerOffWhenCurrentManualBackupSucceeds) {
+        // The synchronous backend has exited successfully. For detached
+        // full-machine backups, native systemd ExecStartPost is used instead.
+        appendOutput(tr("Verified manual backup finished; requesting computer shutdown."));
+        const int result = QProcess::execute(QStringLiteral("/usr/bin/systemctl"),
+                                              {QStringLiteral("poweroff")});
+        if (result != 0)
+            appendOutput(tr("Automatic shutdown request failed (exit %1).").arg(result));
+        m_powerOffWhenCurrentManualBackupSucceeds = false;
+        return;
+    }
     if (m_purpose == QLatin1String("fresh-cachyos-preflight")) {
         QJsonParseError parse{};
         const auto doc = QJsonDocument::fromJson(m_stdout, &parse);

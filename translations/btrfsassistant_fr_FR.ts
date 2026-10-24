@@ -4,6 +4,34 @@
     <context>
         <name>RemoteBackupWidget</name>
         <message>
+            <source>Shut down this computer when this backup completes successfully</source>
+            <translation>Éteindre cet ordinateur après la réussite de cette sauvegarde</translation>
+        </message>
+        <message>
+            <source>Shut down after each successful scheduled backup</source>
+            <translation>Éteindre après chaque sauvegarde planifiée réussie</translation>
+        </message>
+        <message>
+            <source>Power off only after the entire backup succeeds. Failed or cancelled backups never shut down the computer.</source>
+            <translation>Éteint uniquement après la réussite de la sauvegarde complète. Un échec ou une annulation ne provoque jamais l’arrêt.</translation>
+        </message>
+        <message>
+            <source>Verified manual backup finished; requesting computer shutdown.</source>
+            <translation>Sauvegarde manuelle terminée avec succès ; extinction de l’ordinateur demandée.</translation>
+        </message>
+        <message>
+            <source>Automatic shutdown request failed (exit %1).</source>
+            <translation>La demande d’extinction automatique a échoué (code %1).</translation>
+        </message>
+        <message>
+            <source>Install and enable an automatic %1 transfer for %2? It will use the selected engine. Snapper snapshots will not be created or deleted.%3</source>
+            <translation>Installer et activer un transfert automatique %1 pour %2 ? Le moteur sélectionné sera utilisé. Aucun instantané Snapper ne sera créé ni supprimé.%3</translation>
+        </message>
+        <message>
+            <source>\n\nThe computer will shut down only after a successful scheduled backup.</source>
+            <translation>\n\nL’ordinateur s’éteindra uniquement après une sauvegarde planifiée réussie.</translation>
+        </message>
+        <message>
             <source>Remote backups — Snapper snapshots</source>
             <translation>Sauvegardes distantes — instantanés Snapper</translation>
         </message>

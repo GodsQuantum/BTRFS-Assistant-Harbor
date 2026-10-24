@@ -200,7 +200,8 @@ QString profileIdForEngine(const QString &config, const QString &target, bool ca
 }
 QStringList scheduleInstallerArguments(const QString &config, const QString &target,
                                        const QString &frequency, bool allowLocal, bool cas, const QString &machine,
-                                        const QString &at, const QStringList &weekdays, bool catchUp) {
+                                        const QString &at, const QStringList &weekdays,
+                                        bool catchUp, bool powerOffAfterSuccess) {
     if (profileIdForEngine(config,target,cas,machine).isEmpty() ||
         (frequency != QLatin1String("hourly") && frequency != QLatin1String("daily") &&
          frequency != QLatin1String("weekly"))) return {};
@@ -224,6 +225,7 @@ QStringList scheduleInstallerArguments(const QString &config, const QString &tar
     if (!at.isEmpty()) args << QStringLiteral("--at") << at;
     if (!checkedDays.isEmpty()) args << QStringLiteral("--weekdays") << checkedDays.join(QLatin1Char(','));
     if (!catchUp) args << QStringLiteral("--no-catch-up");
+    if (powerOffAfterSuccess) args << QStringLiteral("--poweroff-after-success");
     if (allowLocal) args << QStringLiteral("--allow-local");
     return args;
 }
@@ -253,14 +255,14 @@ QStringList machineInventoryArguments() {
             QStringLiteral("machine-inventory")};
 }
 QStringList wholeMachineStartArguments(const QString &target, const QString &profile,
-                                       const QString &unitId, unsigned ownerUid) {
+                                       const QString &unitId, unsigned ownerUid, bool powerOffAfterSuccess) {
     const QUuid profileUuid(profile);
     const QUuid jobUuid(unitId);
     if (ownerUid == 0 || !safePath(target) || profileUuid.isNull() || jobUuid.isNull() ||
         profileUuid.toString(QUuid::WithoutBraces) != profile ||
         jobUuid.toString(QUuid::WithoutBraces) != unitId)
         return {};
-    return {QStringLiteral("--unit"), QStringLiteral("harbor-machine-backup-") + unitId,
+    QStringList args{QStringLiteral("--unit"), QStringLiteral("harbor-machine-backup-") + unitId,
             QStringLiteral("--collect"), QStringLiteral("--service-type=exec"),
             QStringLiteral("--setenv=HARBOR_OWNER_UID=%1").arg(ownerUid),
             QStringLiteral("--property=TimeoutStartSec=infinity"),
@@ -271,6 +273,11 @@ QStringList wholeMachineStartArguments(const QString &target, const QString &pro
             QStringLiteral("--profile-id"), profile,
             QStringLiteral("--snapshot-provider"), QStringLiteral("snapper-fresh"),
             QStringLiteral("--experimental")};
+    // systemd runs ExecStartPost only when the backend exits successfully.
+    // The detached whole-computer task finishes independently of Harbor's UI.
+    if (powerOffAfterSuccess)
+        args.insert(4, QStringLiteral("--property=ExecStartPost=/usr/bin/systemctl poweroff"));
+    return args;
 }
 QStringList machineSetListArguments(const QString &target) {
     if (!safePath(target)) return {};

@@ -62,3 +62,10 @@ cargo test --locked --manifest-path transport/Cargo.toml --all-targets
 请参阅 [贡献说明](../CONTRIBUTING.md)、[安全策略](../SECURITY.md)、[品牌规范](../branding/BRAND.md) 和 [Issues](https://github.com/GodsQuantum/BTRFS-Assistant-Harbor/issues)。
 
 **版权与致谢：** 本项目是 **Btrfs Assistant** 的独立分支，采用 **GPL-3.0-or-later** 许可证，并不代表原项目团队支持或认可。附带的旧版 Harbor Python 组件保留各自的 MIT 许可证说明。详见 [LICENSE](../LICENSE)。
+
+
+## 成功备份后自动关机
+
+在「远程备份 → 计算机保护」中，启动手动备份前选中「备份成功完成后关闭此计算机」。定时备份可在高级选项中勾选「每次定时备份成功后关机」，然后保存定时任务。
+
+此选项默认关闭。失败、取消或未完成的备份不得触发关机。系统使用原生 systemd 成功后操作，不以预计进度达到 100% 作为关机依据。
