@@ -67,6 +67,6 @@ Voir [Contribution](../CONTRIBUTING.md), [Sécurité](../SECURITY.md), [Charte v
 
 Dans **Sauvegardes distantes → Protection de l’ordinateur**, coche **Éteindre cet ordinateur après la réussite de cette sauvegarde** avant de lancer **Sauvegarder tout l’ordinateur**. Pour les captures Snapper lancées manuellement, la même option s’applique au transfert sélectionné. Une sauvegarde incomplète, interrompue ou annulée **ne déclenche jamais** l’extinction.
 
-Pour les **sauvegardes planifiées**, ouvre les options avancées et coche **Éteindre après chaque sauvegarde planifiée réussie**, puis installe le planning. Harbor conserve ce choix dans le profil systemd. L’action native ExecStartPost ne s’exécute qu’après la réussite du transfert ; elle ne relance pas les sauvegardes en échec pour éteindre artificiellement la machine.
+Pour les **sauvegardes planifiées**, ouvre les options avancées et coche **Éteindre après chaque sauvegarde planifiée réussie**, puis installe le planning. Harbor conserve ce choix dans le profil systemd. Le planificateur vérifie qu’une nouvelle archive a été effectivement enregistrée après le transfert réussi, puis demande l’arrêt via systemctl ; un planning sans changement ne provoque aucun arrêt.
 
 Les deux réglages sont **désactivés par défaut**. Un arrêt reste une opération système : ne coche pas l’option si d’autres activités sur la machine doivent rester actives. Le contrôle de cohérence du catalogue machine et des archives Btrfs/EFI reste indépendant du simple pourcentage affiché dans le tray.

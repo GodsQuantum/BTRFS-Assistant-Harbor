@@ -19,12 +19,37 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(sched.Profile.from_dict(enabled.as_dict()), enabled)
         self.assertTrue(enabled.as_dict()["poweroff_after_success"])
         service = sched.service_unit(enabled, "/usr/bin/btrfs-assistant-harbor-schedule")
-        self.assertIn("ExecStartPost=/usr/bin/systemctl poweroff", service)
+        self.assertNotIn("ExecStartPost=", service)
         self.assertNotIn("poweroff", sched.timer_unit(enabled, "daily"))
         broken = enabled.as_dict()
         broken["poweroff_after_success"] = "true"
         with self.assertRaises(ValueError):
             sched.Profile.from_dict(broken)
+
+    def test_poweroff_request_is_not_sent_for_a_successful_noop(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = sched.Profile("root", tmp, "daily", poweroff_after_success=True)
+            with patch.object(sched.shutil, "which", return_value="/usr/bin/harbor-checkpoint-v2"), \
+                    patch.object(sched.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as runner:
+                self.assertEqual(sched.perform_profile(profile), 0)
+                runner.assert_called_once()
+
+    def test_poweroff_request_only_after_a_new_verified_archive(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = sched.Profile("root", tmp, "daily", poweroff_after_success=True)
+            def actual_fake_run(argv, **kwargs):
+                if argv[0] == "/usr/bin/harbor-checkpoint-v2":
+                    (Path(tmp) / "snap-root-123.btrfs.zst.meta").write_text('{"checksum":"verified"}')
+                return SimpleNamespace(returncode=0)
+            with patch.object(sched.shutil, "which", return_value="/usr/bin/harbor-checkpoint-v2"), \
+                    patch.object(sched.subprocess, "run", side_effect=actual_fake_run) as runner:
+                self.assertEqual(sched.perform_profile(profile), 0)
+                self.assertEqual(runner.call_count, 2)
+                self.assertEqual(runner.call_args.args[0], ["/usr/bin/systemctl", "poweroff"])
 
     def test_id_stable_and_valid(self):
         self.assertEqual(self.profile.profile_id, sched.Profile("root", "/mnt/Cloud Backup", "daily", False).profile_id)
