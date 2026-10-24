@@ -39,6 +39,7 @@ class Profile:
     calendar_at: str | None = None
     weekdays: tuple[str, ...] = ()
     catch_up: bool = True
+    poweroff_after_success: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.config, str) or CONFIG_RE.fullmatch(self.config) is None:
@@ -61,6 +62,8 @@ class Profile:
             raise ValueError("Weekdays need a weekly schedule with a specific time")
         if type(self.catch_up) is not bool:
             raise ValueError("catch_up must be a boolean")
+        if type(self.poweroff_after_success) is not bool:
+            raise ValueError("poweroff_after_success must be a boolean")
         if type(self.allow_local) is not bool:
             raise ValueError("allow_local must be boolean")
         if self.engine not in ("checkpoint-v2", "cas"):
@@ -104,6 +107,8 @@ class Profile:
             payload["weekdays"] = list(self.weekdays)
         if not self.catch_up:
             payload["catch_up"] = False
+        if self.poweroff_after_success:
+            payload["poweroff_after_success"] = True
         return payload
 
     @classmethod
@@ -112,7 +117,8 @@ class Profile:
             raise ValueError("Unsupported or damaged profile")
         calendar = dict(calendar_at=data.get("calendar_at"),
                         weekdays=tuple(data.get("weekdays", [])),
-                        catch_up=data.get("catch_up", True))
+                        catch_up=data.get("catch_up", True),
+                        poweroff_after_success=data.get("poweroff_after_success", False))
         if data["version"] == 1:
             profile = cls(data["config"], data["target"], data["frequency"],
                           data["allow_local"], **calendar)
@@ -153,7 +159,7 @@ Restart=on-failure
 RestartSec=60s
 NoNewPrivileges=true
 TimeoutStartSec=infinity
-"""
+{("ExecStartPost=/usr/bin/systemctl poweroff" + chr(10)) if profile.poweroff_after_success else ""}"""
 
 
 def calendar_expression(profile: Profile) -> str:
@@ -279,6 +285,8 @@ def main(argv: list[str] | None = None) -> int:
     install.add_argument("--at", help="24-hour wall clock HH:MM")
     install.add_argument("--weekdays", default="", help="Comma-separated Mon,Tue,...,Sun")
     install.add_argument("--no-catch-up", action="store_true")
+    install.add_argument("--poweroff-after-success", action="store_true",
+                         help="Use systemd native post-success action to shut down")
     install.add_argument("--allow-local", action="store_true")
     install.add_argument("--engine", choices=["checkpoint-v2", "cas"], default="checkpoint-v2")
     install.add_argument("--enable", action="store_true")
@@ -308,7 +316,8 @@ def main(argv: list[str] | None = None) -> int:
         days = tuple(part.strip() for part in args.weekdays.split(",") if part.strip())
         profile = Profile(args.snapper_config, args.target, args.frequency,
                           args.allow_local, args.engine, owner_uid, args.machine,
-                          args.at, days, not args.no_catch_up)
+                          args.at, days, not args.no_catch_up,
+                          args.poweroff_after_success)
         installed = install_profile(profile, CONFIG_DIR, UNIT_DIR, str(Path(__file__).resolve()))
         print(json.dumps({"profile": profile.profile_id, "files": [str(p) for p in installed]}))
         if args.enable:

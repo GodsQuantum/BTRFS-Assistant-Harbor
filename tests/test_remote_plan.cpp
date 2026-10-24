@@ -67,6 +67,11 @@ int main() {
   REQUIRE(whole.contains("set-backup"));
   REQUIRE(whole.contains("snapper-fresh"));
   REQUIRE(whole.contains("--collect"));
+  REQUIRE(!whole.contains("--property=ExecStartPost=/usr/bin/systemctl poweroff"));
+  const auto powerOff = wholeMachineStartArguments(
+      "/mnt/backup-local/Workstations", id, machineSetId, 1000, true);
+  REQUIRE(powerOff.contains("--property=ExecStartPost=/usr/bin/systemctl poweroff"));
+  REQUIRE(powerOff.contains("set-backup"));
   REQUIRE(whole.contains("--setenv=HARBOR_OWNER_UID=1000"));
   REQUIRE(wholeMachineStartArguments("/mnt/backup", id, machineSetId, 0).isEmpty());
   REQUIRE(whole.contains("--property=RequiresMountsFor=/mnt/backup-local/Workstations"));
@@ -145,6 +150,10 @@ int main() {
   const auto timed = scheduleInstallerArguments("root", casPath, "weekly", false, true,
       "Pegasus", "03:45", {"Mon", "Wed", "Fri"}, true);
   REQUIRE(timed.contains("--at"));
+  const auto scheduledPowerOff = scheduleInstallerArguments("root", casPath, "daily",
+      false, true, "Pegasus", "03:45", {}, true, true);
+  REQUIRE(scheduledPowerOff.contains("--poweroff-after-success"));
+  REQUIRE(!timed.contains("--poweroff-after-success"));
   REQUIRE(timed.at(timed.indexOf("--at") + 1) == "03:45");
   REQUIRE(timed.at(timed.indexOf("--weekdays") + 1) == "Mon,Wed,Fri");
   REQUIRE(!timed.contains("--no-catch-up"));

@@ -10,6 +10,7 @@
 #include <QElapsedTimer>
 #include <QThread>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QLineEdit>
 #include <QSettings>
 #include <QListWidget>
@@ -334,6 +335,13 @@ private slots:
         auto *advanced = w.findChild<QPushButton*>(
             QStringLiteral("harborAdvancedOptions"));
         QVERIFY(backup && restore && advanced);
+        auto *manualPowerOff = w.findChild<QCheckBox*>(
+            QStringLiteral("harborPowerOffAfterManualBackup"));
+        auto *scheduledPowerOff = w.findChild<QCheckBox*>(
+            QStringLiteral("harborPowerOffAfterScheduledBackup"));
+        QVERIFY(manualPowerOff && scheduledPowerOff);
+        QVERIFY(manualPowerOff->isVisible());
+        QVERIFY(!scheduledPowerOff->isVisible());
         QVERIFY(backup->isVisible());
         QVERIFY(restore->isVisible());
         QVERIFY(!advanced->isChecked());
@@ -344,6 +352,7 @@ private slots:
         advanced->setChecked(true);
         QApplication::processEvents();
         QVERIFY(button(w, "Send selected snapshot")->isVisible());
+        QVERIFY(scheduledPowerOff->isVisible());
         QAccessibleInterface *window = QAccessible::queryAccessibleInterface(&w);
         QVERIFY(window);
         QVERIFY(window->isValid());

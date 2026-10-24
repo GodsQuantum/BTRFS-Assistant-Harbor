@@ -11,6 +11,21 @@ class ScheduleTests(unittest.TestCase):
     def setUp(self):
         self.profile = sched.Profile("root", "/mnt/Cloud Backup", "daily", False)
 
+    def test_optional_poweroff_preserved_and_native_success_hook_only(self):
+        inactive = sched.Profile("root", "/mnt/Backup", "daily")
+        self.assertFalse(inactive.poweroff_after_success)
+        self.assertNotIn("ExecStartPost=", sched.service_unit(inactive, "/usr/bin/btrfs-assistant-harbor-schedule"))
+        enabled = sched.Profile("root", "/mnt/Backup", "daily", poweroff_after_success=True)
+        self.assertEqual(sched.Profile.from_dict(enabled.as_dict()), enabled)
+        self.assertTrue(enabled.as_dict()["poweroff_after_success"])
+        service = sched.service_unit(enabled, "/usr/bin/btrfs-assistant-harbor-schedule")
+        self.assertIn("ExecStartPost=/usr/bin/systemctl poweroff", service)
+        self.assertNotIn("poweroff", sched.timer_unit(enabled, "daily"))
+        broken = enabled.as_dict()
+        broken["poweroff_after_success"] = "true"
+        with self.assertRaises(ValueError):
+            sched.Profile.from_dict(broken)
+
     def test_id_stable_and_valid(self):
         self.assertEqual(self.profile.profile_id, sched.Profile("root", "/mnt/Cloud Backup", "daily", False).profile_id)
         uuid.UUID(self.profile.profile_id)

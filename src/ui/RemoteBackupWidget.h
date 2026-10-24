@@ -43,6 +43,8 @@ private:
     QCheckBox *m_weekdays[7]{};
     QCheckBox *m_catchUp;
     QCheckBox *m_independentSend;
+    QCheckBox *m_powerOffManual;
+    QCheckBox *m_powerOffSchedule;
     QCheckBox *m_allowLocal;
     QListWidget *m_archives;
     QListWidget *m_machineSets;
@@ -53,6 +55,7 @@ private:
     QPushButton *m_send;
     QPushButton *m_cancel;
     bool m_cancelRequested = false;
+    bool m_powerOffWhenCurrentManualBackupSucceeds = false;
     QProcess *m_process;
     QProcess *m_jobPoller;
     QString m_activeJobId;

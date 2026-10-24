@@ -1514,6 +1514,34 @@
     <context>
         <name>RemoteBackupWidget</name>
         <message>
+            <source>Shut down this computer when this backup completes successfully</source>
+            <translation>备份成功完成后关闭此计算机</translation>
+        </message>
+        <message>
+            <source>Shut down after each successful scheduled backup</source>
+            <translation>每次定时备份成功后关机</translation>
+        </message>
+        <message>
+            <source>Power off only after the entire backup succeeds. Failed or cancelled backups never shut down the computer.</source>
+            <translation>只有完整备份成功才会关机；失败或取消的备份不会触发关机。</translation>
+        </message>
+        <message>
+            <source>Verified manual backup finished; requesting computer shutdown.</source>
+            <translation>手动备份已成功完成，正在请求关闭计算机。</translation>
+        </message>
+        <message>
+            <source>Automatic shutdown request failed (exit %1).</source>
+            <translation>自动关机请求失败（退出码 %1）。</translation>
+        </message>
+        <message>
+            <source>Install and enable an automatic %1 transfer for %2? It will use the selected engine. Snapper snapshots will not be created or deleted.%3</source>
+            <translation>是否为 %2 安装并启用 %1 自动传输？将使用所选引擎，不会创建或删除 Snapper 快照。%3</translation>
+        </message>
+        <message>
+            <source>\n\nThe computer will shut down only after a successful scheduled backup.</source>
+            <translation>\n\n仅在定时备份成功完成后关机。</translation>
+        </message>
+        <message>
             <source>Allow explicitly selected local destination</source>
             <translation>允许明确选择本地目标目录</translation>
         </message>
