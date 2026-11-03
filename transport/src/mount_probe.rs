@@ -34,7 +34,9 @@ pub fn filesystem_for_path(path: &Path, mountinfo: &str) -> Result<String> {
         let mounted = Path::new(&mountpoint);
         if mounted.is_absolute() && path.starts_with(mounted) {
             let length = mounted.components().count();
-            if winner.is_none_or(|(current, _)| length > current) {
+            // Stacked systemd automounts share this pathname with their NFS mount.
+            // Prefer the later mountinfo entry on equal specificity: it is the overlay.
+            if winner.is_none_or(|(current, _)| length >= current) {
                 winner = Some((length, tokens[separator + 1]));
             }
         }
