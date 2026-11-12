@@ -23,7 +23,7 @@ Date : 14 octobre 2026, Cloud9 / CT700 DEV, NVMe. Résultat : PASS dans la topol
 
 ## Traçabilité privée sur DEV700
 
-- QA root : /home/arezki/Projets/HomeLab/BTRFS Harbor/qa-vm-rear-alpha9/
+- QA root : /home/example-user/Projets/HomeLab/BTRFS Harbor/qa-vm-rear-alpha9/
 - Journal secours : rear-r7b-console.log
 - Journal boot sans ISO : boot-r7b-console.log
 - ISO : share/rear-debian13-product-r7b.iso

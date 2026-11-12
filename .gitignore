@@ -17,3 +17,8 @@ target/
 *.deb
 *.rpm
 *.pkg.tar.zst
+
+# Operator-only artifacts
+/docs/handoffs/HANDOFF_*.md
+/docs/archive/handoffs/HANDOFF_*.md
+/docs/validation/*.log

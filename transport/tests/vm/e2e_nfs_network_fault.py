@@ -7,7 +7,7 @@ No changes to host NFS exports, mount flags or production volumes.
 import pathlib, subprocess, tempfile, time, shutil
 import pexpect
 from e2e_alpine_btrfs import extract_iso, BIN
-BASE = pathlib.Path('/home/arezki/Dev')
+BASE = pathlib.Path('/home/example-user/Dev')
 ISO = BASE / '.harbor-disconnect-fixture/alpine.iso'
 SERVER = 'harbor-qa-nfsv4-pause'
 NFS_IMAGE = 'harbor-nfs-lab:20261012'

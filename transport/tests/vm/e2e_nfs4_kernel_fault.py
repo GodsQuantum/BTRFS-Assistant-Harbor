@@ -15,9 +15,9 @@ import time
 import pexpect
 from e2e_alpine_btrfs import extract_iso, BIN
 
-LAB = pathlib.Path('/home/arezki/Dev/.harbor-nfs3-lab')
+LAB = pathlib.Path.home() / 'Dev/.harbor-nfs3-lab'
 ISO = LAB / 'alpine.iso'
-ROOT = pathlib.Path('/home/arezki/Dev')
+ROOT = pathlib.Path.home() / 'Dev'
 
 SERVER_SCRIPT = r"""#!/bin/sh
 set -eu

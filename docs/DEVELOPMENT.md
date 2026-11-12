@@ -8,7 +8,7 @@ Le dossier Git doit contenir **les sources, tests, packaging et documentation**,
 - Build Qt et cargo target dans un dossier QA isolé **hors du dépôt**.
 - VM ReaR/ISO et données CAS d'essai uniquement dans un laboratoire jetable clairement nommé.
 - Handoffs, journaux de recherche et logs complets dans le dossier de projet canonique privé ; synthèses vérifiables dans docs/validation/.
-- Ne jamais modifier montages NFS, fichiers ou snapshots Snapper existants, autres disques, permissions arezki et configuration Proxmox sans demande explicite.
+- Ne jamais modifier montages NFS, fichiers ou snapshots Snapper existants, autres disques, permissions operator et configuration Proxmox sans demande explicite.
 
 ## Commandes de validation
 

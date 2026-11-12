@@ -6,7 +6,7 @@ Never creates or modifies mounts on the LXC host, Cloud9 or Pegasus.
 """
 import hashlib, pathlib, shutil, subprocess, tempfile, time, urllib.request, pexpect
 from e2e_alpine_btrfs import extract_iso, ALPINE_VERSION, BIN
-BASE=pathlib.Path("/home/arezki/Dev")
+BASE=pathlib.Path("/home/example-user/Dev")
 SAMBA="harbor-qa-smb-disconnect"
 SMB_DIR=BASE/".harbor-disconnect-fixture/smb"
 SERVER=["docker","run","-d","--name",SAMBA,"-p","127.0.0.1:445:445",

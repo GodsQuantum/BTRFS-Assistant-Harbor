@@ -2,7 +2,7 @@
 
 ## Provenance / périmètre
 - Dérivé du tag alpha6 `v0.1.0-alpha6` (SHA `494242913114795c39530c8132051840e6e2b8a1`), via correctif QA `3d511d62c92476f50140ba4da753b3179d45f977`.
-- Machine exclusivement Cloud9/CT700 utilisateur `arezki`, worktree isolé `/home/arezki/Dev/BTRFS-Assistant-Harbor-QA-ChainFix`.
+- Machine exclusivement Cloud9/CT700 utilisateur `operator`, worktree isolé `/home/example-user/Dev/BTRFS-Assistant-Harbor-QA-ChainFix`.
 - Les sources, paquets et montages de production ainsi que les snapshots Snapper et Pegasus ne sont pas modifiés par ces tests.
 
 ## Fonctionnalités développées sur la branche

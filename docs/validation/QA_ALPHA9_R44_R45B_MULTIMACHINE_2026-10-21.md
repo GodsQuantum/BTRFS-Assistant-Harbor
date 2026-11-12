@@ -1,7 +1,7 @@
 # Alpha9 R44 / R45b — preuve CAS multimachine (21 octobre 2026)
 
 **Statut : PASS dans le périmètre décrit ; version stable NON certifiée.**
-Travaux uniquement sur Cloud9, dans CT700 sous UID 1000 `arezki`, par SentinelX.
+Travaux uniquement sur Cloud9, dans CT700 sous UID 1000 `operator`, par SentinelX.
 Branche QA `cert/alpha9-20261015-qa-hardening`; HEAD de départ
 `9ddd34fccaf75de3a40accfebc042c0b23994bf8`. Les sources candidates
 contiennent des modifications de travail non commitées ; le vieux tag alpha9
@@ -9,7 +9,7 @@ ne représente PAS le code évalué ici.
 
 ## Source et identité de build
 
-- Construction du nouveau moteur : `cargo build --locked --offline --release --target x86_64-unknown-linux-musl`, RC 0, sous LXC700/arezki.
+- Construction du nouveau moteur : `cargo build --locked --offline --release --target x86_64-unknown-linux-musl`, RC 0, sous LXC700/operator.
 - SHA-256 binaire Linux statique MUSL évalué :
   `6a55ed207ac8fe987cae1ce71a4dcc92b5cafc3cb42d53b31409216f0cc11afb`.
 - Ancienne version statique utilisée dans R43 **non réutilisée**.

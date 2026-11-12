@@ -2,7 +2,7 @@
 
 **Statut : candidat de certification, PAS DE STABLE / PAS ENCORE PRODUCTION READY.**
 
-Workspace exclusif : LXC 700 DEV NVMe, `/home/arezki/Projets/HomeLab/BTRFS Harbor/`. Le miroir SyncBridge HDD, montages, ACL, snapshots et services Cloud9 n'ont pas été modifiés.
+Workspace exclusif : LXC 700 DEV NVMe, `/home/example-user/Projets/HomeLab/BTRFS Harbor/`. Le miroir SyncBridge HDD, montages, ACL, snapshots et services Cloud9 n'ont pas été modifiés.
 
 ## Correctif Qt : annulation d'une opération
 
