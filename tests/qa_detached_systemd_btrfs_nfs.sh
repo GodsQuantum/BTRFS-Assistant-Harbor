@@ -41,6 +41,11 @@ sudo systemctl stop nfs-ganesha 2>/dev/null || true
 # systemd removes RuntimeDirectory on stop; create the PID directory AFTER.
 sudo mkdir -p /var/run/ganesha
 cat > "$WORK/ganesha.conf" <<EOF
+# Disposable CI-only NFSv4 instance: no clients have state to reclaim.
+# The default 90-second grace causes read-only metadata EIO on soft mounts.
+NFSv4 {
+    Graceless = true;
+}
 NFS_CORE_PARAM {
     Protocols = 4;
     NFS_Port = 20490;
