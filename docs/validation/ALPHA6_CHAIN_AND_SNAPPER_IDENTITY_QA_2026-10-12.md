@@ -1,9 +1,9 @@
 # Btrfs Assistant Harbor — checkpoint QA après alpha6 (12 octobre 2026)
 
 ## Autorité et isolation
-- Alpha6 source intacte : `/home/user/Dev/BTRFS-Assistant-Harbor-QA`, branche `qa/long-scheduled-backups-20261012`, HEAD `494242913114795c39530c8132051840e6e2b8a1`, tag `v0.1.0-alpha6`.
-- Développement : `/home/user/Dev/BTRFS-Assistant-Harbor-QA-ChainFix`, branche isolée `qa/alpha6-chain-integrity-20261012` créée sur ce SHA exact.
-- Host Cloud9 / CT700 / `developer` UID 1000 seulement. Aucun accès Pegasus, aucune modification de montage, ACL, snapshots Snapper réels, sauvegardes ni services production.
+- Alpha6 source intacte : `/home/example-user/Dev/BTRFS-Assistant-Harbor-QA`, branche `qa/long-scheduled-backups-20261012`, HEAD `494242913114795c39530c8132051840e6e2b8a1`, tag `v0.1.0-alpha6`.
+- Développement : `/home/example-user/Dev/BTRFS-Assistant-Harbor-QA-ChainFix`, branche isolée `qa/alpha6-chain-integrity-20261012` créée sur ce SHA exact.
+- Host Cloud9 / CT700 / `operator` UID 1000 seulement. Aucun accès Pegasus, aucune modification de montage, ACL, snapshots Snapper réels, sauvegardes ni services production.
 - Toutes les 10 empreintes de la livraison **alpha6 initiale** `SHA256SUMS` étaient conformes. Ces installateurs ne contiennent **PAS** les corrections de ce worktree ; ne pas les déclarer à jour.
 
 ## Deux corrections fail-closed — tests reproduits RED puis GREEN

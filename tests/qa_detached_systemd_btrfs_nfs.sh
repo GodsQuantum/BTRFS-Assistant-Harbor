@@ -41,6 +41,11 @@ sudo systemctl stop nfs-ganesha 2>/dev/null || true
 # systemd removes RuntimeDirectory on stop; create the PID directory AFTER.
 sudo mkdir -p /var/run/ganesha
 cat > "$WORK/ganesha.conf" <<EOF
+# Disposable CI-only NFSv4 instance: no clients have state to reclaim.
+# The default 90-second grace causes read-only metadata EIO on soft mounts.
+NFSv4 {
+    Graceless = true;
+}
 NFS_CORE_PARAM {
     Protocols = 4;
     NFS_Port = 20490;
@@ -77,7 +82,21 @@ sudo systemctl daemon-reload
 sudo -u "$(id -un)" /usr/bin/harbor-transport init --repo "$WORK/nfs"
 test -f "$WORK/nfs/.harbor-repo-id"
 echo "HARBOR_QA_DESKTOP_LIST_BEFORE_CLICK"
-sudo -u "$(id -un)" /usr/bin/harbor-transport list --repo "$WORK/nfs"
+# A newly started NFS-Ganesha may briefly enter grace or reconnect while the
+# disposable runner initializes its mount. Retry only this read-only listing.
+listed=0
+for attempt in $(seq 1 12); do
+  if sudo -u "$(id -un)" /usr/bin/harbor-transport list --repo "$WORK/nfs"; then
+    listed=1
+    break
+  fi
+  echo "HARBOR_QA_NFS_LIST_RETRY $attempt"
+  sleep 3
+done
+if [[ $listed -ne 1 ]]; then
+  echo "FAIL_NFS_LIST_AFTER_BOUNDED_RETRIES" >&2
+  exit 1
+fi
 echo "HARBOR_QA_POLKIT_ROOT_SQUASH_LIST_BEFORE_CLICK"
 sudo env PKEXEC_UID="$RUN_UID" /usr/bin/harbor-transport list --repo "$WORK/nfs"
 echo "PASS CAS_INVENTORY_WITH_ORIGINAL_FSUID"
