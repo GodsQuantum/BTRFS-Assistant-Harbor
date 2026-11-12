@@ -35,12 +35,11 @@ fn probe_selects_deepest_mountpoint_not_first_matching() {
     );
 }
 
-
 #[test]
 fn probe_prefers_nfs_over_stacked_autofs() {
     // On Ubuntu a systemd automount is overlaid by a real NFS mount at the
     // same path. Selecting the autofs entry falsely rejects valid network CAS.
-    let mounts = "40 25 0:40 / /mnt/backups rw - autofs systemd-1 rw\n                  41 40 0:41 / /mnt/backups rw - autofs systemd-1 rw\n                  43 41 0:43 / /mnt/backups rw - nfs4 192.168.1.200:/backup rw\n";
+    let mounts = "40 25 0:40 / /mnt/backups rw - autofs systemd-1 rw\n                  41 40 0:41 / /mnt/backups rw - autofs systemd-1 rw\n                  43 41 0:43 / /mnt/backups rw - nfs4 192.0.2.200:/backup rw\n";
     assert_eq!(
         filesystem_for_path(Path::new("/mnt/backups/harbor-cas"), mounts).unwrap(),
         "nfs4"
