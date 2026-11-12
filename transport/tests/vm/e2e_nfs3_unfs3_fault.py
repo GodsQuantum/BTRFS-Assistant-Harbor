@@ -7,7 +7,7 @@ No changes to host NFS exports, mount flags or production volumes.
 import pathlib, subprocess, tempfile, time, shutil
 import pexpect
 from e2e_alpine_btrfs import extract_iso, BIN
-BASE = pathlib.Path('/home/user/Dev')
+BASE = pathlib.Path('/home/example-user/Dev')
 LAB = BASE / '.harbor-nfs3-lab'
 ISO = LAB / 'alpine.iso'
 REMOTE = LAB / 'export'

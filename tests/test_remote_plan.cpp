@@ -132,7 +132,7 @@ int main() {
   REQUIRE(casConfirmArguments(casPath, "../bad", "/mnt/restore").isEmpty());
   REQUIRE(trustedBackendExecutable("/usr/bin/python3"));
   REQUIRE(!trustedBackendExecutable("/tmp/harbor-masquerade"));
-  REQUIRE(!trustedBackendExecutable("/home/user/bin/btrfs-backup-ng"));
+  REQUIRE(!trustedBackendExecutable("/home/example-user/bin/btrfs-backup-ng"));
   REQUIRE(!trustedBackendExecutable("/usr/bin/../../tmp/harbor-masquerade"));
   const auto casId = profileIdForEngine("root", "/mnt/backup", true);
   REQUIRE(!casId.isEmpty());

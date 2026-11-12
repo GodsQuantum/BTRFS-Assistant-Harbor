@@ -61,7 +61,7 @@ does not repair a corrupt or missing snapshot or disconnected source.
 2. Protect Snapper source/parent from cleanup for entire transaction and
    immutable send/retry lifecycle; source must be readonly and match UUID.
 3. Maintain proper UID1000 ownership/ACL semantics on NFS/SMB; do not let
-   files created by root block Dolphin create/move/delete for developer.
+   files created by root block Dolphin create/move/delete for operator.
 4. End-to-end test XFS archive -> transfer interruption -> resume -> verify
    -> Btrfs receive -> data/metadata compare, for full and incremental streams.
 5. Implement chain retention (never delete an incremental parent referenced
@@ -196,4 +196,4 @@ Different Zstandard encoders or levels may emit different bytes for identical ra
 
 Linux FSUID/FSGID are temporarily switched to the authenticated PKEXEC_UID only around CAS repository access. This allows the original local UID to own marker, object and manifest files without changing NFS mounts/ACL or Btrfs sender privileges. It passed isolated UID1000 root tests and Alpine QEMU send/receive tests.
 
-The historic Python backend does not automatically inherit this CAS ownership policy, especially for systemd timers. That remains a release blocker for the strict developer NFS permissions requirement.
+The historic Python backend does not automatically inherit this CAS ownership policy, especially for systemd timers. That remains a release blocker for the strict operator NFS permissions requirement.

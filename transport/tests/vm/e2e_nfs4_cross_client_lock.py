@@ -101,7 +101,7 @@ def main() -> None:
     parser.add_argument("--iso", type=Path, required=True)
     args = parser.parse_args()
     assert hashlib.sha256(args.iso.read_bytes()).hexdigest() == EXPECTED_ISO_SHA256
-    with tempfile.TemporaryDirectory(prefix=".harbor-nfs-lock-qa-", dir=Path("/home/user/Dev")) as tmp:
+    with tempfile.TemporaryDirectory(prefix=".harbor-nfs-lock-qa-", dir=Path("/home/example-user/Dev")) as tmp:
         base=Path(tmp)
         s,a,b=[base/x for x in ("server","client-a","client-b")]
         for folder in (s,a,b):

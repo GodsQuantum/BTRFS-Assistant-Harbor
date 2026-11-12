@@ -16,6 +16,6 @@
 ## État et sécurité
 - Pas de modification de `main`, pas de tag `stable` ni nouvelle release GitHub stable.
 - Ne pas toucher aux montages/NFS/ACL, Snapper, disques de Cloud9, ou Pegasus.
-- Répertoire projet: `/srv/storage/private/user/Projets/HomeLab/BTRFS Harbor/`. Lab ReaR jetable: `qa-vm-rear-alpha9/`; ne pas supprimer les logs/ISOs R2 avant la livraison définitive.
-- Candidate Debian de travail (pas installé): `/home/user/Dev/harbor-alpha9-qa/btrfs-assistant-harbor_0.1.0~alpha9-1_amd64.deb`.
+- Répertoire projet: `/srv/storage/cloud/operator/Projets/HomeLab/BTRFS Harbor/`. Lab ReaR jetable: `qa-vm-rear-alpha9/`; ne pas supprimer les logs/ISOs R2 avant la livraison définitive.
+- Candidate Debian de travail (pas installé): `/home/example-user/Dev/harbor-alpha9-qa/btrfs-assistant-harbor_0.1.0~alpha9-1_amd64.deb`.
 - **Pour la suite** : générer une ISO ReaR intégrant le *hook du produit*, certifier le parcours R3 sur disque totalement neuf et vérifier les deux chemins UEFI, compléter les paquets Arch/deb/rpm et un vrai smoke test graphique sur VM, puis seulement publier les releases officiellement stables.

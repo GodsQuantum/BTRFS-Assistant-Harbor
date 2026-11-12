@@ -38,7 +38,7 @@ Choisir une machine Codespaces 4 vCPU / 16 Gio, région WestEurope si disponible
 
 ## Retrait progressif des artefacts Cloud9
 
-Le workspace Cloud9 `/home/user/Projets/HomeLab/BTRFS Harbor` reste un point de secours tant que Codespace + tests CI n'ont pas passé et que les preuves QA n'ont pas été vérifiées sur GitHub. **N'effacer ni LXC700, ni `Projets/`, ni les chemins partagés** : ils appartiennent à plusieurs applications. Quand la migration est vérifiée, nettoyer uniquement les caches générables *identifiés* de Harbor (`build/`, Cargo `target/`, overlays QEMU jetables) en préservant rapports `notes/`, back-ups et vrais fichiers source ; noter les tailles avant/après. Aucune suppression de snapshots/volumes/montages ou backups PBS/SyncBridge.
+Le workspace Cloud9 `/home/example-user/Projets/HomeLab/BTRFS Harbor` reste un point de secours tant que Codespace + tests CI n'ont pas passé et que les preuves QA n'ont pas été vérifiées sur GitHub. **N'effacer ni LXC700, ni `Projets/`, ni les chemins partagés** : ils appartiennent à plusieurs applications. Quand la migration est vérifiée, nettoyer uniquement les caches générables *identifiés* de Harbor (`build/`, Cargo `target/`, overlays QEMU jetables) en préservant rapports `notes/`, back-ups et vrais fichiers source ; noter les tailles avant/après. Aucune suppression de snapshots/volumes/montages ou backups PBS/SyncBridge.
 
 ## Bilan de reprise du 21 octobre (avant Codespaces)
 
